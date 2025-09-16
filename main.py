@@ -446,10 +446,9 @@ async def on_member_update(before: discord.Member, after: discord.Member):
         await _send_log(after.guild, _emb("Member Role Add",
             "➕ " + after.mention + " 新增角色： " + ", ".join(r.mention for r in added), 0x57F287))
    if removed:
-    await _send_log(after.guild, _emb(
+        await _send_log(after.guild, _emb(
         "Member Role Remove",
-        "➖ " + after.mention + " 移除角色： " + ", ".join(r.mention for r in removed), 0xED4245
-    ))
+        "➖ " + after.mention + " 移除角色： " + ", ".join(r.mention for r in removed), 0xED4245))
 
 @bot.event
 async def on_member_ban(guild: discord.Guild, user: discord.User):
