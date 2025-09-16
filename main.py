@@ -191,12 +191,12 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
 
 
 # ---------- Slash 指令 ----------
-@bot.tree.command(name="duplicate", description="（管理用）用模板分區複製出新遊戲分區")
+@bot.tree.command(name="duplicate", description="複製模板分區，建立新遊戲分區（含 Forum/Stage/Tags）")
 @app_commands.describe(gamename="新遊戲名稱（例如：Delta Force）")
-@app_commands.checks.has_permissions(manage_channels=True)  # 只有有管理頻道權限的人可用
 async def duplicate_cmd(interaction: discord.Interaction, gamename: str):
     if interaction.guild_id != GUILD_ID:
         return await interaction.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
+
     await interaction.response.defer(ephemeral=True)
     try:
         msg = await duplicate_section(interaction.client, interaction.guild, gamename)
