@@ -175,14 +175,23 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
     return f"新分區：#{new_cat.name}；新角色：{new_role.name}"
 
 # ---------- Channel Helper ----------
-def _category_from_ctx_channel(ch):
-    import discord
+def _category_from_ctx_channel(ch: Optional[discord.abc.GuildChannel]) -> Optional[discord.CategoryChannel]:
+    """從目前上下文 channel 取對應的 Category。
+    支援 Text/Voice/Stage/Forum 本身，以及 Forum 貼文 thread（discord.Thread）。"""
+    if ch is None:
+        return None
+
+    # 已經係一般可直接取 category 嘅類型
     if isinstance(ch, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
-        return ch.category
-    if isinstance(ch, discord.Thread):  # Forum 的 post 其實就是 Thread
-        parent = ch.parent
-        if isinstance(parent, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+        return ch.category  # 直接有 .category
+
+    # 如果係貼文／thread，就向上找 parent 再取其 category
+    if isinstance(ch, discord.Thread):
+        parent = ch.parent  # TextChannel 或 ForumChannel
+        if isinstance(parent, (discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel)):
             return parent.category
+        return None
+
     return None
 
 # ---------- Temp VC（臨時語音房） ----------
