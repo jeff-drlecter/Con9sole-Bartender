@@ -321,20 +321,20 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     # --- Logging: Voice Join / Leave / Move ---
     if before.channel != after.channel:
         if not before.channel and after.channel:
-            await _send_log(
-                member.guild,
-                _emb("Voice Join", f"🔊 {member.mention} 加入 **{after.channel.name}**", 0x57F287)
-            )
-        elif before.channel and not after.channel:
-            await _send_log(
-                member.guild,
-                _emb("Voice Leave", f"🔇 {member.mention} 離開 **{before.channel.name}**", 0xED4245)
-            )
-        else:
-            await _send_log(
-                member.guild,
-                _emb("Voice Move", f"🔁 {member.mention} 從 **{before.channel.name}** → **{after.channel.name}**", 0xFEE75C)
-            )
+    await _send_log(
+        member.guild,
+        _emb("Voice Join", f"🔊 {member.mention} 加入 {after.channel.mention}", 0x57F287)
+    )
+elif before.channel and not after.channel:
+    await _send_log(
+        member.guild,
+        _emb("Voice Leave", f"🔇 {member.mention} 離開 {before.channel.mention}", 0xED4245)
+    )
+else:
+    await _send_log(
+        member.guild,
+        _emb("Voice Move", f"🔁 {member.mention} 從 {before.channel.mention} → {after.channel.mention}", 0xFEE75C)
+    )
 
     # --- Temp VC 自動刪除邏輯 ---
     if before.channel and _is_temp_vc_id(before.channel.id):
