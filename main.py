@@ -38,7 +38,14 @@ TEMP_VC_PREFIX: str = "Temp • "               # 自動命名的前綴
 # =================================
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-intents = discord.Intents(guilds=True, voice_states=True)
+
+intents = discord.Intents.default()
+intents.guilds = True
+intents.voice_states = True
+intents.members = True          # <- 對應「SERVER MEMBERS INTENT」
+intents.presences = True        # <- 對應「PRESENCE INTENT」
+intents.message_content = True  # <- 如果 Developer Portal 開咗「MESSAGE CONTENT INTENT」
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=GUILD_ID)  # guild-scope 同步（秒生效）
 
@@ -375,6 +382,28 @@ async def tu_cmd(inter: discord.Interaction, members: str):
 
     await inter.followup.send(result)
 
+
+# ---------- Welcome Message ----------
+WELCOME_CHANNEL_ID: int = 123456789012345678  # 改成歡迎訊息要發送嘅頻道 ID
+RULES_CHANNEL_ID: int = 223456789012345678   # #rules 頻道 ID
+GUIDE_CHANNEL_ID: int = 323456789012345678   # #教學 頻道 ID
+SUPPORT_CHANNEL_ID: int = 423456789012345678 # #支援 頻道 ID
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """新成員加入伺服器時發送歡迎訊息"""
+    channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
+    if not channel:
+        return
+
+    msg = (
+        f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
+        f"📜 請先細心閱讀 {member.guild.get_channel(1278976821710426133).mention}\n"
+        f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {member.guild.get_channel(1279074807685578885).mention}\n"
+        f"💬 如果有任何疑問，請到 {member.guild.get_channel(1362781427287986407).mention} 講聲 **hi**，會有專人協助你。\n\n"
+        f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
+    )
+    await channel.send(msg)
 
 # ---------- Lifecycle ----------
 @bot.event
