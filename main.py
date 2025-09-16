@@ -241,46 +241,59 @@ def _cancel_delete_task(channel_id: int):
 @app_commands.guilds(TARGET_GUILD)
 @app_commands.describe(
     name="語音房名稱（可選）",
-    limit="人數上限（可選，1-99；不填即不限）"
+    limit="人數上限（可選；不填＝無限制）"
 )
 @app_commands.check(user_can_run_tempvc)
 async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: Optional[int] = None):
     if not inter.guild:
         return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
-    # 目標 Category = 你下指令的文字/語音/論壇頻道所在 Category；若無，落在伺服器根目錄
-    category = _category_from_ctx_channel(inter.channel)
+    # 目標 Category = 你落命令嘅地方：
+    # - 普通文字/語音/舞台：用該 channel 所屬的 category
+    # - Forum「貼文」(thread)：拿 thread.parent(Forum) 的 category
+    category: Optional[discord.CategoryChannel] = None
+    ch_ctx = inter.channel
 
-    vc_name = (name or "臨時語音").strip()
-    vc_name = f"{TEMP_VC_PREFIX}{vc_name}"
+    if isinstance(ch_ctx, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+        category = ch_ctx.category
+    elif isinstance(ch_ctx, discord.Thread):
+        parent = ch_ctx.parent  # Forum 貼文的上層
+        if isinstance(parent, discord.ForumChannel):
+            category = parent.category
 
-    # 準備參數：最高 bitrate +（可選）人數上限
-    max_bitrate = inter.guild.bitrate_limit  # 伺服器允許嘅最高值
-    kwargs = {"bitrate": max_bitrate}
-    if isinstance(limit, int):
-        # Discord user_limit 有效範圍 1-99；超界就夾番入去
-        limit = max(1, min(99, limit))
+    vc_name = f"{TEMP_VC_PREFIX}{(name or '臨時語音').strip()}"
+
+    # 公開訊息（唔用 ephemeral）
+    await inter.response.defer(ephemeral=False)
+
+    # bitrate 用伺服器支援最高；limit 由參數決定（不填＝無上限）
+    max_bitrate = inter.guild.bitrate_limit  # 單位：bps
+    kwargs: Dict[str, object] = {"bitrate": max_bitrate}
+    if limit is not None:
+        # Discord 限定 1–99；你可以自行調整範圍
+        limit = max(1, min(99, int(limit)))
         kwargs["user_limit"] = limit
 
-    await inter.response.defer(ephemeral=True)
-
+    # 建立語音房
     ch = await inter.guild.create_voice_channel(
-        vc_name,
-        category=category,
-        reason="Create temp VC (bartender)",
-        **kwargs
+        vc_name, category=category, reason="Create temp VC (bartender)", **kwargs
+    )
+    TEMP_VC_IDS.add(ch.id)
+
+    await _maybe_log(
+        inter.guild,
+        f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}"
     )
 
-    TEMP_VC_IDS.add(ch.id)
-    await _maybe_log(inter.guild, f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}，bitrate={max_bitrate/1000:.0f}kbps，limit={kwargs.get('user_limit','不限')}）於 {category.name if category else '根目錄'}")
-
-    # 建立後立即檢查是否需要排程刪除（如果無人）
+    # 若房內無人 → 安排自動刪除
     await _schedule_delete_if_empty(ch)
 
-    await inter.followup.send(
-        f"✅ 已建立語音房：**{ch.name}**（bitrate={max_bitrate/1000:.0f}kbps，limit={kwargs.get('user_limit','不限')}）",
-        ephemeral=True
+    # 公開回覆：@召喚者 + 顯示房名(mention) + bitrate/limit
+    msg = (
+        f"你好 {inter.user.mention} ，✅ 房間已經安排好 → {ch.mention}\n"
+        f"（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or '無限制'}）"
     )
+    await inter.followup.send(msg)
 
 # ===== Slash: /vc_teardown =====
 @bot.tree.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
