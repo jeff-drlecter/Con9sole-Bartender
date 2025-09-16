@@ -39,12 +39,10 @@ TEMP_VC_PREFIX: str = "Temp • "               # 自動命名的前綴
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-intents = discord.Intents.default()
-intents.guilds = True
-intents.voice_states = True
-intents.members = True          # <- 對應「SERVER MEMBERS INTENT」
-intents.presences = True        # <- 對應「PRESENCE INTENT」
-intents.message_content = True  # <- 如果 Developer Portal 開咗「MESSAGE CONTENT INTENT」
+intents = discord.Intents(
+    guilds=True, members=True, voice_states=True,
+    messages=True, message_content=True
+)
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=GUILD_ID)  # guild-scope 同步（秒生效）
@@ -313,13 +311,35 @@ async def vc_teardown(inter: discord.Interaction, channel: Optional[discord.Voic
     await target.delete(reason="Manual teardown temp VC")
     await inter.followup.send("✅ 已刪除。", ephemeral=True)
 
+
 # 監聽語音人數變化 → 決定是否安排／取消自動刪除
+# ---- Voice Events（合併你既 Temp VC 清房邏輯）----
+# 你已經有 on_voice_state_update；在函式最前面補上以下三行 logging（然後保留你原本的 Temp VC 檢查）
+# 放到你現有 on_voice_state_update 的開頭即可：
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    # 離開房間：檢查 before.channel
+    # --- Logging: Voice Join / Leave / Move ---
+    if before.channel != after.channel:
+        if not before.channel and after.channel:
+            await _send_log(
+                member.guild,
+                _emb("Voice Join", f"🔊 {member.mention} 加入 **{after.channel.name}**", 0x57F287)
+            )
+        elif before.channel and not after.channel:
+            await _send_log(
+                member.guild,
+                _emb("Voice Leave", f"🔇 {member.mention} 離開 **{before.channel.name}**", 0xED4245)
+            )
+        else:
+            await _send_log(
+                member.guild,
+                _emb("Voice Move", f"🔁 {member.mention} 從 **{before.channel.name}** → **{after.channel.name}**", 0xFEE75C)
+            )
+
+    # --- Temp VC 自動刪除邏輯 ---
     if before.channel and _is_temp_vc_id(before.channel.id):
         await _schedule_delete_if_empty(before.channel)
-    # 進入房間：取消 before/after 的刪除計劃（避免有人時誤刪）
+
     if after.channel and _is_temp_vc_id(after.channel.id):
         _cancel_delete_task(after.channel.id)
 
@@ -404,6 +424,140 @@ async def on_member_join(member: discord.Member):
         f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
     )
     await channel.send(msg)
+
+
+# ---------- Server Logging (replace Dyno) ----------
+LOG_CHANNEL_ID: int = 1401346745346297966  # ← 改成你的「log」頻道 ID
+
+def _log_chan(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    ch = guild.get_channel(LOG_CHANNEL_ID)
+    return ch if isinstance(ch, discord.TextChannel) else None
+
+def _emb(title: str, desc: str = "", color: int = 0x5865F2) -> discord.Embed:
+    e = discord.Embed(title=title, description=desc, color=color)
+    e.timestamp = discord.utils.utcnow()
+    return e
+
+async def _send_log(guild: discord.Guild, embed: discord.Embed):
+    ch = _log_chan(guild)
+    if ch:
+        await ch.send(embed=embed)
+
+# ---- Message Events ----
+@bot.event
+async def on_message_delete(message: discord.Message):
+    if not message.guild or message.author.bot:
+        return
+    # 可能沒有 message_content intent → 以防萬一做保護
+    content = message.content if hasattr(message, "content") else ""
+    files = ""
+    if getattr(message, "attachments", None):
+        files = "\n📎 附件：" + ", ".join(a.filename for a in message.attachments)
+    desc = f"🧹 **{message.author}** 的訊息被刪除於 {message.channel.mention}\n" \
+           f"內容：{(content[:1900] + '…') if content and len(content)>1900 else (content or '（無內容或未啟用 Message Content Intent）')}{files}"
+    await _send_log(message.guild, _emb("Message Delete", desc, 0xED4245))
+
+@bot.event
+async def on_bulk_message_delete(messages: list[discord.Message]):
+    if not messages:
+        return
+    g = messages[0].guild
+    if not g:
+        return
+    await _send_log(g, _emb("Bulk Message Delete", f"一次刪除了 **{len(messages)}** 則訊息。", 0xED4245))
+
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    if not before.guild or before.author.bot:
+        return
+    # 只有內容變更才 log
+    if before.content == after.content:
+        return
+    b = before.content or "（空）"
+    a = after.content or "（空）"
+    desc = f"✏️ **{before.author}** 在 {before.channel.mention} 編輯了訊息：\n" \
+           f"**Before**：{b[:900]}\n**After**：{a[:900]}"
+    await _send_log(before.guild, _emb("Message Edit", desc, 0xFEE75C))
+
+# ---- Member Events ----
+@bot.event
+async def on_member_join(member: discord.Member):
+    await _send_log(member.guild, _emb("Member Join", f"👋 {member.mention} 加入伺服器。", 0x57F287))
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await _send_log(member.guild, _emb("Member Leave", f"👋 {member} 離開伺服器。", 0xED4245))
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    # 暱稱
+    if before.nick != after.nick:
+        desc = f"🪪 {after.mention} 暱稱變更：\n**Before**：{before.nick or '（無）'}\n**After**：{after.nick or '（無）'}"
+        await _send_log(after.guild, _emb("Nickname Change", desc, 0x5865F2))
+    # 角色增減
+    broles = {r.id for r in before.roles}
+    aroles = {r.id for r in after.roles}
+    added = [r for r in after.roles if r.id not in broles and r.name != "@everyone"]
+    removed = [r for r in before.roles if r.id not in aroles and r.name != "@everyone"]
+    if added:
+        await _send_log(after.guild, _emb("Member Role Add",
+            f"➕ {after.mention} 新增角色： " + ", ".join(r.mention for r in added), 0x57F287))
+    if removed:
+        await _send_log(after.guild, _emb("Member Role Remove",
+            f"➖ {after.mention} 移除角色： " + ", ".join(r.name for r in removed), 0xED4245))
+
+@bot.event
+async def on_member_ban(guild: discord.Guild, user: discord.User):
+    await _send_log(guild, _emb("Member Ban", f"🔨 封鎖：**{user}**", 0xED4245))
+
+@bot.event
+async def on_member_unban(guild: discord.Guild, user: discord.User):
+    await _send_log(guild, _emb("Member Unban", f"🕊️ 解除封鎖：**{user}**", 0x57F287))
+
+# ---- Role Events ----
+@bot.event
+async def on_guild_role_create(role: discord.Role):
+    await _send_log(role.guild, _emb("Role Create", f"🎭 建立角色：**{role.name}**", 0x57F287))
+
+@bot.event
+async def on_guild_role_delete(role: discord.Role):
+    await _send_log(role.guild, _emb("Role Delete", f"🗑️ 刪除角色：**{role.name}**", 0xED4245))
+
+@bot.event
+async def on_guild_role_update(before: discord.Role, after: discord.Role):
+    if before.name != after.name:
+        await _send_log(after.guild, _emb("Role Update", f"✏️ 角色改名：**{before.name}** → **{after.name}**", 0xFEE75C))
+
+# ---- Channel Events ----
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    await _send_log(channel.guild, _emb("Channel Create", f"📦 建立：{channel.mention if hasattr(channel,'mention') else '#'+channel.name}", 0x57F287))
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    await _send_log(channel.guild, _emb("Channel Delete", f"🗑️ 刪除：**#{channel.name}**", 0xED4245))
+
+@bot.event
+async def on_guild_channel_update(before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
+    if before.name != after.name:
+        await _send_log(after.guild, _emb("Channel Update", f"✏️ 頻道改名：**#{before.name}** → **#{after.name}**", 0xFEE75C))
+
+# ---- Emoji Events ----
+@bot.event
+async def on_guild_emojis_update(guild: discord.Guild, before: list[discord.Emoji], after: list[discord.Emoji]):
+    bmap = {e.id: e for e in before}
+    amap = {e.id: e for e in after}
+    created = [e for e in after if e.id not in bmap]
+    deleted = [e for e in before if e.id not in amap]
+    renamed = [ (bmap[i], amap[i]) for i in set(bmap).intersection(amap) if bmap[i].name != amap[i].name ]
+    if created:
+        await _send_log(guild, _emb("Emoji Create", "😀 新增：" + ", ".join(e.name for e in created), 0x57F287))
+    if deleted:
+        await _send_log(guild, _emb("Emoji Delete", "🫥 刪除：" + ", ".join(e.name for e in deleted), 0xED4245))
+    for bef, aft in renamed:
+        await _send_log(guild, _emb("Emoji Rename", f"✏️ **{bef.name}** → **{aft.name}**", 0xFEE75C))
+
+
 
 # ---------- Lifecycle ----------
 @bot.event
