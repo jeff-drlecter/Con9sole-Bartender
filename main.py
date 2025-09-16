@@ -1,50 +1,55 @@
 # Con9sole-Bartender — main.py
-# - Guild-only slash commands
-# - /ping, /duplicate
-# - /duplicate 只限 Admin 或 Helper 角色使用
-# - 會複製模板分區內的 Text/Voice/Stage/Forum，並補上 FALLBACK_CHANNELS
-# - 複製 Forum Tags
-# - 使用環境變數 DISCORD_BOT_TOKEN（如無則回退 DISCORD_TOKEN）
+# 功能：
+# 1) /duplicate 依模板分區建立新遊戲分區（含 Forum/Stage/Tags）
+#    只有「Administrator」或「Manage Channels」可用
+# 2) /vc_new、/vc_teardown 建立／移除臨時語音房（空房 120 秒自動刪除）
+#    任何擁有 VERIFIED_ROLE_ID 的成員都可用（無須管理權），管理員亦可用
 
 import os
-from typing import Dict, Optional, List
+import asyncio
+from typing import Dict, Optional, List, Set
+
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 
 # ====== 你的伺服器/模板設定 ======
-GUILD_ID: int = 626378673523785731
-TEMPLATE_CATEGORY_ID: int = 1417446665626849343
-TEMPLATE_FORUM_ID: Optional[int] = 1417446670526058519  # 可選：用來複製 Forum Tags
+GUILD_ID: int = 626378673523785731                     # 伺服器
+TEMPLATE_CATEGORY_ID: int = 1417446665626849343        # 模板 Category
+TEMPLATE_FORUM_ID: Optional[int] = 1417446670526058519 # 可選；用作複製 forum tags
 
-CATEGORY_NAME_PATTERN = "{game}"
-ROLE_NAME_PATTERN = "{game}"
+CATEGORY_NAME_PATTERN = "{game}"   # 新分區命名
+ROLE_NAME_PATTERN = "{game}"       # 新角色命名
+ADMIN_ROLE_IDS: List[int] = []     # 額外管理角色（可留空）
 
-ADMIN_ROLE_IDS: List[int] = []                     # 固定管理角色（可留空）
-HELPER_ROLE_IDS: List[int] = [1279071042249162856] # ✅ 你的 Helper Role ID
-
+# 後備頻道（當模板無該類型時會建立）
 FALLBACK_CHANNELS = {
     "text": ["read-me", "活動（未有）"],
     "forum": "分區討論區",
-    "voice": ["小隊Call 1", "小隊Call 2"]
+    "voice": ["小隊Call 1", "小隊Call 2"],
 }
+
+# 臨時語音房設定
+VERIFIED_ROLE_ID: int = 1279040517451022419   # 擁有此角色即可用 /vc_new、/vc_teardown
+TEMP_VC_EMPTY_SECONDS: int = 120              # 無人時自動刪除的等待秒數
+TEMP_VC_PREFIX: str = "Temp • "               # 自動命名的前綴
+
 # =================================
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
-if not TOKEN:
-    raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN（或 DISCORD_TOKEN）環境變數，請設定後再啟動。")
-
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 intents = discord.Intents(guilds=True, voice_states=True)
 bot = commands.Bot(command_prefix="!", intents=intents)
-TARGET_GUILD = discord.Object(id=GUILD_ID)
+TARGET_GUILD = discord.Object(id=GUILD_ID)  # guild-scope 同步（秒生效）
 
-# ---------- Helpers ----------
+# ---- Temp VC 內部狀態 ----
+TEMP_VC_IDS: Set[int] = set()
+_PENDING_DELETE_TASKS: Dict[int, asyncio.Task] = {}
+
+# ---------- 共用 Helper ----------
 def make_private_overwrites(
     guild: discord.Guild, allow_roles: List[discord.Role], manage_roles: List[discord.Role]
 ) -> Dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
-    ow: Dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False)
-    }
+    ow = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
     for r in allow_roles:
         ow[r] = discord.PermissionOverwrite(
             view_channel=True, send_messages=True, read_message_history=True,
@@ -61,9 +66,6 @@ def make_private_overwrites(
         ow[r] = curr
     return ow
 
-def clone_overwrites_from(src: Optional[discord.abc.GuildChannel]) -> Dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
-    return {} if not src else {target: ow for target, ow in src.overwrites.items()}
-
 async def copy_forum_tags(src_forum: discord.ForumChannel, dst_forum: discord.ForumChannel):
     tags = src_forum.available_tags
     if not tags:
@@ -73,17 +75,14 @@ async def copy_forum_tags(src_forum: discord.ForumChannel, dst_forum: discord.Fo
     await dst_forum.edit(available_tags=new_tags, reason="Clone forum tags")
     print(f"   ✅ 已複製 Forum Tags：{len(new_tags)}")
 
-def user_is_admin_or_helper(inter: discord.Interaction) -> bool:
-    """允許：Administrator／Manage Channels／擁有 HELPER_ROLE_IDS 指定角色"""
+# ---------- Duplicate（建立新分區） ----------
+def user_is_section_admin(inter: discord.Interaction) -> bool:
+    """只有 Administrator 或 Manage Channels 才可用 /duplicate。"""
     if not inter.user or not isinstance(inter.user, discord.Member):
         return False
     m: discord.Member = inter.user
     perms = m.guild_permissions
-    if perms.administrator or perms.manage_channels:
-        return True
-    if HELPER_ROLE_IDS and any(r.id in HELPER_ROLE_IDS for r in m.roles):
-        return True
-    return False
+    return bool(perms.administrator or perms.manage_channels)
 
 async def duplicate_section(client: discord.Client, guild: discord.Guild, game_name: str) -> str:
     # 取得模板 Category 及其子頻道
@@ -98,270 +97,152 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
     template_children = [c for c in all_chans if getattr(c, "category_id", None) == template_cat.id]
     print(f"▶️ 模板分區：#{template_cat.name}（{template_cat.id}） 子頻道：{len(template_children)}")
 
-    # 建新 Role（若存在則重用）
+    # 角色
     role_name = ROLE_NAME_PATTERN.format(game=game_name)
     new_role = discord.utils.get(guild.roles, name=role_name)
     if not new_role:
         new_role = await guild.create_role(name=role_name, hoist=False, mentionable=True, reason="Create game role")
         print(f"✅ 已建立角色：{new_role.name}（{new_role.id}）")
-    else:
-        print(f"ℹ️ 角色已存在：{new_role.name}（{new_role.id}）")
 
-    admin_roles = [r for rid in ADMIN_ROLE_IDS if (r := guild.get_role(rid))]
+    admin_roles = [guild.get_role(rid) for rid in ADMIN_ROLE_IDS if guild.get_role(rid)]
 
-    # 建新 Category（先設私密權限）
+    # 新分區
     cat_name = CATEGORY_NAME_PATTERN.format(game=game_name)
     new_cat = await guild.create_category(name=cat_name, reason="Create new game section")
     await new_cat.edit(overwrites=make_private_overwrites(guild, [new_role], admin_roles))
     print(f"✅ 已建立分區：#{new_cat.name}（{new_cat.id}）並套用私密權限。")
 
-    # 建頻道：先按模板複製；再補 fallback
     created_forum: Optional[discord.ForumChannel] = None
-    existing_names = set()
 
-    async def ensure_text(name: str, tmpl: Optional[discord.TextChannel]):
-        if name in existing_names: return
-        ow = clone_overwrites_from(tmpl) or make_private_overwrites(guild, [new_role], admin_roles)
-        ch = await guild.create_text_channel(name=name, category=new_cat, overwrites=ow)
-        existing_names.add(name)
-        print(f"   📝 Text：#{ch.name} ✅")
-
-    async def ensure_voice(name: str, tmpl: Optional[discord.VoiceChannel]):
-        if name in existing_names: return
-        ow = clone_overwrites_from(tmpl) or make_private_overwrites(guild, [new_role], admin_roles)
-        kwargs = {}
-        if tmpl:
-            if tmpl.bitrate is not None: kwargs["bitrate"] = tmpl.bitrate
-            if tmpl.user_limit is not None: kwargs["user_limit"] = tmpl.user_limit
-            if tmpl.rtc_region is not None: kwargs["rtc_region"] = tmpl.rtc_region
-        ch = await guild.create_voice_channel(name=name, category=new_cat, overwrites=ow, **kwargs)
-        existing_names.add(name)
-        print(f"   🔊 Voice：{ch.name} ✅")
-
-    async def ensure_stage(name: str, tmpl: Optional[discord.StageChannel]):
-        if name in existing_names: return
-        ow = clone_overwrites_from(tmpl) or make_private_overwrites(guild, [new_role], admin_roles)
-        kwargs = {}
-        if tmpl and tmpl.rtc_region is not None:
-            kwargs["rtc_region"] = tmpl.rtc_region
-        ch = await guild.create_stage_channel(name=name, category=new_cat, overwrites=ow, **kwargs)
-        existing_names.add(name)
-        print(f"   🎤 Stage：{ch.name} ✅")
-
-    async def ensure_forum(name: str, tmpl: Optional[discord.ForumChannel]):
-        nonlocal created_forum
-        if created_forum: return
-        ow = clone_overwrites_from(tmpl) or make_private_overwrites(guild, [new_role], admin_roles)
-        created_forum = await guild.create_forum(name=name, category=new_cat, overwrites=ow)
-        print(f"   🗂️ Forum：#{created_forum.name} ✅")
-
-    # 1) 複製模板
+    # 依模板逐個建立
     for ch in template_children:
+        ow = make_private_overwrites(guild, [new_role], admin_roles)
+
         if isinstance(ch, discord.TextChannel):
-            await ensure_text(ch.name, ch)
+            await guild.create_text_channel(ch.name, category=new_cat, overwrites=ow)
+            print(f"  📝 Text：#{ch.name} ✅")
+
         elif isinstance(ch, discord.VoiceChannel):
-            await ensure_voice(ch.name, ch)
+            kwargs = {}
+            if ch.bitrate is not None: kwargs["bitrate"] = ch.bitrate
+            if ch.user_limit is not None: kwargs["user_limit"] = ch.user_limit
+            if ch.rtc_region is not None: kwargs["rtc_region"] = ch.rtc_region
+            await guild.create_voice_channel(ch.name, category=new_cat, overwrites=ow, **kwargs)
+            print(f"  🔊 Voice：{ch.name} ✅")
+
         elif isinstance(ch, discord.StageChannel):
-            await ensure_stage(ch.name, ch)
+            kwargs = {}
+            if ch.rtc_region is not None: kwargs["rtc_region"] = ch.rtc_region
+            await guild.create_stage_channel(ch.name, category=new_cat, overwrites=ow, **kwargs)
+            print(f"  🎤 Stage：{ch.name} ✅")
+
         elif isinstance(ch, discord.ForumChannel):
-            await ensure_forum(ch.name, ch)
-        else:
-            print(f"   （略過）{ch.name} 類型：{type(ch).__name__}")
+            created_forum = await guild.create_forum(ch.name, category=new_cat, overwrites=ow)
+            print(f"  🗂️ Forum：#{ch.name} ✅")
 
-    # 2) Fallback 補齊
-    for name in FALLBACK_CHANNELS.get("text", []) or []:
-        await ensure_text(name, None)
-    for name in FALLBACK_CHANNELS.get("voice", []) or []:
-        await ensure_voice(name, None)
-    fb_forum = FALLBACK_CHANNELS.get("forum")
-    if fb_forum and not created_forum:
-        await ensure_forum(fb_forum, None)
+    # 如果模板沒有 Forum，用後備
+    if not created_forum and FALLBACK_CHANNELS.get("forum"):
+        created_forum = await guild.create_forum(
+            FALLBACK_CHANNELS["forum"], category=new_cat,
+            overwrites=make_private_overwrites(guild, [new_role], admin_roles)
+        )
+        print(f"  🗂️ Forum（fallback）：#{created_forum.name} ✅")
 
-    # 3) 複製 Forum Tags
+    # 複製 Forum tags
     if created_forum:
         tag_src: Optional[discord.ForumChannel] = None
         if TEMPLATE_FORUM_ID:
-            maybe = guild.get_channel(TEMPLATE_FORUM_ID) or await bot.fetch_channel(TEMPLATE_FORUM_ID)
-            if isinstance(maybe, discord.ForumChannel):
-                tag_src = maybe
+            c = await client.fetch_channel(TEMPLATE_FORUM_ID)
+            if isinstance(c, discord.ForumChannel): tag_src = c
         if not tag_src:
             tag_src = next((c for c in template_children if isinstance(c, discord.ForumChannel)), None)
         if isinstance(tag_src, discord.ForumChannel):
             await copy_forum_tags(tag_src, created_forum)
 
-    return f"新分區：#{new_cat.name}；新角色：{new_role.name}（{new_role.id}）"
+    # 後備：如果模板完全沒有某些類型，補上
+    names_in_cat = {c.name for c in await guild.fetch_channels() if getattr(c, "category_id", None) == new_cat.id}
+    for tname in FALLBACK_CHANNELS.get("text", []):
+        if tname not in names_in_cat:
+            await guild.create_text_channel(tname, category=new_cat,
+                                            overwrites=make_private_overwrites(guild, [new_role], admin_roles))
+            print(f"  📝（fallback）Text：#{tname} ✅")
+    for vname in FALLBACK_CHANNELS.get("voice", []):
+        if vname not in names_in_cat:
+            await guild.create_voice_channel(vname, category=new_cat,
+                                             overwrites=make_private_overwrites(guild, [new_role], admin_roles))
+            print(f"  🔊（fallback）Voice：{vname} ✅")
 
-# ---------- Slash Commands（Guild-only）----------
-@bot.tree.command(name="ping", description="Health check")
-@app_commands.guilds(TARGET_GUILD)
-async def ping_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(f"Pong! 🏓 {round(bot.latency*1000)}ms", ephemeral=True)
+    return f"新分區：#{new_cat.name}；新角色：{new_role.name}"
 
-@bot.tree.command(
-    name="duplicate",
-    description="複製模板分區，建立新遊戲分區（含 Forum/Stage/Tags）",
-)
-@app_commands.guilds(TARGET_GUILD)
-@app_commands.default_permissions(manage_channels=True)  # ✅ 舊版兼容做法
-@app_commands.describe(gamename="新遊戲名稱（例如：Delta Force）")
-@app_commands.check(user_is_admin_or_helper)
-async def duplicate_cmd(interaction: discord.Interaction, gamename: str):
-    if interaction.guild_id != GUILD_ID:
-        return await interaction.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        msg = await duplicate_section(interaction.client, interaction.guild, gamename.strip())
-        await interaction.followup.send(f"✅ {msg}", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.followup.send("❌ 權限不足：請確保 Bot 擁有 Manage Channels / Manage Roles。", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ 出錯：{e}", ephemeral=True)
-
-@duplicate_cmd.error
-async def duplicate_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message("❌ 你沒有權限使用此指令。", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ 發生錯誤，請稍後再試。", ephemeral=True)
-        raise error
-
-# ====== Temp VC（臨時語音房）設定 ======
-# 任何擁有以下其中一個 Role 的會員，都可以用 /vc_new /vc_teardown
-ALLOWED_TEMPVC_ROLE_IDS: list[int] = [
-    1279040517451022419,  # ← 你指定嘅 role（Verified/TempVC 允許角色）
-]
-
-# 空房自動刪除延遲（秒）
-TEMP_VC_AUTODELETE_SECONDS = 120
-
-# 如要把操作記錄到某個 mod-log 文字頻道，可填入其 channel ID；唔用就 None
-MOD_LOG_CHANNEL_ID: Optional[int] = None
-
-
-# 允許使用 Temp VC 指令的檢查（Admin / Manage Channels / 或擁有上面 ALLOWED_TEMPVC_ROLE_IDS 任一角色）
+# ---------- Temp VC（臨時語音房） ----------
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
+    """擁有 VERIFIED_ROLE_ID，或管理員/可管頻道者，可用 temp VC 指令。"""
     if not inter.user or not isinstance(inter.user, discord.Member):
         return False
     m: discord.Member = inter.user
     perms = m.guild_permissions
     if perms.administrator or perms.manage_channels:
         return True
-    if ALLOWED_TEMPVC_ROLE_IDS and any(r.id in ALLOWED_TEMPVC_ROLE_IDS for r in m.roles):
-        return True
-    return False
+    return any(r.id == VERIFIED_ROLE_ID for r in m.roles)
 
-
-# ====== Temp VC 內部狀態 ======
-TEMP_VC_IDS: set[int] = set()                # 記錄由 Bot 建立嘅臨時 VC（重啟會清空，free tier 友善）
-_PENDING_DELETE_TASKS: dict[int, asyncio.Task] = {}  # 避免重覆安排刪除
-
+def _is_temp_vc_id(cid: int) -> bool:
+    return cid in TEMP_VC_IDS
 
 async def _maybe_log(guild: discord.Guild, text: str):
-    if MOD_LOG_CHANNEL_ID:
-        ch = guild.get_channel(MOD_LOG_CHANNEL_ID)
-        if isinstance(ch, discord.TextChannel):
-            try:
-                await ch.send(text)
-            except Exception:
-                pass
+    print(text)
 
-
-def _is_temp_vc_id(cid: Optional[int]) -> bool:
-    return bool(cid and cid in TEMP_VC_IDS)
-
-
-async def _schedule_delete_if_empty(vc: discord.VoiceChannel):
-    """安排空房延遲刪除；期間如果有人加入會自動取消"""
-    if vc.id in _PENDING_DELETE_TASKS:
-        return
-
+async def _schedule_delete_if_empty(channel: discord.VoiceChannel):
+    """如語音房無人，安排在 TEMP_VC_EMPTY_SECONDS 後刪除；有人就取消。"""
     async def _task():
         try:
-            await asyncio.sleep(TEMP_VC_AUTODELETE_SECONDS)
-            fresh = vc.guild.get_channel(vc.id)
-            if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0:
-                TEMP_VC_IDS.discard(vc.id)
-                await _maybe_log(vc.guild, f"🗑️ 自動刪除空置 Temp VC：#{vc.name}（id={vc.id}）")
-                await vc.delete(reason="Auto delete empty Temp VC")
+            await asyncio.sleep(TEMP_VC_EMPTY_SECONDS)
+            if len(channel.members) == 0 and _is_temp_vc_id(channel.id):
+                await _maybe_log(channel.guild, f"🧹 自動刪除空房：#{channel.name}（id={channel.id}）")
+                TEMP_VC_IDS.discard(channel.id)
+                await channel.delete(reason="Temp VC idle timeout")
         finally:
-            _PENDING_DELETE_TASKS.pop(vc.id, None)
+            _PENDING_DELETE_TASKS.pop(channel.id, None)
 
-    _PENDING_DELETE_TASKS[vc.id] = asyncio.create_task(_task())
+    # 先取消舊 task
+    old = _PENDING_DELETE_TASKS.pop(channel.id, None)
+    if old and not old.done():
+        old.cancel()
+    # 再判斷是否需要新 task
+    if len(channel.members) == 0:
+        _PENDING_DELETE_TASKS[channel.id] = asyncio.create_task(_task())
 
+def _cancel_delete_task(channel_id: int):
+    task = _PENDING_DELETE_TASKS.pop(channel_id, None)
+    if task and not task.done():
+        task.cancel()
 
-async def create_temp_vc(
-    guild: discord.Guild,
-    name: str,
-    *,
-    category: Optional[discord.CategoryChannel] = None,
-    user_limit: Optional[int] = None,
-):
-    """
-    在指定 category 內建立 VC，並與該 category 權限同步（不設自訂 overwrites）。
-    亦即：繼承分區權限 → 只有該分區本身能見到/進入的人可以用。
-    """
-    vc = await guild.create_voice_channel(
-        name=name,
-        category=category,           # 跟該分區
-        overwrites=None,             # 不覆蓋 → 直接繼承分區權限
-        user_limit=user_limit or 0,  # 0 = 無上限
-        reason="Create temporary VC (inherit category perms)",
-    )
-    TEMP_VC_IDS.add(vc.id)
-    await _maybe_log(guild, f"🆕 建立 Temp VC（跟分區權限）：{vc.mention}（id={vc.id}）")
-    return vc
-
-
-@bot.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    """
-    監聽語音狀態：
-    - 離開 Temp VC 後，如果該房無人 → 安排延時刪除。
-    - 加入 Temp VC → 若之前有刪除計劃則取消。
-    """
-    try:
-        if before.channel and _is_temp_vc_id(before.channel.id):
-            if len(before.channel.members) == 0:
-                await _schedule_delete_if_empty(before.channel)
-
-        if after.channel and _is_temp_vc_id(after.channel.id):
-            task = _PENDING_DELETE_TASKS.pop(after.channel.id, None)
-            if task and not task.done():
-                task.cancel()
-    except Exception:
-        # 靜默忽略，避免影響其他功能
-        pass
-
-
-# ========== Slash Commands：Temp VC ==========
-@bot.tree.command(name="vc_new", description="建立臨時語音房（清空 120 秒自動刪）")
+# ===== Slash: /vc_new =====
+@bot.tree.command(name="vc_new", description="建立一個臨時語音房（空房 120 秒自動刪除）")
 @app_commands.guilds(TARGET_GUILD)
-@app_commands.describe(
-    name="語音房名稱",
-    user_limit="人數上限（選填）",
-)
-@app_commands.check(user_can_run_tempvc)  # 允許：Admin/Manage Channels/指定角色
-async def vc_new(inter: discord.Interaction, name: str, user_limit: Optional[int] = None):
+@app_commands.describe(name="語音房名稱（可選）")
+@app_commands.check(user_can_run_tempvc)
+async def vc_new(inter: discord.Interaction, name: Optional[str] = None):
     if not inter.guild:
         return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
-    # 必須要喺某個分區入面用（用邊個分區，就喺嗰度開）
-    channel = inter.channel
+    # 目標 Category = 你下指令的文字頻道所在 Category；若無，落在伺服器根目錄
     category = None
-    if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
-        category = channel.category
-    if not isinstance(category, discord.CategoryChannel):
-        return await inter.response.send_message("請喺目標分區入面執行指令（要有上層 Category）。", ephemeral=True)
+    if isinstance(inter.channel, (discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel)):
+        category = inter.channel.category
+
+    vc_name = (name or "臨時語音").strip()
+    vc_name = f"{TEMP_VC_PREFIX}{vc_name}"
 
     await inter.response.defer(ephemeral=True)
-    vc = await create_temp_vc(inter.guild, name, category=category, user_limit=user_limit)
-    await inter.followup.send(
-        f"✅ 已建立臨時語音房：{vc.mention}（清空 {TEMP_VC_AUTODELETE_SECONDS}s 後自動刪）",
-        ephemeral=True
-    )
+    ch = await inter.guild.create_voice_channel(vc_name, category=category, reason="Create temp VC (bartender)")
+    TEMP_VC_IDS.add(ch.id)
+    await _maybe_log(inter.guild, f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
+    # 建立後立即檢查是否需要排程刪除（如果無人）
+    await _schedule_delete_if_empty(ch)
+    await inter.followup.send(f"✅ 已建立語音房：**{ch.name}**", ephemeral=True)
 
-
-@bot.tree.command(name="vc_teardown", description="手動刪除由 Bot 建立的臨時語音房")
+# ===== Slash: /vc_teardown =====
+@bot.tree.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
 @app_commands.guilds(TARGET_GUILD)
 @app_commands.describe(
     channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）"
@@ -385,12 +266,42 @@ async def vc_teardown(inter: discord.Interaction, channel: Optional[discord.Voic
         return await inter.followup.send("呢個唔係由 Bot 建立的臨時語音房。", ephemeral=True)
 
     TEMP_VC_IDS.discard(target.id)
-    task = _PENDING_DELETE_TASKS.pop(target.id, None)
-    if task and not task.done():
-        task.cancel()
-    await _maybe_log(inter.guild, f"🗑️ 手動刪除 Temp VC：#{target.name}（id={target.id}）")
+    _cancel_delete_task(target.id)
+    await _maybe_log(inter.guild, f"🗑️️  手動刪除 Temp VC：#{target.name}（id={target.id}）")
     await target.delete(reason="Manual teardown temp VC")
     await inter.followup.send("✅ 已刪除。", ephemeral=True)
+
+# 監聽語音人數變化 → 決定是否安排／取消自動刪除
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    # 離開房間：檢查 before.channel
+    if before.channel and _is_temp_vc_id(before.channel.id):
+        await _schedule_delete_if_empty(before.channel)
+    # 進入房間：取消 before/after 的刪除計劃（避免有人時誤刪）
+    if after.channel and _is_temp_vc_id(after.channel.id):
+        _cancel_delete_task(after.channel.id)
+
+# ---------- Slash：duplicate ----------
+@bot.tree.command(name="duplicate", description="複製模板分區，建立新遊戲分區（含 Forum/Stage/Tags）")
+@app_commands.guilds(TARGET_GUILD)
+@app_commands.describe(gamename="新遊戲名稱（例如：Delta Force）")
+@app_commands.check(lambda inter: user_is_section_admin(inter))
+async def duplicate_cmd(inter: discord.Interaction, gamename: str):
+    if inter.guild_id != GUILD_ID:
+        return await inter.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
+
+    await inter.response.defer(ephemeral=True)
+    try:
+        msg = await duplicate_section(inter.client, inter.guild, gamename)
+        await inter.followup.send(f"✅ {msg}", ephemeral=True)
+    except Exception as e:
+        await inter.followup.send(f"❌ 出錯：{e}", ephemeral=True)
+
+# ---------- Slash：ping ----------
+@bot.tree.command(name="ping", description="Bot 反應時間")
+@app_commands.guilds(TARGET_GUILD)
+async def ping_cmd(inter: discord.Interaction):
+    await inter.response.send_message(f"Pong! 🏓 {round(bot.latency * 1000)}ms", ephemeral=True)
 
 # ---------- Lifecycle ----------
 @bot.event
@@ -404,4 +315,6 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 if __name__ == "__main__":
+    if not TOKEN:
+        raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN 環境變數")
     bot.run(TOKEN)
