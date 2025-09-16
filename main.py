@@ -219,13 +219,16 @@ def _cancel_delete_task(channel_id: int):
 # ===== Slash: /vc_new =====
 @bot.tree.command(name="vc_new", description="建立一個臨時語音房（空房 120 秒自動刪除）")
 @app_commands.guilds(TARGET_GUILD)
-@app_commands.describe(name="語音房名稱（可選）")
+@app_commands.describe(
+    name="語音房名稱（可選）",
+    limit="人數上限（可選，1-99；不填即不限）"
+)
 @app_commands.check(user_can_run_tempvc)
-async def vc_new(inter: discord.Interaction, name: Optional[str] = None):
+async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: Optional[int] = None):
     if not inter.guild:
         return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
-    # 目標 Category = 你下指令的文字頻道所在 Category；若無，落在伺服器根目錄
+    # 目標 Category = 你下指令的文字/語音/論壇頻道所在 Category；若無，落在伺服器根目錄
     category = None
     if isinstance(inter.channel, (discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel)):
         category = inter.channel.category
@@ -233,13 +236,33 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None):
     vc_name = (name or "臨時語音").strip()
     vc_name = f"{TEMP_VC_PREFIX}{vc_name}"
 
+    # 準備參數：最高 bitrate +（可選）人數上限
+    max_bitrate = inter.guild.bitrate_limit  # 伺服器允許嘅最高值
+    kwargs = {"bitrate": max_bitrate}
+    if isinstance(limit, int):
+        # Discord user_limit 有效範圍 1-99；超界就夾番入去
+        limit = max(1, min(99, limit))
+        kwargs["user_limit"] = limit
+
     await inter.response.defer(ephemeral=True)
-    ch = await inter.guild.create_voice_channel(vc_name, category=category, reason="Create temp VC (bartender)",bitrate=inter.guild.bitrate_limit)
+
+    ch = await inter.guild.create_voice_channel(
+        vc_name,
+        category=category,
+        reason="Create temp VC (bartender)",
+        **kwargs
+    )
+
     TEMP_VC_IDS.add(ch.id)
-    await _maybe_log(inter.guild, f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
+    await _maybe_log(inter.guild, f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}，bitrate={max_bitrate/1000:.0f}kbps，limit={kwargs.get('user_limit','不限')}）於 {category.name if category else '根目錄'}")
+
     # 建立後立即檢查是否需要排程刪除（如果無人）
     await _schedule_delete_if_empty(ch)
-    await inter.followup.send(f"✅ 已建立語音房：**{ch.name}**", ephemeral=True)
+
+    await inter.followup.send(
+        f"✅ 已建立語音房：**{ch.name}**（bitrate={max_bitrate/1000:.0f}kbps，limit={kwargs.get('user_limit','不限')}）",
+        ephemeral=True
+    )
 
 # ===== Slash: /vc_teardown =====
 @bot.tree.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
