@@ -1,13 +1,16 @@
 app = "con9sole-bartender"
 primary_region = "hkg"
 
+# 部署前先做語法檢查；唔通過就唔切流量
+release_command = "python -m py_compile main.py"
+
 [processes]
-app = "python main.py"
+  app = "python main.py"
 
 [vm]
-cpu_kind = "shared"
-cpus = 1
-memory_mb = 1024
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 1024
 
 [experimental]
-auto_rollback = true
+  auto_rollback = true
