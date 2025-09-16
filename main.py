@@ -40,7 +40,7 @@ TEMP_VC_EMPTY_SECONDS: int = 120              # 無人時自動刪除的等待�
 TEMP_VC_PREFIX: str = "Temp • "               # 自動命名前綴
 
 # 歡迎訊息發送位置（請換成你嘅頻道 ID）
-WELCOME_CHANNEL_ID: int = 123456789012345678  # 歡迎訊息要發送嘅頻道
+WELCOME_CHANNEL_ID: int = 1010456227769229355  # 歡迎訊息要發送嘅頻道
 RULES_CHANNEL_ID: int   = 1278976821710426133 # #rules
 GUIDE_CHANNEL_ID: int   = 1279074807685578885 # #教學
 SUPPORT_CHANNEL_ID: int = 1362781427287986407 # #支援
@@ -410,20 +410,34 @@ async def tu_cmd(inter: discord.Interaction, members: str):
     )
     await inter.followup.send(result)
 
-# ---------- Welcome + Logging（合併處理） ----------
+# ---- Member Events ----
+def _role_mention_safe(role: discord.Role) -> str:
+    try:
+        return role.mention  # 通常可點擊
+    except Exception:
+        return f"@{getattr(role, 'name', '（未知角色）')}"
+
 @bot.event
 async def on_member_join(member: discord.Member):
-    # 歡迎訊息（公開發喺指定頻道）
-    ch = member.guild.get_channel(1010456227769229355)
-    if isinstance(ch, discord.TextChannel):
-        msg = (
-            f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
-            f"📜 請先細心閱讀 {member.guild.get_channel(1278976821710426133).mention}\n"
-            f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {member.guild.get_channel(1279074807685578885).mention}\n"
-            f"💬 如果有任何疑問，請到 {member.guild.get_channel(1362781427287986407).mention} 講聲 **hi**，會有專人協助你。\n\n"
-            f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
-        )
-        await ch.send(msg)
+    """新成員加入伺服器時發送歡迎訊息"""
+    channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
+    if not channel:
+        return
+
+    rules_ch = member.guild.get_channel(RULES_CHANNEL_ID)
+    guide_ch = member.guild.get_channel(GUIDE_CHANNEL_ID)
+    support_ch = member.guild.get_channel(SUPPORT_CHANNEL_ID)
+
+    msg = (
+        f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
+        f"📜 請先細心閱讀 {rules_ch.mention if rules_ch else '#rules'}\n"
+        f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {guide_ch.mention if guide_ch else '#教學'}\n"
+        f"💬 如果有任何疑問，請到 {support_ch.mention if support_ch else '#支援'} 講聲 **hi**，會有專人協助你。\n\n"
+        f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
+    )
+    await channel.send(msg)
+        except Exception:
+            pass  # 歡迎訊息唔影響 logging
 
     # Logging
     await _send_log(member.guild, _emb("Member Join", f"👋 {member.mention} 加入伺服器。", 0x57F287))
@@ -436,20 +450,28 @@ async def on_member_remove(member: discord.Member):
 async def on_member_update(before: discord.Member, after: discord.Member):
     # 暱稱變更
     if before.nick != after.nick:
-        desc = f"🪪 {after.mention} 暱稱變更：\n**Before**：{before.nick or '（無）'}\n**After**：{after.nick or '（無）'}"
+        desc = (
+            f"🪪 {after.mention} 暱稱變更：\n"
+            f"**Before**：{before.nick or '（無）'}\n"
+            f"**After**：{after.nick or '（無）'}"
+        )
         await _send_log(after.guild, _emb("Nickname Change", desc, 0x5865F2))
-    # 角色增減
-    broles = {r.id for r in before.roles}
-    aroles = {r.id for r in after.roles}
-    added = [r for r in after.roles if r.id not in broles and r.name != "@everyone"]
-    removed = [r for r in before.roles if r.id not in aroles and r.name != "@everyone"]
-    if added:
-        await _send_log(after.guild, _emb("Member Role Add",
-            "➕ " + after.mention + " 新增角色： " + ", ".join(r.mention for r in added), 0x57F287))
-   if removed:
-        await _send_log(after.guild, _emb(
-        "Member Role Remove",
-        "➖ " + after.mention + " 移除角色： " + ", ".join(r.mention for r in removed), 0xED4245))
+
+    # 角色增減（兩邊都 clickable，如 cache 仍在）
+    before_ids = {r.id for r in before.roles}
+    after_ids  = {r.id for r in after.roles}
+
+    added_roles   = [r for r in after.roles  if r.id not in before_ids and r.name != "@everyone"]
+    removed_roles = [r for r in before.roles if r.id not in after_ids  and r.name != "@everyone"]
+
+    if added_roles:
+        txt = "➕ " + after.mention + " 新增角色： " + ", ".join(_role_mention_safe(r) for r in added_roles)
+        await _send_log(after.guild, _emb("Member Role Add", txt, 0x57F287))
+
+    if removed_roles:
+        # 多數情況 cache 仍在 → 仍可 mention；如不可則 fallback 名稱
+        txt = "➖ " + after.mention + " 移除角色： " + ", ".join(_role_mention_safe(r) for r in removed_roles)
+        await _send_log(after.guild, _emb("Member Role Remove", txt, 0xED4245))
 
 @bot.event
 async def on_member_ban(guild: discord.Guild, user: discord.User):
