@@ -3,12 +3,15 @@
 # 1) /duplicate 依模板分區建立新遊戲分區（含 Forum/Stage/Tags）
 #    只有「Administrator」或「Manage Channels」可用
 # 2) /vc_new、/vc_teardown 建立／移除臨時語音房（空房 120 秒自動刪除）
-#    任何擁有 VERIFIED_ROLE_ID 的成員都可用（無須管理權），管理員亦可用
+#    擁有 VERIFIED_ROLE_ID 即可（無須管理權）
+# 3) /tu 隨機分隊（同樣需 VERIFIED_ROLE_ID）
+# 4) 歡迎訊息 + 伺服器活動 Logging（取代 Dyno 風格）
 
 import os
 import asyncio
-import random   # ← 加呢行
+import random
 from typing import Dict, Optional, List, Set
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
@@ -31,19 +34,26 @@ FALLBACK_CHANNELS = {
 }
 
 # 臨時語音房設定
-VERIFIED_ROLE_ID: int = 1279040517451022419   # 擁有此角色即可用 /vc_new、/vc_teardown
+VERIFIED_ROLE_ID: int = 1279040517451022419   # 擁有此角色即可用 /vc_new、/vc_teardown、/tu
 TEMP_VC_EMPTY_SECONDS: int = 120              # 無人時自動刪除的等待秒數
-TEMP_VC_PREFIX: str = "Temp • "               # 自動命名的前綴
+TEMP_VC_PREFIX: str = "Temp • "               # 自動命名前綴
+
+# 歡迎訊息發送位置（請換成你嘅頻道 ID）
+WELCOME_CHANNEL_ID: int = 123456789012345678  # 歡迎訊息要發送嘅頻道
+RULES_CHANNEL_ID: int   = 1278976821710426133 # #rules
+GUIDE_CHANNEL_ID: int   = 1279074807685578885 # #教學
+SUPPORT_CHANNEL_ID: int = 1362781427287986407 # #支援
+
+# Logging 目的地
+LOG_CHANNEL_ID: int = 1401346745346297966
 
 # =================================
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-
 intents = discord.Intents(
     guilds=True, members=True, voice_states=True,
     messages=True, message_content=True
 )
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=GUILD_ID)  # guild-scope 同步（秒生效）
 
@@ -182,23 +192,41 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
 
 # ---------- Channel Helper ----------
 def _category_from_ctx_channel(ch: Optional[discord.abc.GuildChannel]) -> Optional[discord.CategoryChannel]:
-    """從目前上下文 channel 取對應的 Category。
-    支援 Text/Voice/Stage/Forum 本身，以及 Forum 貼文 thread（discord.Thread）。"""
+    """從目前上下文 channel 取對應的 Category（支援 Forum 貼文 thread）。"""
     if ch is None:
         return None
-
-    # 已經係一般可直接取 category 嘅類型
     if isinstance(ch, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
-        return ch.category  # 直接有 .category
-
-    # 如果係貼文／thread，就向上找 parent 再取其 category
+        return ch.category
     if isinstance(ch, discord.Thread):
         parent = ch.parent  # TextChannel 或 ForumChannel
         if isinstance(parent, (discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel)):
             return parent.category
         return None
-
     return None
+
+# ---------- Logging Helpers ----------
+def _log_chan(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    ch = guild.get_channel(LOG_CHANNEL_ID)
+    return ch if isinstance(ch, discord.TextChannel) else None
+
+def _emb(title: str, desc: str = "", color: int = 0x5865F2) -> discord.Embed:
+    e = discord.Embed(title=title, description=desc, color=color)
+    e.timestamp = datetime.now(timezone.utc)
+    return e
+
+async def _send_log(guild: discord.Guild, embed: discord.Embed):
+    ch = _log_chan(guild)
+    if ch:
+        await ch.send(embed=embed)
+
+def _voice_arrow(before: Optional[discord.VoiceChannel], after: Optional[discord.VoiceChannel]) -> str:
+    if before and after and before.id != after.id:
+        return f"{before.mention} → {after.mention}"
+    if after and not before:
+        return f"加入 {after.mention}"
+    if before and not after:
+        return f"離開 {before.mention}"
+    return "（狀態未變）"
 
 # ---------- Temp VC（臨時語音房） ----------
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
@@ -229,11 +257,9 @@ async def _schedule_delete_if_empty(channel: discord.VoiceChannel):
         finally:
             _PENDING_DELETE_TASKS.pop(channel.id, None)
 
-    # 先取消舊 task
     old = _PENDING_DELETE_TASKS.pop(channel.id, None)
     if old and not old.done():
         old.cancel()
-    # 再判斷是否需要新 task
     if len(channel.members) == 0:
         _PENDING_DELETE_TASKS[channel.id] = asyncio.create_task(_task())
 
@@ -254,9 +280,7 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: 
     if not inter.guild:
         return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
-    # ✅ 唔好手寫 if/elif，直接用已測試嘅 helper
     category: Optional[discord.CategoryChannel] = _category_from_ctx_channel(inter.channel)
-
     vc_name = f"{TEMP_VC_PREFIX}{(name or '臨時語音').strip()}"
 
     await inter.response.defer(ephemeral=False)
@@ -284,9 +308,7 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: 
 # ===== Slash: /vc_teardown =====
 @bot.tree.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
 @app_commands.guilds(TARGET_GUILD)
-@app_commands.describe(
-    channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）"
-)
+@app_commands.describe(channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）")
 @app_commands.check(user_can_run_tempvc)
 async def vc_teardown(inter: discord.Interaction, channel: Optional[discord.VoiceChannel] = None):
     if not inter.guild:
@@ -311,26 +333,21 @@ async def vc_teardown(inter: discord.Interaction, channel: Optional[discord.Voic
     await target.delete(reason="Manual teardown temp VC")
     await inter.followup.send("✅ 已刪除。", ephemeral=True)
 
-
-# 監聽語音人數變化 → 決定是否安排／取消自動刪除
-# ---- Voice Events（合併你既 Temp VC 清房邏輯）----
-# 你已經有 on_voice_state_update；在函式最前面補上以下三行 logging（然後保留你原本的 Temp VC 檢查）
-# 放到你現有 on_voice_state_update 的開頭即可：
+# ---- Voice Events（Logging + Temp VC 清房）----
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    # --- Logging: Voice Join / Leave / Move ---
+    # Logging：join / leave / move
     if before.channel != after.channel:
-    if not before.channel and after.channel:
-         await _send_log(member.guild, _emb("Voice Join", f"🎤 {member.mention} {_voice_arrow(before.channel, after.channel)}", 0x57F287))
-     elif before.channel and not after.channel:
-         await _send_log(member.guild, _emb("Voice Leave", f"🔇 {member.mention} {_voice_arrow(before.channel, after.channel)}", 0xED4245))
-     else:
-         await _send_log(member.guild, _emb("Voice Move", f"🔀 {member.mention} {_voice_arrow(before.channel, after.channel)}", 0x5865F2))
-         
-    # --- Temp VC 自動刪除邏輯 ---
+        if not before.channel and after.channel:
+            await _send_log(member.guild, _emb("Voice Join", f"🎤 {member.mention} {_voice_arrow(before.channel, after.channel)}", 0x57F287))
+        elif before.channel and not after.channel:
+            await _send_log(member.guild, _emb("Voice Leave", f"🔇 {member.mention} {_voice_arrow(before.channel, after.channel)}", 0xED4245))
+        else:
+            await _send_log(member.guild, _emb("Voice Move", f"🔀 {member.mention} {_voice_arrow(before.channel, after.channel)}", 0x5865F2))
+
+    # Temp VC 清房邏輯
     if before.channel and _is_temp_vc_id(before.channel.id):
         await _schedule_delete_if_empty(before.channel)
-
     if after.channel and _is_temp_vc_id(after.channel.id):
         _cancel_delete_task(after.channel.id)
 
@@ -390,75 +407,73 @@ async def tu_cmd(inter: discord.Interaction, members: str):
         "🔴 **Team A**\n" + "\n".join(team_a) + "\n\n"
         "🔵 **Team B**\n" + "\n".join(team_b)
     )
-
     await inter.followup.send(result)
 
-
-# ---------- Welcome Message ----------
-WELCOME_CHANNEL_ID: int = 123456789012345678  # 改成歡迎訊息要發送嘅頻道 ID
-RULES_CHANNEL_ID: int = 223456789012345678   # #rules 頻道 ID
-GUIDE_CHANNEL_ID: int = 323456789012345678   # #教學 頻道 ID
-SUPPORT_CHANNEL_ID: int = 423456789012345678 # #支援 頻道 ID
-
+# ---------- Welcome + Logging（合併處理） ----------
 @bot.event
 async def on_member_join(member: discord.Member):
-    """新成員加入伺服器時發送歡迎訊息"""
-    channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
-    if not channel:
-        return
+    # 歡迎訊息（公開發喺指定頻道）
+    ch = member.guild.get_channel(1010456227769229355)
+    if isinstance(ch, discord.TextChannel):
+        msg = (
+            f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
+            f"📜 請先細心閱讀 {member.guild.get_channel(1278976821710426133).mention}\n"
+            f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {member.guild.get_channel(1279074807685578885).mention}\n"
+            f"💬 如果有任何疑問，請到 {member.guild.get_channel(1362781427287986407).mention} 講聲 **hi**，會有專人協助你。\n\n"
+            f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
+        )
+        await ch.send(msg)
 
-    msg = (
-        f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
-        f"📜 請先細心閱讀 {member.guild.get_channel(1278976821710426133).mention}\n"
-        f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {member.guild.get_channel(1279074807685578885).mention}\n"
-        f"💬 如果有任何疑問，請到 {member.guild.get_channel(1362781427287986407).mention} 講聲 **hi**，會有專人協助你。\n\n"
-        f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
-    )
-    await channel.send(msg)
+    # Logging
+    await _send_log(member.guild, _emb("Member Join", f"👋 {member.mention} 加入伺服器。", 0x57F287))
 
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await _send_log(member.guild, _emb("Member Leave", f"👋 {member.mention} 離開伺服器。", 0xED4245))
 
-# ---------- Server Logging (replace Dyno) ----------
-# 把下面的 LOG_CHANNEL_ID 換成你的「log」文字頻道 ID
-LOG_CHANNEL_ID: int = 1401346745346297966
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    # 暱稱變更
+    if before.nick != after.nick:
+        desc = f"🪪 {after.mention} 暱稱變更：\n**Before**：{before.nick or '（無）'}\n**After**：{after.nick or '（無）'}"
+        await _send_log(after.guild, _emb("Nickname Change", desc, 0x5865F2))
+    # 角色增減
+    broles = {r.id for r in before.roles}
+    aroles = {r.id for r in after.roles}
+    added = [r for r in after.roles if r.id not in broles and r.name != "@everyone"]
+    removed = [r for r in before.roles if r.id not in aroles and r.name != "@everyone"]
+    if added:
+        await _send_log(after.guild, _emb("Member Role Add",
+            "➕ " + after.mention + " 新增角色： " + ", ".join(r.mention for r in added), 0x57F287))
+    if removed:
+        await _send_log(after.guild, _emb("Member Role Remove",
+            "➖ " + after.mention + " 移除角色： " + ", ".join(r.name for r in removed), 0xED4245))
 
-def _log_chan(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    ch = guild.get_channel(LOG_CHANNEL_ID)
-    return ch if isinstance(ch, discord.TextChannel) else None
+@bot.event
+async def on_member_ban(guild: discord.Guild, user: discord.User):
+    await _send_log(guild, _emb("Member Ban", f"🔨 封鎖：{user.mention}", 0xED4245))
 
-def _emb(title: str, desc: str = "", color: int = 0x5865F2) -> discord.Embed:
-    e = discord.Embed(title=title, description=desc, color=color)
-    e.timestamp = discord.utils.utcnow()
-    return e
-
-async def _send_log(guild: discord.Guild, embed: discord.Embed):
-    ch = _log_chan(guild)
-    if ch:
-        await ch.send(embed=embed)
+@bot.event
+async def on_member_unban(guild: discord.Guild, user: discord.User):
+    await _send_log(guild, _emb("Member Unban", f"🕊️ 解除封鎖：{user.mention}", 0x57F287))
 
 # ---- Message Events ----
 @bot.event
 async def on_message_delete(message: discord.Message):
-    # 只處理伺服器內訊息
     if not message.guild:
         return
-
-    # 可點擊的作者 mention（fallback 用 <@id>）
     if getattr(message, "author", None) and getattr(message.author, "mention", None):
         author_mention = message.author.mention
     elif getattr(message, "author", None) and getattr(message.author, "id", None):
         author_mention = f"<@{message.author.id}>"
     else:
         author_mention = "（未知成員）"
-
-    # 內容（避免過長）
     content = message.content or "（無文字，可能只有附件 / 嵌入）"
     if len(content) > 500:
         content = content[:497] + "…"
-
     attach_text = ""
     if message.attachments:
         attach_text = "\n附件：" + ", ".join(a.filename for a in message.attachments)
-
     desc = f"🧹 {author_mention} 的訊息被刪除於 {message.channel.mention}\n內容：{content}{attach_text}"
     emb = _emb("Message Delete", desc, 0xED4245)
     emb.set_footer(text=f"Author ID: {getattr(message.author, 'id', '未知')} • Message ID: {message.id}")
@@ -488,43 +503,6 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     )
     await _send_log(before.guild, _emb("Message Edit", desc, 0xFEE75C))
 
-# ---- Member Events ----
-@bot.event
-async def on_member_join(member: discord.Member):
-    await _send_log(member.guild, _emb("Member Join", f"👋 {member.mention} 加入伺服器。", 0x57F287))
-
-@bot.event
-async def on_member_remove(member: discord.Member):
-    await _send_log(member.guild, _emb("Member Leave", f"👋 {member.mention} 離開伺服器。", 0xED4245))
-
-@bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    # 暱稱變更
-    if before.nick != after.nick:
-        desc = f"🪪 {after.mention} 暱稱變更：\n**Before**：{before.nick or '（無）'}\n**After**：{after.nick or '（無）'}"
-        await _send_log(after.guild, _emb("Nickname Change", desc, 0x5865F2))
-
-    # 角色增減
-    broles = {r.id for r in before.roles}
-    aroles = {r.id for r in after.roles}
-    added = [r for r in after.roles if r.id not in broles and r.name != "@everyone"]
-    removed = [r for r in before.roles if r.id not in aroles and r.name != "@everyone"]
-
-    if added:
-        await _send_log(after.guild, _emb("Member Role Add",
-            "➕ " + after.mention + " 新增角色： " + ", ".join(r.mention for r in added), 0x57F287))
-    if removed:
-        await _send_log(after.guild, _emb("Member Role Remove",
-            "➖ " + after.mention + " 移除角色： " + ", ".join(r.name for r in removed), 0xED4245))
-
-@bot.event
-async def on_member_ban(guild: discord.Guild, user: discord.User):
-    await _send_log(guild, _emb("Member Ban", f"🔨 封鎖：{user.mention}", 0xED4245))
-
-@bot.event
-async def on_member_unban(guild: discord.Guild, user: discord.User):
-    await _send_log(guild, _emb("Member Unban", f"🕊️ 解除封鎖：{user.mention}", 0x57F287))
-
 # ---- Role Events ----
 @bot.event
 async def on_guild_role_create(role: discord.Role):
@@ -532,7 +510,6 @@ async def on_guild_role_create(role: discord.Role):
 
 @bot.event
 async def on_guild_role_delete(role: discord.Role):
-    # 刪除後冇 mention，可顯示名稱
     await _send_log(role.guild, _emb("Role Delete", f"🗑️ 刪除角色：**{role.name}**", 0xED4245))
 
 @bot.event
@@ -563,27 +540,12 @@ async def on_guild_emojis_update(guild: discord.Guild, before: List[discord.Emoj
     created = [e for e in after if e.id not in bmap]
     deleted = [e for e in before if e.id not in amap]
     renamed = [(bmap[i], amap[i]) for i in set(bmap).intersection(amap) if bmap[i].name != amap[i].name]
-
     if created:
         await _send_log(guild, _emb("Emoji Create", "😀 新增：" + ", ".join(e.name for e in created), 0x57F287))
     if deleted:
         await _send_log(guild, _emb("Emoji Delete", "🫥 刪除：" + ", ".join(e.name for e in deleted), 0xED4245))
     for bef, aft in renamed:
         await _send_log(guild, _emb("Emoji Rename", f"✏️ **{bef.name}** → **{aft.name}**", 0xFEE75C))
-
-# ---- Voice（可選：已在你的 on_voice_state_update 內處理 Temp VC，這裡提供 log helper）----
-def _voice_arrow(before: Optional[discord.VoiceChannel], after: Optional[discord.VoiceChannel]) -> str:
-    if before and after and before.id != after.id:
-        return f"{before.mention} → {after.mention}"
-    if after and not before:
-        return f"加入 {after.mention}"
-    if before and not after:
-        return f"離開 {before.mention}"
-    return "（狀態未變）"
-
-
-
-
 
 # ---------- Lifecycle ----------
 @bot.event
