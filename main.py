@@ -413,35 +413,36 @@ async def tu_cmd(inter: discord.Interaction, members: str):
 # ---- Member Events ----
 def _role_mention_safe(role: discord.Role) -> str:
     try:
-        return role.mention  # 通常可點擊
+        return role.mention
     except Exception:
         return f"@{getattr(role, 'name', '（未知角色）')}"
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    """新成員加入伺服器時發送歡迎訊息"""
-    channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
-    if not channel:
-        return
+    """新成員加入伺服器時發送歡迎訊息 + 記錄 log"""
+    # 歡迎訊息
+    try:
+        channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
+        if channel and isinstance(channel, discord.TextChannel):
+            rules_ch = member.guild.get_channel(RULES_CHANNEL_ID)
+            guide_ch = member.guild.get_channel(GUIDE_CHANNEL_ID)
+            support_ch = member.guild.get_channel(SUPPORT_CHANNEL_ID)
 
-    rules_ch = member.guild.get_channel(RULES_CHANNEL_ID)
-    guide_ch = member.guild.get_channel(GUIDE_CHANNEL_ID)
-    support_ch = member.guild.get_channel(SUPPORT_CHANNEL_ID)
-
-    msg = (
-        f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
-        f"📜 請先細心閱讀 {rules_ch.mention if rules_ch else '#rules'}\n"
-        f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {guide_ch.mention if guide_ch else '#教學'}\n"
-        f"💬 如果有任何疑問，請到 {support_ch.mention if support_ch else '#支援'} 講聲 **hi**，會有專人協助你。\n\n"
-        f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
-    )
-    await channel.send(msg)
-        except Exception:
-            pass  # 歡迎訊息唔影響 logging
+            msg = (
+                f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
+                f"📜 請先細心閱讀 {rules_ch.mention if isinstance(rules_ch, discord.TextChannel) else '#rules'}\n"
+                f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {guide_ch.mention if isinstance(guide_ch, discord.TextChannel) else '#教學'}\n"
+                f"💬 如果有任何疑問，請到 {support_ch.mention if isinstance(support_ch, discord.TextChannel) else '#支援'} 講聲 **hi**，會有專人協助你。\n\n"
+                f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
+            )
+            await channel.send(msg)
+                except Exception:
+                    # 歡迎訊息出錯唔好影響 logging
+                    pass
 
     # Logging
     await _send_log(member.guild, _emb("Member Join", f"👋 {member.mention} 加入伺服器。", 0x57F287))
-
+    
 @bot.event
 async def on_member_remove(member: discord.Member):
     await _send_log(member.guild, _emb("Member Leave", f"👋 {member.mention} 離開伺服器。", 0xED4245))
