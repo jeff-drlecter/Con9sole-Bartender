@@ -234,7 +234,7 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None):
     vc_name = f"{TEMP_VC_PREFIX}{vc_name}"
 
     await inter.response.defer(ephemeral=True)
-    ch = await inter.guild.create_voice_channel(vc_name, category=category, reason="Create temp VC (bartender)")
+    ch = await inter.guild.create_voice_channel(vc_name, category=category, reason="Create temp VC (bartender)",bitrate=inter.guild.bitrate_limit)
     TEMP_VC_IDS.add(ch.id)
     await _maybe_log(inter.guild, f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
     # 建立後立即檢查是否需要排程刪除（如果無人）
