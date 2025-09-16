@@ -7,7 +7,6 @@
 # 3) /tu 隨機分隊（同樣需 VERIFIED_ROLE_ID）
 # 4) 歡迎訊息 + 伺服器活動 Logging（取代 Dyno 風格）
 
-
 import os
 import asyncio
 import random
