@@ -40,7 +40,23 @@ if not TOKEN:
 intents = discord.Intents(guilds=True)
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-
+# Admin-only: 強制同步 slash commands 的臨時指令
+@bot.command(name="sync")
+@commands.has_permissions(administrator=True)
+async def sync_commands(ctx: commands.Context):
+    await ctx.send("⏳ 正在同步指令…", delete_after=5)
+    try:
+        # 先做 global，再嘗試 guild
+        g = await bot.tree.sync()
+        msg = [f"🌍 Global 同步：{len(g)}"]
+        guild = ctx.guild
+        if guild:
+            bot.tree.copy_global_to(guild=guild)
+            l = await bot.tree.sync(guild=guild)
+            msg.append(f"🏠 Guild 同步：{len(l)}")
+        await ctx.send(" / ".join(msg))
+    except Exception as e:
+        await ctx.send(f"❌ 同步失敗：{e}")
 # ---------- Helper：權限覆寫 ----------
 def make_private_overwrites(
     guild: discord.Guild,
