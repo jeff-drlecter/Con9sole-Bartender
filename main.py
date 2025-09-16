@@ -7,6 +7,7 @@
 
 import os
 import asyncio
+import random   # ← 加呢行
 from typing import Dict, Optional, List, Set
 
 import discord
@@ -257,9 +258,9 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: 
     if isinstance(ch_ctx, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
         category = ch_ctx.category
     elif isinstance(ch_ctx, discord.Thread):
-        parent = ch_ctx.parent  # Forum 貼文的上層
-        if isinstance(parent, discord.ForumChannel):
-            category = parent.category
+    parent = ch_ctx.parent  # 貼文/Thread 的上層
+    if isinstance(parent, (discord.ForumChannel, discord.TextChannel)):
+        category = parent.category
 
     vc_name = f"{TEMP_VC_PREFIX}{(name or '臨時語音').strip()}"
 
