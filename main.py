@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 from typing import Optional, List
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
 
 # ====== 你的伺服器/模板設定 ======
 GUILD_ID: int = 626378673523785731   # 伺服器 ID
