@@ -1,4 +1,4 @@
-# Con9sole-Bartender — Fly.io 版（Global sync, Duplicate + Ping + Error handler）
+# Con9sole-Bartender — Fly.io 版（Guild-only slash commands, duplicate fix, ping, error handler）
 import os
 import traceback
 from typing import Dict, Optional, List
@@ -10,15 +10,15 @@ from discord import app_commands
 # ====== 你的伺服器/模板設定 ======
 GUILD_ID: int = 626378673523785731                  # 伺服器
 TEMPLATE_CATEGORY_ID: int = 1417446665626849343     # 模板 Category
-TEMPLATE_FORUM_ID: Optional[int] = 1417446670526058519  # （可選）模板 Forum（複製 tags）；不想複製可設 None
+TEMPLATE_FORUM_ID: Optional[int] = 1417446670526058519  # （可選）模板 Forum（複製 tags）
 
 CATEGORY_NAME_PATTERN = "{game}"    # 分區命名規則
 ROLE_NAME_PATTERN = "{game}"        # 角色命名規則
 ADMIN_ROLE_IDS: List[int] = []      # 固定管理角色（可留空）
 
 FALLBACK_CHANNELS = {
-    "text": ["read-me", "活動（未有）"],  # 文字頻道（模板冇先補）
-    "forum": "分區討論區",                # 後備 Forum 名稱（如模板無）
+    "text": ["read-me", "活動（未有）"],
+    "forum": "分區討論區",
     "voice": ["小隊Call 1", "小隊Call 2"]
 }
 # =================================
@@ -27,7 +27,6 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not TOKEN:
     raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN 環境變數")
 
-# slash 指令唔需要 message content intent；guilds 就夠
 intents = discord.Intents(guilds=True)
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -151,11 +150,14 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     except Exception as e:
         print("Failed to send error message:", e)
 
-# ---------- Slash 指令 ----------
+# ---------- Guild-only Slash 指令 ----------
+# 用 @app_commands.guilds(...) 把指令限定在你伺服器，避免出 Global 版本（杜絕重覆）
+@app_commands.guilds(GUILD_ID)
 @bot.tree.command(name="ping", description="healthcheck")
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message("pong", ephemeral=True)
 
+@app_commands.guilds(GUILD_ID)
 @bot.tree.command(name="duplicate", description="複製模板分區，建立新遊戲分區（含 Forum/Stage/Tags）")
 @app_commands.describe(gamename="新遊戲名稱（例如：Delta Force）")
 async def duplicate_cmd(interaction: discord.Interaction, gamename: str):
@@ -173,11 +175,24 @@ async def duplicate_cmd(interaction: discord.Interaction, gamename: str):
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
+
+    target = discord.Object(id=GUILD_ID)
+
+    # 先清除 Global commands（防止 UI 雙重顯示）
     try:
-        synced = await bot.tree.sync()   # 只做 Global，同步 1 次
-        print(f"🌍 Global sync 完成：{len(synced)} commands")
+        bot.tree.clear_commands(guild=None)
+        cleared = await bot.tree.sync()
+        print(f"🧹 已清空 Global commands（目前數量：{len(cleared)}）")
     except Exception as e:
-        print("Global sync 失敗：", e)
+        print("清空 Global 失敗：", e)
+
+    # 再同步 Guild-scope（即時可用）
+    try:
+        synced_g = await bot.tree.sync(guild=target)
+        names = ", ".join(c.name for c in synced_g)
+        print(f"🏠 Guild({GUILD_ID}) sync 完成：{len(synced_g)} commands -> [{names}]")
+    except Exception as e:
+        print("Guild sync 失敗：", e)
 
 # ---------- Main ----------
 if __name__ == "__main__":
