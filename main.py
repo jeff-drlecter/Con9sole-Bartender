@@ -303,6 +303,44 @@ async def duplicate_cmd(inter: discord.Interaction, gamename: str):
 async def ping_cmd(inter: discord.Interaction):
     await inter.response.send_message(f"Pong! 🏓 {round(bot.latency * 1000)}ms", ephemeral=True)
 
+# ---------- Slash：tu（隨機分隊） ----------
+def user_can_run_tu(inter: discord.Interaction) -> bool:
+    """擁有 VERIFIED_ROLE_ID，或管理員/可管頻道者，可用 /tu。"""
+    if not inter.user or not isinstance(inter.user, discord.Member):
+        return False
+    m: discord.Member = inter.user
+    perms = m.guild_permissions
+    if perms.administrator or perms.manage_channels:
+        return True
+    return any(r.id == VERIFIED_ROLE_ID for r in m.roles)
+
+@bot.tree.command(name="tu", description="隨機將 @人 分成兩隊")
+@app_commands.guilds(TARGET_GUILD)
+@app_commands.describe(members="請 @ 想參與分隊的所有人")
+@app_commands.check(user_can_run_tu)
+async def tu_cmd(inter: discord.Interaction, members: str):
+    await inter.response.defer(ephemeral=False)  # 分隊結果要公開比大家睇
+
+    mentions = inter.user.mention + " " + members  # 包埋發指令嗰個人
+    user_ids = [word for word in mentions.split() if word.startswith("<@")]
+
+    if len(user_ids) < 2:
+        return await inter.followup.send("⚠️ 請至少 @ 兩位參加者！", ephemeral=True)
+
+    random.shuffle(user_ids)
+    mid = len(user_ids) // 2
+    team_a = user_ids[:mid]
+    team_b = user_ids[mid:]
+
+    result = (
+        "🎮 **分隊結果**：\n\n"
+        "🔴 **Team A**\n" + "\n".join(team_a) + "\n\n"
+        "🔵 **Team B**\n" + "\n".join(team_b)
+    )
+
+    await inter.followup.send(result)
+
+
 # ---------- Lifecycle ----------
 @bot.event
 async def on_ready():
