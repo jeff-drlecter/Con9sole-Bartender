@@ -249,47 +249,27 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: 
     if not inter.guild:
         return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
-    # 目標 Category = 你落命令嘅地方：
-    # - 普通文字/語音/舞台：用該 channel 所屬的 category
-    # - Forum「貼文」(thread)：拿 thread.parent(Forum) 的 category
-    category: Optional[discord.CategoryChannel] = None
-    ch_ctx = inter.channel
-
-    if isinstance(ch_ctx, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
-        category = ch_ctx.category
-    elif isinstance(ch_ctx, discord.Thread):
-    parent = ch_ctx.parent  # 貼文/Thread 的上層
-    if isinstance(parent, (discord.ForumChannel, discord.TextChannel)):
-        category = parent.category
+    # ✅ 唔好手寫 if/elif，直接用已測試嘅 helper
+    category: Optional[discord.CategoryChannel] = _category_from_ctx_channel(inter.channel)
 
     vc_name = f"{TEMP_VC_PREFIX}{(name or '臨時語音').strip()}"
 
-    # 公開訊息（唔用 ephemeral）
     await inter.response.defer(ephemeral=False)
 
-    # bitrate 用伺服器支援最高；limit 由參數決定（不填＝無上限）
-    max_bitrate = inter.guild.bitrate_limit  # 單位：bps
+    max_bitrate = inter.guild.bitrate_limit  # bps
     kwargs: Dict[str, object] = {"bitrate": max_bitrate}
     if limit is not None:
-        # Discord 限定 1–99；你可以自行調整範圍
         limit = max(1, min(99, int(limit)))
         kwargs["user_limit"] = limit
 
-    # 建立語音房
     ch = await inter.guild.create_voice_channel(
         vc_name, category=category, reason="Create temp VC (bartender)", **kwargs
     )
     TEMP_VC_IDS.add(ch.id)
 
-    await _maybe_log(
-        inter.guild,
-        f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}"
-    )
-
-    # 若房內無人 → 安排自動刪除
+    await _maybe_log(inter.guild, f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
     await _schedule_delete_if_empty(ch)
 
-    # 公開回覆：@召喚者 + 顯示房名(mention) + bitrate/limit
     msg = (
         f"你好 {inter.user.mention} ，✅ 房間已經安排好 → {ch.mention}\n"
         f"（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or '無限制'}）"
