@@ -34,8 +34,7 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN（或 DISCORD_TOKEN）環境變數，請設定後再啟動。")
 
-intents = discord.Intents.none()
-intents.guilds = True
+intents = discord.Intents(guilds=True, voice_states=True)
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=GUILD_ID)
 
@@ -225,6 +224,173 @@ async def duplicate_error(interaction: discord.Interaction, error):
     else:
         await interaction.response.send_message("❌ 發生錯誤，請稍後再試。", ephemeral=True)
         raise error
+
+# ====== Temp VC（臨時語音房）設定 ======
+# 任何擁有以下其中一個 Role 的會員，都可以用 /vc_new /vc_teardown
+ALLOWED_TEMPVC_ROLE_IDS: list[int] = [
+    1279040517451022419,  # ← 你指定嘅 role（Verified/TempVC 允許角色）
+]
+
+# 空房自動刪除延遲（秒）
+TEMP_VC_AUTODELETE_SECONDS = 120
+
+# 如要把操作記錄到某個 mod-log 文字頻道，可填入其 channel ID；唔用就 None
+MOD_LOG_CHANNEL_ID: Optional[int] = None
+
+
+# 允許使用 Temp VC 指令的檢查（Admin / Manage Channels / 或擁有上面 ALLOWED_TEMPVC_ROLE_IDS 任一角色）
+def user_can_run_tempvc(inter: discord.Interaction) -> bool:
+    if not inter.user or not isinstance(inter.user, discord.Member):
+        return False
+    m: discord.Member = inter.user
+    perms = m.guild_permissions
+    if perms.administrator or perms.manage_channels:
+        return True
+    if ALLOWED_TEMPVC_ROLE_IDS and any(r.id in ALLOWED_TEMPVC_ROLE_IDS for r in m.roles):
+        return True
+    return False
+
+
+# ====== Temp VC 內部狀態 ======
+TEMP_VC_IDS: set[int] = set()                # 記錄由 Bot 建立嘅臨時 VC（重啟會清空，free tier 友善）
+_PENDING_DELETE_TASKS: dict[int, asyncio.Task] = {}  # 避免重覆安排刪除
+
+
+async def _maybe_log(guild: discord.Guild, text: str):
+    if MOD_LOG_CHANNEL_ID:
+        ch = guild.get_channel(MOD_LOG_CHANNEL_ID)
+        if isinstance(ch, discord.TextChannel):
+            try:
+                await ch.send(text)
+            except Exception:
+                pass
+
+
+def _is_temp_vc_id(cid: Optional[int]) -> bool:
+    return bool(cid and cid in TEMP_VC_IDS)
+
+
+async def _schedule_delete_if_empty(vc: discord.VoiceChannel):
+    """安排空房延遲刪除；期間如果有人加入會自動取消"""
+    if vc.id in _PENDING_DELETE_TASKS:
+        return
+
+    async def _task():
+        try:
+            await asyncio.sleep(TEMP_VC_AUTODELETE_SECONDS)
+            fresh = vc.guild.get_channel(vc.id)
+            if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0:
+                TEMP_VC_IDS.discard(vc.id)
+                await _maybe_log(vc.guild, f"🗑️ 自動刪除空置 Temp VC：#{vc.name}（id={vc.id}）")
+                await vc.delete(reason="Auto delete empty Temp VC")
+        finally:
+            _PENDING_DELETE_TASKS.pop(vc.id, None)
+
+    _PENDING_DELETE_TASKS[vc.id] = asyncio.create_task(_task())
+
+
+async def create_temp_vc(
+    guild: discord.Guild,
+    name: str,
+    *,
+    category: Optional[discord.CategoryChannel] = None,
+    user_limit: Optional[int] = None,
+):
+    """
+    在指定 category 內建立 VC，並與該 category 權限同步（不設自訂 overwrites）。
+    亦即：繼承分區權限 → 只有該分區本身能見到/進入的人可以用。
+    """
+    vc = await guild.create_voice_channel(
+        name=name,
+        category=category,           # 跟該分區
+        overwrites=None,             # 不覆蓋 → 直接繼承分區權限
+        user_limit=user_limit or 0,  # 0 = 無上限
+        reason="Create temporary VC (inherit category perms)",
+    )
+    TEMP_VC_IDS.add(vc.id)
+    await _maybe_log(guild, f"🆕 建立 Temp VC（跟分區權限）：{vc.mention}（id={vc.id}）")
+    return vc
+
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    """
+    監聽語音狀態：
+    - 離開 Temp VC 後，如果該房無人 → 安排延時刪除。
+    - 加入 Temp VC → 若之前有刪除計劃則取消。
+    """
+    try:
+        if before.channel and _is_temp_vc_id(before.channel.id):
+            if len(before.channel.members) == 0:
+                await _schedule_delete_if_empty(before.channel)
+
+        if after.channel and _is_temp_vc_id(after.channel.id):
+            task = _PENDING_DELETE_TASKS.pop(after.channel.id, None)
+            if task and not task.done():
+                task.cancel()
+    except Exception:
+        # 靜默忽略，避免影響其他功能
+        pass
+
+
+# ========== Slash Commands：Temp VC ==========
+@bot.tree.command(name="vc_new", description="建立臨時語音房（清空 120 秒自動刪）")
+@app_commands.guilds(TARGET_GUILD)
+@app_commands.describe(
+    name="語音房名稱",
+    user_limit="人數上限（選填）",
+)
+@app_commands.check(user_can_run_tempvc)  # 允許：Admin/Manage Channels/指定角色
+async def vc_new(inter: discord.Interaction, name: str, user_limit: Optional[int] = None):
+    if not inter.guild:
+        return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
+
+    # 必須要喺某個分區入面用（用邊個分區，就喺嗰度開）
+    channel = inter.channel
+    category = None
+    if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+        category = channel.category
+    if not isinstance(category, discord.CategoryChannel):
+        return await inter.response.send_message("請喺目標分區入面執行指令（要有上層 Category）。", ephemeral=True)
+
+    await inter.response.defer(ephemeral=True)
+    vc = await create_temp_vc(inter.guild, name, category=category, user_limit=user_limit)
+    await inter.followup.send(
+        f"✅ 已建立臨時語音房：{vc.mention}（清空 {TEMP_VC_AUTODELETE_SECONDS}s 後自動刪）",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="vc_teardown", description="手動刪除由 Bot 建立的臨時語音房")
+@app_commands.guilds(TARGET_GUILD)
+@app_commands.describe(
+    channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）"
+)
+@app_commands.check(user_can_run_tempvc)
+async def vc_teardown(inter: discord.Interaction, channel: Optional[discord.VoiceChannel] = None):
+    if not inter.guild:
+        return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
+
+    await inter.response.defer(ephemeral=True)
+
+    target = channel
+    if target is None:
+        if isinstance(inter.user, discord.Member) and inter.user.voice and inter.user.voice.channel:
+            target = inter.user.voice.channel  # type: ignore[assignment]
+
+    if not isinstance(target, discord.VoiceChannel):
+        return await inter.followup.send("請指定或身處一個語音房。", ephemeral=True)
+
+    if not _is_temp_vc_id(target.id):
+        return await inter.followup.send("呢個唔係由 Bot 建立的臨時語音房。", ephemeral=True)
+
+    TEMP_VC_IDS.discard(target.id)
+    task = _PENDING_DELETE_TASKS.pop(target.id, None)
+    if task and not task.done():
+        task.cancel()
+    await _maybe_log(inter.guild, f"🗑️ 手動刪除 Temp VC：#{target.name}（id={target.id}）")
+    await target.delete(reason="Manual teardown temp VC")
+    await inter.followup.send("✅ 已刪除。", ephemeral=True)
 
 # ---------- Lifecycle ----------
 @bot.event
