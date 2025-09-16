@@ -174,6 +174,17 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
 
     return f"新分區：#{new_cat.name}；新角色：{new_role.name}"
 
+# ---------- Channel Helper ----------
+def _category_from_ctx_channel(ch):
+    import discord
+    if isinstance(ch, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+        return ch.category
+    if isinstance(ch, discord.Thread):  # Forum 的 post 其實就是 Thread
+        parent = ch.parent
+        if isinstance(parent, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+            return parent.category
+    return None
+
 # ---------- Temp VC（臨時語音房） ----------
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
     """擁有 VERIFIED_ROLE_ID，或管理員/可管頻道者，可用 temp VC 指令。"""
@@ -229,9 +240,7 @@ async def vc_new(inter: discord.Interaction, name: Optional[str] = None, limit: 
         return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
     # 目標 Category = 你下指令的文字/語音/論壇頻道所在 Category；若無，落在伺服器根目錄
-    category = None
-    if isinstance(inter.channel, (discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel)):
-        category = inter.channel.category
+    category = _category_from_ctx_channel(inter.channel)
 
     vc_name = (name or "臨時語音").strip()
     vc_name = f"{TEMP_VC_PREFIX}{vc_name}"
