@@ -10,7 +10,7 @@ intents = discord.Intents(
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 
-initial_cogs = [
+INITIAL_COGS = [
     "cogs.duplicate",
     "cogs.tempvc",
     "cogs.teams",
@@ -30,7 +30,7 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 if __name__ == "__main__":
-    for ext in initial_cogs:
+    for ext in INITIAL_COGS:
         try:
             bot.load_extension(ext)
             print(f"🔌 Loaded {ext}")
