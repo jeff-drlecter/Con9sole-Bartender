@@ -1,4 +1,6 @@
 import asyncio
+import pkgutil
+import traceback
 import discord
 from discord.ext import commands
 import config
@@ -7,20 +9,8 @@ intents = discord.Intents(
     guilds=True, members=True, voice_states=True,
     messages=True, message_content=True
 )
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
-
-INITIAL_COGS = [
-    "cogs.duplicate",
-    "cogs.tempvc",
-    "cogs.teams",
-    "cogs.welcome_log",
-    "cogs.message_audit",
-    "cogs.role_channel_emoji_log",
-    "cogs.ping",
-    "cogs.cheers.py",
-]
 
 @bot.event
 async def on_ready():
@@ -33,12 +23,17 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 async def setup_cogs():
-    for ext in INITIAL_COGS:
+    for m in pkgutil.iter_modules(['cogs']):
+        name = m.name
+        if name.startswith('_'):
+            continue
+        ext = f"cogs.{name}"
         try:
             await bot.load_extension(ext)
             print(f"🔌 Loaded {ext}")
-        except Exception as e:
-            print(f"❌ Load {ext} 失敗：{e}")
+        except Exception:
+            print(f"❌ Load {ext} 失敗：")
+            traceback.print_exc()
 
 async def main():
     if not config.TOKEN:
