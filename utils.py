@@ -6,8 +6,7 @@ import discord
 
 from config import LOG_CHANNEL_ID
 
-# ---------- 共用 Helper ----------
-
+# ---------- 權限覆寫 Helper ----------
 def make_private_overwrites(
     guild: discord.Guild, allow_roles: List[discord.Role], manage_roles: List[discord.Role]
 ) -> Dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
@@ -28,6 +27,7 @@ def make_private_overwrites(
         ow[r] = curr
     return ow
 
+# ---------- Forum Tags ----------
 async def copy_forum_tags(src_forum: discord.ForumChannel, dst_forum: discord.ForumChannel):
     tags = src_forum.available_tags
     if not tags:
@@ -37,8 +37,7 @@ async def copy_forum_tags(src_forum: discord.ForumChannel, dst_forum: discord.Fo
     await dst_forum.edit(available_tags=new_tags, reason="Clone forum tags")
     print(f"   ✅ 已複製 Forum Tags：{len(new_tags)}")
 
-# ---------- Embeds / Logging ----------
-
+# ---------- Embed / Logging ----------
 def emb(title: str, desc: str = "", color: int = 0x5865F2) -> discord.Embed:
     e = discord.Embed(title=title, description=desc, color=color)
     e.timestamp = datetime.now(timezone.utc)
@@ -50,7 +49,6 @@ async def send_log(guild: discord.Guild, embed: discord.Embed):
         await ch.send(embed=embed)
 
 # ---------- Tiny helpers ----------
-
 def role_mention_safe(role: discord.Role) -> str:
     try:
         return role.mention
@@ -66,7 +64,7 @@ def voice_arrow(before: Optional[discord.VoiceChannel], after: Optional[discord.
         return f"離開 {before.mention}"
     return "（狀態未變）"
 
-# ---------- Temp VC book-keeping (shared) ----------
+# ---------- Temp VC book-keeping ----------
 TEMP_VC_IDS: set[int] = set()
 _PENDING_DELETE_TASKS: dict[int, asyncio.Task] = {}
 
