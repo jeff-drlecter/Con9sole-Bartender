@@ -2,7 +2,7 @@ app = "con9sole-bartender"
 primary_region = "hkg"
 
 [processes]
-app = "python main.py"
+app = "python bot.py"
 
 [vm]
 cpu_kind = "shared"
