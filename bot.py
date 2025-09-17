@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 import config
@@ -29,14 +30,20 @@ async def on_ready():
         print("Guild sync 失敗：", e)
     print(f"✅ Logged in as {bot.user}")
 
-if __name__ == "__main__":
+async def setup_cogs():
     for ext in INITIAL_COGS:
         try:
-            bot.load_extension(ext)
+            await bot.load_extension(ext)
             print(f"🔌 Loaded {ext}")
         except Exception as e:
             print(f"❌ Load {ext} 失敗：{e}")
 
+async def main():
     if not config.TOKEN:
         raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN 環境變數")
-    bot.run(config.TOKEN)
+    async with bot:
+        await setup_cogs()
+        await bot.start(config.TOKEN)
+
+if __name__ == "__main__":
+    asyncio.run(main())
