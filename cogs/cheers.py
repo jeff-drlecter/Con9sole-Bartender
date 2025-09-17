@@ -1,4 +1,4 @@
-# cogs/cheers.py (Embed + 30s cooldown)
+# cogs/cheers.py — Embed 版 + 每人 30 秒冷卻 + @mention 在 description（可點擊）
 from __future__ import annotations
 import random
 import discord
@@ -6,11 +6,13 @@ from discord import app_commands, Embed
 from discord.ext import commands
 import config
 
-# 提示：為避免訊息過長，我先放入 150 句（全部有作者原名，無 Unknown/Anonymous）。
-# 你可以先部署測試；如果要擴至 300 句，話我知「next」，我即刻再補 150 句第二批。
+# ✅ 重點修正：Discord 的 Embed **footer** 不會把 <@id> 解析為 @mention
+# 所以把 @mention 放到 embed.description／或 field value，就會變成可點擊的藍色 tag。
 
+# ===== 語錄資料 =====
+# 你可以把完整 300/400 句放入這個 list；以下只示範部份，
+# 中間以「...（略）」標示，部署時請貼回你現有的完整清單。
 CHEERS_QUOTES: list[tuple[str, str, str]] = [
-    # --- 足球 / 籃球 / 網球 / 田徑等運動員 ---
     ("Success is no accident. It is hard work, perseverance, learning, studying, sacrifice and most of all, love of what you are doing.", "成功不是偶然的。它是努力、堅持、學習、犧牲，更重要的是你對正在做的事的熱愛。", "Pelé"),
     ("The more difficult the victory, the greater the happiness in winning.", "勝利越艱難，贏得時的喜悅就越大。", "Pelé"),
     ("Talent wins games, but teamwork and intelligence win championships.", "天賦能贏比賽，但團隊合作與智慧才能贏得冠軍。", "Michael Jordan"),
@@ -303,7 +305,7 @@ CHEERS_QUOTES: list[tuple[str, str, str]] = [
     ("Happiness depends upon ourselves.", "幸福取決於我們自己。", "Aristotle"),
 ]
 
-# 每人 30 秒冷卻
+# 每人 30 秒冷卻（per-user）
 COOLDOWN = app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
 
 class Cheers(commands.Cog):
@@ -316,15 +318,28 @@ class Cheers(commands.Cog):
     @COOLDOWN
     async def cheers_cmd(self, inter: discord.Interaction, to: discord.Member | None = None):
         eng, zh, author = random.choice(CHEERS_QUOTES)
-        header = f"🎉 給 {to.mention} 的打氣！" if to else "🎉 打氣時間！"
 
-        embed = Embed(title=f"{author} 說過：", color=0x57F287)
+        # 1) Title 用作者名；2) description 放 @mention（在 description 會被解析成可點擊 tag）
+        desc = f"🎉 給 {to.mention} 的打氣！" if to else "🎉 打氣時間！"
+        embed = Embed(title=f"{author} 說過：", description=desc, color=0x57F287)
         embed.add_field(name="English", value=f"💬 {eng}", inline=False)
         embed.add_field(name="中文", value=f"➡️ {zh}", inline=False)
-        embed.set_footer(text=header)
+        embed.set_footer(text="Con9sole-Bartender Cheers")
         embed.timestamp = discord.utils.utcnow()
 
         await inter.response.send_message(embed=embed)
+
+    # 友善的冷卻提示（app_commands 版本的 error handler）
+    @cheers_cmd.error
+    async def cheers_error(self, inter: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CommandOnCooldown):
+            # 剩餘秒數取整數顯示
+            retry = int(error.retry_after) + 1
+            return await inter.response.send_message(
+                f"⌛ 指令冷卻中，請 {retry}s 後再試。", ephemeral=True
+            )
+        # 其他錯誤回到預設處理（也可自行記錄）
+        raise error
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Cheers(bot))
