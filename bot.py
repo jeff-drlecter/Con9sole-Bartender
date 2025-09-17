@@ -18,6 +18,7 @@ INITIAL_COGS = [
     "cogs.welcome_log",
     "cogs.message_audit",
     "cogs.role_channel_emoji_log",
+    "cheers.py",
 ]
 
 @bot.event
