@@ -121,6 +121,9 @@ CHEERS_QUOTES: list[tuple[str, str, str]] = [
     ("You just can’t beat the person who never gives up.", "你永遠打不倒一個從不放棄的人。", "Babe Ruth"),
 ]
 
+# Cooldown decorator: 每人 30 秒一次
+COOLDOWN = app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
+
 class Cheers(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -128,6 +131,7 @@ class Cheers(commands.Cog):
     @app_commands.command(name="cheers", description="隨機派一句名人鼓勵語錄（中英對照）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.describe(to="可選：@某人，送上鼓勵")
+    @COOLDOWN
     async def cheers_cmd(self, inter: discord.Interaction, to: discord.Member | None = None):
         eng, zh, author = random.choice(CHEERS_QUOTES)
         header = f"🎉 給 {to.mention} 的打氣！\n" if to else "🎉 打氣時間！\n"
@@ -141,3 +145,4 @@ class Cheers(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Cheers(bot))
+
