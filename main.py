@@ -420,7 +420,7 @@ def _role_mention_safe(role: discord.Role) -> str:
 @bot.event
 async def on_member_join(member: discord.Member):
     """新成員加入伺服器時發送歡迎訊息 + 記錄 log"""
-    # 歡迎訊息
+    # 歡迎訊息（出錯唔影響 logging）
     try:
         channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
         if channel and isinstance(channel, discord.TextChannel):
@@ -436,13 +436,12 @@ async def on_member_join(member: discord.Member):
                 f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
             )
             await channel.send(msg)
-                except Exception:
-                    # 歡迎訊息出錯唔好影響 logging
-                    pass
+    except Exception:
+        pass
 
     # Logging
     await _send_log(member.guild, _emb("Member Join", f"👋 {member.mention} 加入伺服器。", 0x57F287))
-    
+
 @bot.event
 async def on_member_remove(member: discord.Member):
     await _send_log(member.guild, _emb("Member Leave", f"👋 {member.mention} 離開伺服器。", 0xED4245))
@@ -460,17 +459,16 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
     # 角色增減（兩邊都 clickable，如 cache 仍在）
     before_ids = {r.id for r in before.roles}
-    after_ids  = {r.id for r in after.roles}
+    after_ids = {r.id for r in after.roles}
 
-    added_roles   = [r for r in after.roles  if r.id not in before_ids and r.name != "@everyone"]
-    removed_roles = [r for r in before.roles if r.id not in after_ids  and r.name != "@everyone"]
+    added_roles = [r for r in after.roles if r.id not in before_ids and r.name != "@everyone"]
+    removed_roles = [r for r in before.roles if r.id not in after_ids and r.name != "@everyone"]
 
     if added_roles:
         txt = "➕ " + after.mention + " 新增角色： " + ", ".join(_role_mention_safe(r) for r in added_roles)
         await _send_log(after.guild, _emb("Member Role Add", txt, 0x57F287))
 
     if removed_roles:
-        # 多數情況 cache 仍在 → 仍可 mention；如不可則 fallback 名稱
         txt = "➖ " + after.mention + " 移除角色： " + ", ".join(_role_mention_safe(r) for r in removed_roles)
         await _send_log(after.guild, _emb("Member Role Remove", txt, 0xED4245))
 
