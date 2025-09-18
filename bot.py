@@ -1,20 +1,39 @@
-# bot.py 內
+import asyncio
 import pkgutil
-import importlib
 import traceback
+import discord
+from discord.ext import commands
+import config
 import os
 
-async def setup_cogs():
-    # 1) 確保 cogs 係一個 package（有 __init__.py）
-    import cogs  # noqa
+intents = discord.Intents(
+    guilds=True, members=True, voice_states=True,
+    messages=True, message_content=True
+)
+bot = commands.Bot(command_prefix="!", intents=intents)
+TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 
-    # 2) 用 cogs.__path__ 掃描（比傳入 'cogs' 字串可靠）
+
+@bot.event
+async def on_ready():
+    print("🚀 Bot 啟動，開始同步指令（Guild-only）…")
+    try:
+        synced = await bot.tree.sync(guild=TARGET_GUILD)
+        print(f"🏠 Guild({config.GUILD_ID}) sync 完成：{len(synced)} commands -> {[c.name for c in synced]}")
+    except Exception as e:
+        print("Guild sync 失敗：", e)
+    print(f"✅ Logged in as {bot.user}")
+
+
+async def setup_cogs():
+    import cogs  # 確保 cogs 係一個 package
+
+    # 用 cogs.__path__ 掃描，比傳入 'cogs' 更穩陣
     found = list(pkgutil.iter_modules(cogs.__path__))
 
     print("📁 cogs/ 目錄實際檔案：", os.listdir("cogs"))
     print("🔎 掃到模組：", [name for _, name, _ in found])
 
-    # 3) 自動載入所有頂層 .py（排除底線開頭，例如 __init__.py）
     loaded_any = False
     for _, name, ispkg in found:
         if name.startswith("_"):
@@ -30,3 +49,15 @@ async def setup_cogs():
 
     if not loaded_any:
         print("⚠️ 未載入到任何 cog，請檢查 .dockerignore / 路徑 / 語法。")
+
+
+async def main():
+    if not config.TOKEN:
+        raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN 環境變數")
+    async with bot:
+        await setup_cogs()
+        await bot.start(config.TOKEN)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
