@@ -1,15 +1,18 @@
 import asyncio
 import pkgutil
 import traceback
+
 import discord
 from discord.ext import commands
+from discord import app_commands  # ← 需要
+
 import config
-import os
 
 intents = discord.Intents(
     guilds=True, members=True, voice_states=True,
     messages=True, message_content=True
 )
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 
@@ -26,33 +29,19 @@ async def on_ready():
 
 
 async def setup_cogs():
-    import cogs  # 確保 cogs 係一個 package
-
-    # 用 cogs.__path__ 掃描，比傳入 'cogs' 更穩陣
-    found = list(pkgutil.iter_modules(cogs.__path__))
-    try:
-        bot.tree.add_command(reload_cogs, guild=TARGET_GUILD)
-    except app_commands.CommandAlreadyRegistered:
-        pass
-    
-    print("📁 cogs/ 目錄實際檔案：", os.listdir("cogs"))
-    print("🔎 掃到模組：", [name for _, name, _ in found])
-
-    loaded_any = False
-    for _, name, ispkg in found:
-        if name.startswith("_"):
+    # 自動載入 cogs 目錄下所有模組
+    for m in pkgutil.iter_modules(['cogs']):
+        name = m.name
+        if name.startswith('_'):
             continue
-        mod = f"cogs.{name}"
+        ext = f"cogs.{name}"
         try:
-            await bot.load_extension(mod)
-            print(f"🔌 Loaded {mod}")
-            loaded_any = True
+            await bot.load_extension(ext)
+            print(f"🔌 Loaded {ext}")
         except Exception:
-            print(f"❌ Load {mod} 失敗：")
+            print(f"❌ Load {ext} 失敗：")
             traceback.print_exc()
 
-    if not loaded_any:
-        print("⚠️ 未載入到任何 cog，請檢查 .dockerignore / 路徑 / 語法。")
 
 async def main():
     if not config.TOKEN:
