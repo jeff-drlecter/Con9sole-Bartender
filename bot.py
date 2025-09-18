@@ -59,6 +59,7 @@ def _is_admin(interaction: discord.Interaction) -> bool:
     # 伺服器管理員才可用
     return bool(interaction.user and interaction.user.guild_permissions.administrator)
 
+@app_commands.guilds(config.GUILD_ID)             # 👈 新增：Guild-scoped
 @app_commands.check(_is_admin)
 @app_commands.describe(cog="可選，指定某個 cog 名稱（例如：drink）")
 @bot.tree.command(name="reload", description="重載所有 / 指定的 cogs（只有管理員可用）")
