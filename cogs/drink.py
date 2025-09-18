@@ -84,7 +84,7 @@ IBA: List[Tuple[str, str, str, str]] = [
     ("Mint Julep", "薄荷朱利酒", "波本加薄荷與碎冰，清爽消暑。", "whisky"),
     ("Mojito", "莫吉托", "蘭姆、薄荷、青檸與梳打水，清新爽口。", "tropical"),
     ("Moscow Mule", "莫斯科騾子", "伏特加、薑汁啤酒與青檸汁，辛口清爽。", "beer"),
-    (("Piña Colada"), "椰林飄香", "蘭姆、椰漿與菠蘿汁，熱帶甜美。", "tropical"),
+    ("Piña Colada"), "椰林飄香", "蘭姆、椰漿與菠蘿汁，熱帶甜美。", "tropical"),
     ("Sea Breeze", "海風", "伏特加、蔓越莓與葡萄柚汁，清爽酸甜。", "tropical"),
     ("Sex on the Beach", "海灘性愛", "伏特加、桃子甜酒與果汁，甜美討喜。", "tropical"),
     ("Singapore Sling", "新加坡司令", "琴酒加鳳梨汁與櫻桃白蘭地，熱帶經典。", "tropical"),
