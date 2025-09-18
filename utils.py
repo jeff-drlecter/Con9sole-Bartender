@@ -209,3 +209,28 @@ def cancel_all_delete_tasks() -> None:
             task.cancel()
     _PENDING_DELETE_TASKS.clear()
     print("🧯 已清空所有自動刪除任務。")
+
+# --------- Add to utils.py (helper functions) ---------
+from typing import Optional
+
+def voice_arrow(before: Optional[discord.abc.GuildChannel],
+                after: Optional[discord.abc.GuildChannel]) -> str:
+    """把頻道變化格式化為 A → B；允許 None。"""
+    def _name(ch: Optional[discord.abc.GuildChannel]) -> str:
+        if ch is None:
+            return "（無）"
+        # Threads 可能沒有 name，用 parent 名稱後綴 thread
+        name = getattr(ch, "name", None)
+        if name is None and hasattr(ch, "parent") and getattr(ch, "parent", None):
+            parent = getattr(ch, "parent")
+            name = f"{getattr(parent, 'name', '未知')}/thread"
+        return f"#{name}" if name and not str(name).startswith("#") else (name or "#未知")
+    return f"{_name(before)} → {_name(after)}"
+
+
+def role_mention_safe(role: discord.Role, allow_ping: bool = False) -> str:
+    """
+    以「不觸發 ping」的方式顯示角色。
+    allow_ping=True 時回傳 role.mention；否則回傳 `@角色名`（行內程式碼樣式）。
+    """
+    return role.mention if allow_ping else f"`@{role.name}`"
