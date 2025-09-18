@@ -18,19 +18,84 @@ def user_can_run_tempvc(inter: discord.Interaction) -> bool:
         return True
     return any(r.id == config.VERIFIED_ROLE_ID for r in m.roles)
 
-# ---------- 清理空房 ----------
+# ---------- 清理空房（強化版） ----------
 async def schedule_delete_if_empty(channel: discord.VoiceChannel):
+    """如果房間目前冇人，就開始倒數刪除；有人再入就會被 on_voice_state_update 取消。"""
+    try:
+        timeout = float(getattr(config, "TEMP_VC_EMPTY_SECONDS", 120))
+    except Exception:
+        timeout = 120.0
+
+    # 只在「而家」係空先開新倒數
+    if len(channel.members) > 0:
+        return
+
+    ch_id = channel.id
+
     async def _task():
         try:
-            await asyncio.sleep(config.TEMP_VC_EMPTY_SECONDS)
-            if len(channel.members) == 0 and is_temp_vc_id(channel.id):
-                print(f"🧹 自動刪除空房：#{channel.name}（id={channel.id}）")
-                untrack_temp_vc(channel.id)
-                await channel.delete(reason="Temp VC idle timeout")
+            print(f"⏳ Temp VC 倒數開始（{timeout:.0f}s）：#{channel.name} id={ch_id}")
+            await asyncio.sleep(timeout)
+
+            # 倒數完先重新 fetch，避免用舊 cache
+            guild = channel.guild
+            fresh = guild.get_channel(ch_id)
+            if fresh is None:
+                try:
+                    fresh = await guild.fetch_channel(ch_id)
+                except discord.NotFound:
+                    print(f"🧹 目標已不存在（可能已手動刪）：id={ch_id}")
+                    return
+                except Exception as e:
+                    print(f"⚠️ 取 channel 失敗 id={ch_id}：{e!r}")
+                    return
+
+            # 最後檢查一次真係無人同埋係 temp VC 先刪
+            if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0 and is_temp_vc_id(ch_id):
+                print(f"🧹 自動刪除空房：#{fresh.name}（id={ch_id}）")
+                untrack_temp_vc(ch_id)
+                try:
+                    await fresh.delete(reason="Temp VC idle timeout")
+                except discord.Forbidden:
+                    print("❌ 沒有權限刪除語音房（請檢查 Bot 角色是否有『管理頻道』）。")
+                except Exception as e:
+                    print(f"❌ 刪除語音房失敗：{e!r}")
+            else:
+                print(f"🚫 取消刪除：房間有人或已不是 temp（id={ch_id}）")
+        except asyncio.CancelledError:
+            print(f"🛑 倒數已取消（有人進入？）id={ch_id}")
+            raise
+        except Exception as e:
+            print(f"⚠️ 倒數 task 發生例外 id={ch_id}：{e!r}")
         finally:
-            pass
-    if len(channel.members) == 0:
-        set_delete_task(channel.id, asyncio.create_task(_task()))
+            # 任務完成/取消都要把紀錄清走
+            cancel_delete_task(ch_id)
+
+    # 若已存在舊倒數，先取消再設置（避免重覆）
+    cancel_delete_task(ch_id)
+    set_delete_task(ch_id, asyncio.create_task(_task()))
+
+
+# ---------- 事件監聽：誰入誰走 ----------
+@commands.Cog.listener()
+async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    # 你的 log 保留
+    if before.channel != after.channel:
+        if not before.channel and after.channel:
+            await send_log(member.guild, emb("Voice Join", f"🎤 {member.mention} {voice_arrow(before.channel, after.channel)}", 0x57F287))
+        elif before.channel and not after.channel:
+            await send_log(member.guild, emb("Voice Leave", f"🔇 {member.mention} {voice_arrow(before.channel, after.channel)}", 0xED4245))
+        else:
+            await send_log(member.guild, emb("Voice Move", f"🔀 {member.mention} {voice_arrow(before.channel, after.channel)}", 0x5865F2))
+
+    # 有人離開一個 temp 房：如果變到 0 人，就開始倒數
+    if before.channel and is_temp_vc_id(before.channel.id):
+        if len(before.channel.members) == 0:
+            await schedule_delete_if_empty(before.channel)
+
+    # 有人加入一個 temp 房：取消倒數
+    if after.channel and is_temp_vc_id(after.channel.id):
+        cancel_delete_task(after.channel.id)
 
 # ---------- Cog ----------
 class TempVC(commands.Cog):
