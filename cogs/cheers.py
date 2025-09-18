@@ -316,9 +316,9 @@ class Cheers(commands.Cog):
 
         # mention 放在最前段
         if to:
-            desc = f"🎉 給 {to.mention} 的打氣！\n\n**{author} 說過：**"
+            desc = f"🎉 給 {to.mention} 的打氣！\n\n**{author} 講過：**"
         else:
-            desc = f"🎉 打氣時間！\n\n**{author} 說過：**"
+            desc = f"🎉 打氣時間！\n\n**{author} 講過：**"
 
         embed = Embed(description=desc, color=0x57F287)
         embed.add_field(name="English", value=f"💬 {eng}", inline=False)
