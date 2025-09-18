@@ -53,16 +53,19 @@ async def setup_cogs():
 
 # ---------- Admin-only /reload ----------
 from discord import app_commands
-import importlib
+import discord
 
-def _is_admin(interaction: discord.Interaction) -> bool:
-    # 伺服器管理員才可用
-    return bool(interaction.user and interaction.user.guild_permissions.administrator)
+def _is_admin(inter: discord.Interaction) -> bool:
+    return bool(inter.user and inter.user.guild_permissions.administrator)
 
-@app_commands.guilds(config.GUILD_ID)             # 👈 新增：Guild-scoped
-@app_commands.check(_is_admin)
-@app_commands.describe(cog="可選，指定某個 cog 名稱（例如：drink）")
-@bot.tree.command(name="reload", description="重載所有 / 指定的 cogs（只有管理員可用）")
+@app_commands.guilds(config.GUILD_ID)  # ← 只在你個伺服器註冊
+@app_commands.check(_is_admin)         # ← 只有 Admin 可用
+@bot.tree.command(
+    name="reload",
+    description="重載所有 / 指定的 cogs（只有管理員可用）",
+    default_member_permissions=discord.Permissions(administrator=True)  # ← UI 只顯示俾 Admin
+)
+@app_commands.describe(cog="可選，指定某個 cog 名（例如：drink）")
 async def reload_cogs(interaction: discord.Interaction, cog: str | None = None):
     await interaction.response.defer(ephemeral=True)
 
