@@ -1,3 +1,4 @@
+from config import GUILD_ID
 import random
 from typing import List, Tuple
 
@@ -196,6 +197,7 @@ class Drink(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
+    @app_commands.guilds(GUILD_ID)                 # 👈 新增：Guild-scoped
     @app_commands.command(name="drink", description="隨機為某人點一款酒")
     @app_commands.describe(to="要招待嘅人")
     async def drink(self, interaction: discord.Interaction, to: discord.Member):
