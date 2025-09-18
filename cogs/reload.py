@@ -1,10 +1,8 @@
 import pkgutil
 import traceback
-
 import discord
 from discord import app_commands
 from discord.ext import commands
-
 import config
 
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
@@ -17,12 +15,11 @@ class Reload(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.guilds(config.GUILD_ID)  # Guild-scoped，立即生效
-    @app_commands.check(_is_admin)
+    @app_commands.guilds(config.GUILD_ID)
+    @app_commands.check(_is_admin)  # 只保留 runtime check
     @app_commands.command(
         name="reload",
-        description="重載所有 / 指定的 cogs（只有管理員可用）",
-        default_member_permissions=discord.Permissions(administrator=True)  # 非 Admin 不顯示
+        description="重載所有 / 指定的 cogs（只有管理員可用）"
     )
     @app_commands.describe(cog="可選，指定某個 cog 名稱（例如：drink）")
     async def reload_cogs(self, interaction: discord.Interaction, cog: str | None = None):
@@ -57,7 +54,7 @@ class Reload(commands.Cog):
                 print(f"❌ Reload {mod} 失敗：{e}")
                 traceback.print_exc()
 
-        # 重新 sync 到 guild，確保 slash 立即更新
+        # Resync guild commands
         try:
             synced = await self.bot.tree.sync(guild=TARGET_GUILD)
             print(f"🔄 Resynced {len(synced)} commands: {[c.name for c in synced]}")
