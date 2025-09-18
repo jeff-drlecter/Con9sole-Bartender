@@ -191,27 +191,33 @@ def build_drink_names() -> List[Tuple[str, str, str, str]]:
 DRINKS: List[Tuple[str, str, str, str]] = build_drink_names()
 
 
+# --- 只需把 /drink 這個 handler 換成以下版本 ---
+
 class Drink(commands.Cog):
     """/drink：隨機為指定對象點一款酒（英文+中文+簡介+類型icon）。"""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.guilds(GUILD_ID)                 # 👈 新增：Guild-scoped
+    @app_commands.guilds(GUILD_ID)  # guild-scoped
     @app_commands.command(name="drink", description="隨機為某人點一款酒")
-    @app_commands.describe(to="要招待嘅人")
+    @app_commands.describe(to="收酒嘅人")
     async def drink(self, interaction: discord.Interaction, to: discord.Member):
         eng, zh, desc, typ = random.choice(DRINKS)
         icon = ICON_MAP.get(typ, ICON_MAP["default"])
+
+        giver = interaction.user.mention
+        receiver = to.mention
+
         embed = discord.Embed(
             description=(
-                f"{icon} {interaction.user.mention} 為 {to.mention} 點咗 **{eng} ({zh})**，請享用～\n"
+                f"{icon} {giver} 為 {receiver} 點咗 **{eng} ({zh})**，請享用～\n"
                 f"➡️ 簡介：{desc}"
             ),
             color=discord.Color.random(),
         )
-        )
         embed.set_author(name="Con9sole-Bartender")
+
         await interaction.response.send_message(embed=embed)
 
 
