@@ -30,7 +30,11 @@ async def setup_cogs():
 
     # 用 cogs.__path__ 掃描，比傳入 'cogs' 更穩陣
     found = list(pkgutil.iter_modules(cogs.__path__))
-
+    try:
+        bot.tree.add_command(reload_cogs, guild=TARGET_GUILD)
+    except app_commands.CommandAlreadyRegistered:
+        pass
+    
     print("📁 cogs/ 目錄實際檔案：", os.listdir("cogs"))
     print("🔎 掃到模組：", [name for _, name, _ in found])
 
