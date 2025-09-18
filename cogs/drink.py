@@ -205,10 +205,11 @@ class Drink(commands.Cog):
         icon = ICON_MAP.get(typ, ICON_MAP["default"])
         embed = discord.Embed(
             description=(
-                f"{icon} {to.mention} 為你點咗 **{eng} ({zh})**，請享用～\n"
+                f"{icon} {interaction.user.mention} 為 {to.mention} 點咗 **{eng} ({zh})**，請享用～\n"
                 f"➡️ 簡介：{desc}"
             ),
             color=discord.Color.random(),
+        )
         )
         embed.set_author(name="Con9sole-Bartender")
         await interaction.response.send_message(embed=embed)
