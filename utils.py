@@ -26,6 +26,7 @@ async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
     """把 embed 發到 LOG_CHANNEL_ID（如果設置正確）。
 
     - 先用 cache `guild.get_channel`，失敗再 `fetch_channel`。
+    - 強制允許 **user mentions**，以確保手機/桌面都可點擊打開用戶卡。
     - 出錯唔會影響主流程，只 print 提示。
     """
     if not LOG_CHANNEL_ID:
@@ -39,7 +40,14 @@ async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
 
     if isinstance(ch, discord.TextChannel):
         try:
-            await ch.send(embed=embed)
+            await ch.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(
+                    users=True,  # ✅ 允許 @用戶（保證 mobile-clickable）
+                    roles=False,
+                    everyone=False,
+                ),
+            )
         except Exception as e:  # pragma: no cover
             print(f"[send_log] 發送失敗：{e}")
     else:
@@ -210,7 +218,8 @@ def cancel_all_delete_tasks() -> None:
     _PENDING_DELETE_TASKS.clear()
     print("🧯 已清空所有自動刪除任務。")
 
-# --------- Add to utils.py (helper functions) ---------
+
+# --------- Helpers ---------
 from typing import Optional
 
 def voice_arrow(before: Optional[discord.abc.GuildChannel],
