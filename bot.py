@@ -1,55 +1,76 @@
+from __future__ import annotations
+import os
 import asyncio
+import logging
 import pkgutil
-import traceback
-
+import importlib
 import discord
 from discord.ext import commands
-from discord import app_commands  # ← 需要
 
 import config
 
-intents = discord.Intents(
-    guilds=True, members=True, voice_states=True,
-    messages=True, message_content=True
-)
+# ---------- Logging ----------
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("con9sole-bartender")
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-TARGET_GUILD = discord.Object(id=config.GUILD_ID)
+# ---------- Intents ----------
+intents = discord.Intents.default()
+intents.members = True           # 成員事件（join/leave/role/nick 更新）
+intents.guilds = True
+intents.messages = True
+intents.message_content = False  # 如需讀取訊息文字可開
+intents.voice_states = True      # 語音房事件
 
+# ---------- Bot ----------
+class Bot(commands.Bot):
+    def __init__(self) -> None:
+        super().__init__(command_prefix=commands.when_mentioned_or("/"), intents=intents)
 
-@bot.event
-async def on_ready():
-    print("🚀 Bot 啟動，開始同步指令（Guild-only）…")
-    try:
-        synced = await bot.tree.sync(guild=TARGET_GUILD)
-        print(f"🏠 Guild({config.GUILD_ID}) sync 完成：{len(synced)} commands -> {[c.name for c in synced]}")
-    except Exception as e:
-        print("Guild sync 失敗：", e)
-    print(f"✅ Logged in as {bot.user}")
+    async def setup_hook(self) -> None:
+        # 自動載入 cogs 目錄下的所有 .py（排除 __init__ 及以下劃線開頭）
+        loaded = []
+        for modinfo in pkgutil.iter_modules(["cogs"]):
+            name = modinfo.name
+            if name.startswith("_"):
+                continue
+            full = f"cogs.{name}"
+            try:
+                await self.load_extension(full)
+                loaded.append(full)
+                log.info("Loaded extension: %s", full)
+            except Exception as e:  # 不阻斷啟動，寫 log 方便排查
+                log.exception("Failed loading %s: %r", full, e)
+        if not loaded:
+            log.warning("No cogs loaded from ./cogs")
 
-
-async def setup_cogs():
-    # 自動載入 cogs 目錄下所有模組
-    for m in pkgutil.iter_modules(['cogs']):
-        name = m.name
-        if name.startswith('_'):
-            continue
-        ext = f"cogs.{name}"
+        # Slash 指令同步（guild-scoped 較快；沒設置則全域）
         try:
-            await bot.load_extension(ext)
-            print(f"🔌 Loaded {ext}")
-        except Exception:
-            print(f"❌ Load {ext} 失敗：")
-            traceback.print_exc()
+            if getattr(config, "GUILD_ID", None):
+                guild_obj = discord.Object(id=config.GUILD_ID)
+                await self.tree.sync(guild=guild_obj)
+                log.info("App commands synced to guild %s", config.GUILD_ID)
+            else:
+                await self.tree.sync()
+                log.info("App commands synced globally")
+        except Exception as e:
+            log.exception("Slash command sync failed: %r", e)
 
+    async def on_ready(self) -> None:
+        log.info("✅ Logged in as %s (%s)", self.user, self.user and self.user.id)
 
-async def main():
-    if not config.TOKEN:
-        raise SystemExit("❌ 沒有 DISCORD_BOT_TOKEN 環境變數")
-    async with bot:
-        await setup_cogs()
-        await bot.start(config.TOKEN)
+# ---------- 健康檢查指令 ----------
+@commands.hybrid_command(name="ping", description="Test bot latency")
+async def ping(ctx: commands.Context) -> None:
+    await ctx.reply(f"Pong! {round(ctx.bot.latency * 1000)}ms")
 
+# ---------- Main ----------
+async def main() -> None:
+    bot = Bot()
+    bot.add_command(ping)
+    token = os.getenv("DISCORD_TOKEN", getattr(config, "DISCORD_TOKEN", ""))
+    if not token:
+        raise RuntimeError("DISCORD_TOKEN not set in env or config")
+    await bot.start(token)
 
 if __name__ == "__main__":
     asyncio.run(main())
