@@ -3,7 +3,6 @@ import os
 import asyncio
 import logging
 import pkgutil
-import importlib
 import discord
 from discord.ext import commands
 
@@ -28,7 +27,7 @@ class Bot(commands.Bot):
 
     async def setup_hook(self) -> None:
         # 自動載入 cogs 目錄下的所有 .py（排除 __init__ 及以下劃線開頭）
-        loaded = []
+        loaded: list[str] = []
         for modinfo in pkgutil.iter_modules(["cogs"]):
             name = modinfo.name
             if name.startswith("_"):
@@ -63,14 +62,32 @@ class Bot(commands.Bot):
 async def ping(ctx: commands.Context) -> None:
     await ctx.reply(f"Pong! {round(ctx.bot.latency * 1000)}ms")
 
+# ---------- Token loader（支援多種變數名與 config） ----------
+
+def _get_token() -> str:
+    """Return Discord bot token from env or config using flexible keys.
+
+    Priority: env(DISCORD_TOKEN) -> env(DISCORD_BOT_TOKEN) ->
+              config.DISCORD_TOKEN -> config.DISCORD_BOT_TOKEN
+    """
+    return (
+        os.getenv("DISCORD_TOKEN")
+        or os.getenv("DISCORD_BOT_TOKEN")
+        or getattr(config, "DISCORD_TOKEN", "")
+        or getattr(config, "DISCORD_BOT_TOKEN", "")
+    )
+
 # ---------- Main ----------
 async def main() -> None:
     bot = Bot()
     bot.add_command(ping)
-    token = os.getenv("DISCORD_TOKEN", getattr(config, "DISCORD_TOKEN", ""))
+
+    token = _get_token()
     if not token:
-        raise RuntimeError("DISCORD_TOKEN not set in env or config")
+        raise RuntimeError("DISCORD_TOKEN/DISCORD_BOT_TOKEN not set in env or config")
+
     await bot.start(token)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
