@@ -6,7 +6,11 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from utils import emb, send_log, voice_arrow, is_temp_vc_id, set_delete_task, cancel_delete_task, track_temp_vc, untrack_temp_vc
+from utils import (
+    emb, send_log, voice_arrow,
+    is_temp_vc_id, set_delete_task, cancel_delete_task,
+    track_temp_vc, untrack_temp_vc, bootstrap_track_temp_vcs,
+)
 
 # ---------- Mention helper (mobile/desktop clickable) ----------
 async def mention_or_id(guild: discord.Guild, user_or_id: Union[int, discord.abc.User, discord.Member, None]) -> str:
@@ -99,6 +103,23 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel):
 class TempVC(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._bootstrapped = False  # 防止多次 on_ready
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self._bootstrapped:
+            return
+        self._bootstrapped = True
+
+        for g in self.bot.guilds:
+            try:
+                ids = await bootstrap_track_temp_vcs(g, name_prefixes=[config.TEMP_VC_PREFIX])
+                for cid in ids:
+                    ch = g.get_channel(cid)
+                    if isinstance(ch, discord.VoiceChannel) and len(ch.members) == 0:
+                        await schedule_delete_if_empty(ch)
+            except Exception as e:
+                print(f"[TempVC bootstrap] {g.name} 失敗：{e!r}")
 
     # 事件監聽：誰入誰走
     @commands.Cog.listener()
