@@ -1,4 +1,5 @@
-import pkgutil
+import os
+import sys
 import time
 import traceback
 import importlib
@@ -34,7 +35,12 @@ class Reload(commands.Cog):
         self, inter: discord.Interaction, current: str
     ) -> List[app_commands.Choice[str]]:
         import cogs
-        found = sorted({name for _, name, _ in pkgutil.iter_modules(cogs.__path__) if not name.startswith("_")})
+        cogs_dir = os.path.dirname(cogs.__file__)
+        found = sorted({
+            fn[:-3]
+            for fn in os.listdir(cogs_dir)
+            if fn.endswith(".py") and not fn.startswith("_")
+        })
         # 另外支援 "utils"（非 extension，但常用）
         choices = [*found, "utils"]
         return [app_commands.Choice(name=n, value=n) for n in choices if current.lower() in n.lower()][:25]
@@ -69,29 +75,41 @@ class Reload(commands.Cog):
                 await interaction.followup.send("`utils` 重新載入失敗（請查 Console）", ephemeral=True)
                 # 繼續做其餘 reload
 
-        import os, cogs
-cogs_dir = os.path.dirname(cogs.__file__)
-found = {
-    fn[:-3]
-    for fn in os.listdir(cogs_dir)
-    if fn.endswith(".py") and not fn.startswith("_")
-}
+        import cogs
+        cogs_dir = os.path.dirname(cogs.__file__)
+        found = {
+            fn[:-3]
+            for fn in os.listdir(cogs_dir)
+            if fn.endswith(".py") and not fn.startswith("_")
+        }
+
+        # 卸載任何已載入但文件已不存在的舊擴展（例如被移走/改名的 message_audit）
+        for ext in list(self.bot.extensions.keys()):
+            if not ext.startswith("cogs."):
+                continue
+            name = ext.split(".", 1)[-1]
+            if name not in found:
+                try:
+                    await self.bot.unload_extension(ext)
+                    sys.modules.pop(ext, None)
+                    print(f"🧹 Unloaded stale extension: {ext}")
+                except Exception:
+                    traceback.print_exc()
 
         if cog and cog != "utils":
             if cog not in found:
                 await interaction.followup.send(
-                    f"找不到 cog：`{cog}`。可用：`{', '.join(sorted(n for n in found if not n.startswith('_')))}`",
+                    f"找不到 cog：`{cog}`。可用：`{', '.join(sorted(found))}`",
                     ephemeral=True,
                 )
                 return
             targets = [cog]
         else:
-            targets = sorted(n for n in found if not n.startswith("_"))
+            targets = sorted(found)
 
         # 如果選擇 hard_reload，當 utils 變更後，最好把所有 cogs 都 reload
         if hard_reload and cog and cog != "utils":
-            # 擴充為全部重載
-            targets = sorted(n for n in found if not n.startswith("_"))
+            targets = sorted(found)
 
         ok, fail = [], []
         for name in targets:
@@ -124,12 +142,15 @@ found = {
         if ok:
             msg.append(f"✅ 已重載：`{', '.join(ok)}`")
         if fail:
-            msg.append("❌ 失敗：\n" + "\n".join(f"- `{n}` → {err}" for n, err in fail))
+            msg.append("❌ 失敗：
+" + "
+".join(f"- `{n}` → {err}" for n, err in fail))
         if not msg:
             msg.append("沒有可重載的 cogs。")
         msg.append(f"⏱️ 用時：{dt:.0f} ms  | 同步範圍：{'Global' if global_sync else 'Guild-only'}")
 
-        await interaction.followup.send("\n".join(msg), ephemeral=True)
+        await interaction.followup.send("
+".join(msg), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
