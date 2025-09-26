@@ -212,149 +212,123 @@ class MessageAudit(commands.Cog):
             # Avoid crashing on rare sqlite issues
             pass
 
-    @commands.Cog.listener()
-    async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
-        if not before.guild or before.author.bot:
-            return
+   @commands.Cog.listener()
+async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
+    if not before.guild or before.author.bot:
+        return
 
-        # Detect any meaningful change (content / attachments / embeds / stickers)
-        before_payload = _attachments_payload(before)
-        after_payload = _attachments_payload(after)
-        changed = (before.content != after.content) or (before_payload != after_payload)
-        if not changed:
-            return
+    before_payload = _attachments_payload(before)
+    after_payload = _attachments_payload(after)
+    changed = (before.content != after.content) or (before_payload != after_payload)
+    if not changed:
+        return
 
-        author_txt = await mention_or_id(before.guild, getattr(before, "author", None))
-        b = before.content or "（空）"
-        a = after.content or "（空）"
-        if len(b) > 900:
-            b = b[:897] + "…"
-        if len(a) > 900:
-            a = a[:897] + "…"
+    author_txt = await mention_or_id(before.guild, getattr(before, "author", None))
+    b = before.content or "（空）"
+    a = after.content or "（空）"
+    if len(b) > 900:
+        b = b[:897] + "…"
+    if len(a) > 900:
+        a = a[:897] + "…"
 
-        # Build attachment/embed change note
-        def _names(payload: Dict[str, Any]) -> List[str]:
-            return [x.get("filename", "") for x in payload.get("attachments", [])]
-        b_att, a_att = set(_names(before_payload)), set(_names(after_payload))
-        added = a_att - b_att
-        removed = b_att - a_att
-        delta_lines: List[str] = []
-        if added:
-            delta_lines.append("➕ 附件：" + ", ".join(sorted(added)))
-        if removed:
-            delta_lines.append("➖ 附件：" + ", ".join(sorted(removed)))
-        if len(before_payload.get("embeds", [])) != len(after_payload.get("embeds", [])):
-            delta_lines.append(
-                f"🔗 Embeds：{len(before_payload.get('embeds', []))} → {len(after_payload.get('embeds', []))}"
+    def _names(payload: Dict[str, Any]) -> List[str]:
+        return [x.get("filename", "") for x in payload.get("attachments", [])]
+    b_att, a_att = set(_names(before_payload)), set(_names(after_payload))
+    added = a_att - b_att
+    removed = b_att - a_att
+    delta_lines: List[str] = []
+    if added:
+        delta_lines.append("➕ 附件：" + ", ".join(sorted(added)))
+    if removed:
+        delta_lines.append("➖ 附件：" + ", ".join(sorted(removed)))
+    if len(before_payload.get("embeds", [])) != len(after_payload.get("embeds", [])):
+        delta_lines.append(f"🔗 Embeds：{len(before_payload.get('embeds', []))} → {len(after_payload.get('embeds', []))}")
+    if len(before_payload.get("stickers", [])) != len(after_payload.get("stickers", [])):
+        delta_lines.append(f"🏷️ Stickers：{len(before_payload.get('stickers', []))} → {len(after_payload.get('stickers', []))}")
+    delta_text = ("\n" + "\n".join(delta_lines)) if delta_lines else ""
+
+    desc = (
+        f"✏️ {author_txt} 在 {before.channel.mention} 編輯了訊息：\n"
+        f"**Before**：{b}\n"
+        f"**After**：{a}{delta_text}"
+    )
+    await send_log(before.guild, emb("Message Edit", desc, 0xFEE75C))
+
+    self.cache.set(
+        after.id,
+        {"author_id": after.author.id, "content": after.content or "", **after_payload},
+    )
+    try:
+        self.store.upsert(after)
+    except Exception:
+        pass
+
+    try:
+        with self.store._connect() as con:
+            con.execute(
+                ("CREATE TABLE IF NOT EXISTS revisions ("
+                 " rev_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " message_id INTEGER,"
+                 " edited_at INTEGER,"
+                 " before_content TEXT,"
+                 " after_content TEXT,"
+                 " before_payload TEXT,"
+                 " after_payload TEXT"
+                 ")")
             )
-        if len(before_payload.get("stickers", [])) != len(after_payload.get("stickers", [])):
-            delta_lines.append(
-                f"🏷️ Stickers：{len(before_payload.get('stickers', []))} → {len(after_payload.get('stickers', []))}"
+            con.execute(
+                ("INSERT INTO revisions(message_id, edited_at, before_content, after_content, before_payload, after_payload)"
+                 " VALUES (?, ?, ?, ?, ?, ?)"),
+                (
+                    after.id,
+                    int((after.edited_at or after.created_at).timestamp()) if after.created_at else 0,
+                    before.content or "",
+                    after.content or "",
+                    json.dumps(before_payload, ensure_ascii=False),
+                    json.dumps(after_payload, ensure_ascii=False),
+                ),
             )
-        delta_text = ("\n" + "\n".join(delta_lines)) if delta_lines else ""
-
-        desc = (
-            f"✏️ {author_txt} 在 {before.channel.mention} 編輯了訊息：\n"
-            f"**Before**：{b}\n**After**：{a}{delta_text}"
-        )
-        await send_log(before.guild, emb("Message Edit", desc, 0xFEE75C))
-
-        # Update cache + store with the latest state
-        self.cache.set(
-            after.id,
-            {
-                "author_id": after.author.id,
-                "content": after.content or "",
-                **after_payload,
-            },
-        )
-        try:
-            self.store.upsert(after)
-        except Exception:
-            pass
-
-        # Persist a revision row (best-effort)
-        try:
-            with self.store._connect() as con:
-                con.execute(
-                    (
-                        "CREATE TABLE IF NOT EXISTS revisions ("
-                        " rev_id     INTEGER PRIMARY KEY AUTOINCREMENT,"
-                        " message_id INTEGER,"
-                        " edited_at  INTEGER,"
-                        " before_content TEXT,"
-                        " after_content  TEXT,"
-                        " before_payload TEXT,"
-                        " after_payload  TEXT"
-                        ")"
-                    )
-                )
-                con.execute(
-                    (
-                        "INSERT INTO revisions(message_id, edited_at, before_content, after_content, before_payload, after_payload)"
-                        " VALUES (?, ?, ?, ?, ?, ?)"
-                    ),
-                    (
-                        after.id,
-                        int((after.edited_at or after.created_at).timestamp()) if after.created_at else 0,
-                        before.content or "",
-                        after.content or "",
-                        json.dumps(before_payload, ensure_ascii=False),
-                        json.dumps(after_payload, ensure_ascii=False),
-                    ),
-                )
-        except Exception:
-            pass
-
+    except Exception:
+        pass
     # ----------------
     # Delete handlers
     # ----------------
     @commands.Cog.listener()
-    async def on_message_delete(self, message: discord.Message) -> None:
-        if not message.guild:
-            return
+async def on_message_delete(self, message: discord.Message) -> None:
+    if not message.guild:
+        return
 
-        cached = self.cache.get(message.id)
-        if cached is None:
-            cached = self.store.get(message.id)
+    cached = self.cache.get(message.id) or self.store.get(message.id)
 
-        # Prefer original cached content if available
-        if cached is not None:
-            content = cached.get("content") or "（無文字）"
-            if len(content) > 900:
-                content = content[:897] + "…"
-
-            atts = cached.get("attachments") or []
-            att_lines = [f"`{a.get('filename','')}` → {a.get('url','')}" for a in atts]
-            attach_text = ("\n📎 附件：\n" + "\n".join(att_lines)) if att_lines else ""
-
-            author_txt = await mention_or_id(message.guild, cached.get("author_id"))
-            desc = (
-                f"🧹 {author_txt} 的訊息被刪除於 {message.channel.mention}\n"
-                f"原文：{content}{attach_text}"
-            )
-        else:
-            # Fallback to runtime message object (likely no content)
-            author_txt = await mention_or_id(message.guild, getattr(message, "author", None))
-            content = message.content or "（無文字，可能只有附件 / 嵌入）"
-            if len(content) > 900:
-                content = content[:897] + "…"
-
-            attach_text = ""
-            if message.attachments:
-                attach_text = "\n附件：" + ", ".join(a.filename for a in message.attachments)
-
-            desc = (
-                f"🧹 {author_txt} 的訊息被刪除於 {message.channel.mention}\n"
-                f"內容：{content}{attach_text}"
-            )
-
-        e = emb("Message Delete", desc, 0xED4245)
-        e.set_footer(
-            text=f"Author ID: {getattr(message.author, 'id', '未知')} • Message ID: {message.id}"
+    if cached is not None:
+        content = cached.get("content") or "（無文字）"
+        if len(content) > 900:
+            content = content[:897] + "…"
+        atts = cached.get("attachments") or []
+        att_lines = [f"`{a.get('filename','')}` → {a.get('url','')}" for a in atts]
+        attach_text = ("\n📎 附件：\n" + "\n".join(att_lines)) if att_lines else ""
+        author_txt = await mention_or_id(message.guild, cached.get("author_id"))
+        desc = (
+            f"🧹 {author_txt} 的訊息被刪除於 {message.channel.mention}\n"
+            f"原文：{content}{attach_text}"
         )
-        await send_log(message.guild, e)
+    else:
+        author_txt = await mention_or_id(message.guild, getattr(message, "author", None))
+        content = message.content or "（無文字，可能只有附件 / 嵌入）"
+        if len(content) > 900:
+            content = content[:897] + "…"
+        attach_text = ""
+        if message.attachments:
+            attach_text = "\n附件：" + ", ".join(a.filename for a in message.attachments)
+        desc = (
+            f"🧹 {author_txt} 的訊息被刪除於 {message.channel.mention}\n"
+            f"內容：{content}{attach_text}"
+        )
 
+    e = emb("Message Delete", desc, 0xED4245)
+    e.set_footer(text=f"Author ID: {getattr(message.author, 'id', '未知')} • Message ID: {message.id}")
+    await send_log(message.guild, e)
+    
     @commands.Cog.listener()
     async def on_bulk_message_delete(self, messages: List[discord.Message]) -> None:
         if not messages:
