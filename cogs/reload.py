@@ -39,7 +39,7 @@ class Reload(commands.Cog):
         found = sorted({
             fn[:-3]
             for fn in os.listdir(cogs_dir)
-            if fn.endswith(".py") and not fn.startswith("_")
+            if fn.endswith(".py") and not fn.startswith("_") and "." not in fn[:-3]
         })
         # 另外支援 "utils"（非 extension，但常用）
         choices = [*found, "utils"]
@@ -78,10 +78,10 @@ class Reload(commands.Cog):
         import cogs
         cogs_dir = os.path.dirname(cogs.__file__)
         found = {
-    fn[:-3]
-    for fn in os.listdir(cogs_dir)
-    if fn.endswith(".py") and not fn.startswith("_") and "." not in fn
-}
+            fn[:-3]
+            for fn in os.listdir(cogs_dir)
+            if fn.endswith(".py") and not fn.startswith("_") and "." not in fn[:-3]
+        }
 
         # 卸載任何已載入但文件已不存在的舊擴展（例如被移走/改名的 message_audit）
         for ext in list(self.bot.extensions.keys()):
@@ -142,15 +142,12 @@ class Reload(commands.Cog):
         if ok:
             msg.append(f"✅ 已重載：`{', '.join(ok)}`")
         if fail:
-            msg.append("❌ 失敗：
-" + "
-".join(f"- `{n}` → {err}" for n, err in fail))
+            msg.append("❌ 失敗：\n" + "\n".join(f"- `{n}` → {err}" for n, err in fail))
         if not msg:
             msg.append("沒有可重載的 cogs。")
         msg.append(f"⏱️ 用時：{dt:.0f} ms  | 同步範圍：{'Global' if global_sync else 'Guild-only'}")
 
-        await interaction.followup.send("
-".join(msg), ephemeral=True)
+        await interaction.followup.send("\n".join(msg), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
