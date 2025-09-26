@@ -78,10 +78,10 @@ class Reload(commands.Cog):
         import cogs
         cogs_dir = os.path.dirname(cogs.__file__)
         found = {
-            fn[:-3]
-            for fn in os.listdir(cogs_dir)
-            if fn.endswith(".py") and not fn.startswith("_")
-        }
+    fn[:-3]
+    for fn in os.listdir(cogs_dir)
+    if fn.endswith(".py") and not fn.startswith("_") and "." not in fn
+}
 
         # 卸載任何已載入但文件已不存在的舊擴展（例如被移走/改名的 message_audit）
         for ext in list(self.bot.extensions.keys()):
