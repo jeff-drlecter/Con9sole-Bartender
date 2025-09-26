@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
-import pkgutil
+import pathlib
 import discord
 from discord.ext import commands
 
@@ -25,31 +25,37 @@ class Bot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(command_prefix=commands.when_mentioned_or("/"), intents=intents)
 
-        async def setup_hook(self) -> None:
-        # 自動載入 cogs 目錄下的所有 .py（排除 __init__ / _ 開頭 / 非 .py）
-        import pathlib
-        cogs_dir = pathlib.Path("cogs")
+    async def setup_hook(self) -> None:
+        # 自動載入 cogs：只掃真 .py，避免 .py.old / .bak
+        import cogs  # 以已安裝 package 取目錄，避免 cwd 不同
+
+        cogs_dir = pathlib.Path(cogs.__file__).parent
         loaded: list[str] = []
 
-        for fn in cogs_dir.iterdir():
-            if fn.suffix != ".py":
-                continue
-            if fn.name.startswith("_"):
-                continue
-            if "." in fn.stem:   # e.g. message_audit.py.old -> stem = "message_audit.py"
-                continue
-            full = f"cogs.{fn.stem}"
-            try:
-                await self.load_extension(full)
-                loaded.append(full)
-                log.info("Loaded extension: %s", full)
-            except Exception as e:
-                log.exception("Failed loading %s: %r", full, e)
+        if not cogs_dir.exists():
+            log.warning("cogs directory not found at %s", cogs_dir)
+        else:
+            for fn in os.listdir(cogs_dir):
+                if not fn.endswith(".py"):
+                    continue
+                if fn.startswith("_"):
+                    continue
+                stem = fn[:-3]  # 去掉 .py
+                # 防止 message_audit.py.old 這類帶點號的檔名被誤讀
+                if "." in stem:
+                    continue
+                full = f"cogs.{stem}"
+                try:
+                    await self.load_extension(full)
+                    loaded.append(full)
+                    log.info("Loaded extension: %s", full)
+                except Exception as e:
+                    log.exception("Failed loading %s: %r", full, e)
 
         if not loaded:
-            log.warning("No cogs loaded from ./cogs")
+            log.warning("No cogs loaded from %s", cogs_dir)
 
-        # Slash 指令同步（guild-scoped 較快；沒設置則全域）
+        # Slash 指令同步（guild-scoped 較快）
         try:
             if getattr(config, "GUILD_ID", None):
                 guild_obj = discord.Object(id=config.GUILD_ID)
