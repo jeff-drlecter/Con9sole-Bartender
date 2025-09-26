@@ -69,8 +69,13 @@ class Reload(commands.Cog):
                 await interaction.followup.send("`utils` 重新載入失敗（請查 Console）", ephemeral=True)
                 # 繼續做其餘 reload
 
-        import cogs
-        found = {name for _, name, _ in pkgutil.iter_modules(cogs.__path__)}
+        import os, cogs
+cogs_dir = os.path.dirname(cogs.__file__)
+found = {
+    fn[:-3]
+    for fn in os.listdir(cogs_dir)
+    if fn.endswith(".py") and not fn.startswith("_")
+}
 
         if cog and cog != "utils":
             if cog not in found:
