@@ -25,20 +25,27 @@ class Bot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(command_prefix=commands.when_mentioned_or("/"), intents=intents)
 
-    async def setup_hook(self) -> None:
-        # 自動載入 cogs 目錄下的所有 .py（排除 __init__ 及以下劃線開頭）
+        async def setup_hook(self) -> None:
+        # 自動載入 cogs 目錄下的所有 .py（排除 __init__ / _ 開頭 / 非 .py）
+        import pathlib
+        cogs_dir = pathlib.Path("cogs")
         loaded: list[str] = []
-        for modinfo in pkgutil.iter_modules(["cogs"]):
-            name = modinfo.name
-            if name.startswith("_"):
+
+        for fn in cogs_dir.iterdir():
+            if fn.suffix != ".py":
                 continue
-            full = f"cogs.{name}"
+            if fn.name.startswith("_"):
+                continue
+            if "." in fn.stem:   # e.g. message_audit.py.old -> stem = "message_audit.py"
+                continue
+            full = f"cogs.{fn.stem}"
             try:
                 await self.load_extension(full)
                 loaded.append(full)
                 log.info("Loaded extension: %s", full)
-            except Exception as e:  # 不阻斷啟動，寫 log 方便排查
+            except Exception as e:
                 log.exception("Failed loading %s: %r", full, e)
+
         if not loaded:
             log.warning("No cogs loaded from ./cogs")
 
