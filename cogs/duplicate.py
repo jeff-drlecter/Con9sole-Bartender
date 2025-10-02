@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Optional, List
+from typing import Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,13 +7,14 @@ from discord.ext import commands
 import config
 from utils import make_private_overwrites, copy_forum_tags
 
-# ---------- 權限 ----------
+# ---------- 權限（只容許 Admin） ----------
 def user_is_section_admin(inter: discord.Interaction) -> bool:
     if not inter.user or not isinstance(inter.user, discord.Member):
         return False
     m: discord.Member = inter.user
     perms = m.guild_permissions
-    return bool(perms.administrator or perms.manage_channels)
+    # 只接受 Admin。不要再容許 manage_channels / helper 等
+    return bool(perms.administrator)
 
 # ---------- 分區複製 ----------
 async def duplicate_section(client: discord.Client, guild: discord.Guild, game_name: str) -> str:
@@ -95,14 +96,21 @@ class Duplicate(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="duplicate", description="複製模板分區，建立新遊戲分區（含 Forum/Stage/Tags）")
+    # 只有 Admin 會見到：default_permissions
+    @app_commands.command(
+        name="duplicate",
+        description="複製模板分區，建立新遊戲分區（含 Forum/Stage/Tags）"
+    )
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(gamename="新遊戲名稱（例如：Delta Force）")
     async def duplicate_cmd(self, inter: discord.Interaction, gamename: str):
         if inter.guild_id != config.GUILD_ID:
             return await inter.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
         if not user_is_section_admin(inter):
-            return await inter.response.send_message("需要 Administrator 或 Manage Channels 權限。", ephemeral=True)
+            return await inter.response.send_message("需要 Administrator 權限。", ephemeral=True)
+
         await inter.response.defer(ephemeral=True)
         try:
             msg = await duplicate_section(inter.client, inter.guild, gamename)  # type: ignore[arg-type]
