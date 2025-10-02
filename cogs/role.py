@@ -8,7 +8,7 @@ import config
 
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 HELPER_ROLE_ID = 1279071042249162856   # Helper role ID
-MOD_ROLE_ID = 123456789012345678       # <<< 改成你實際的 mod role ID
+MOD_ROLE_ID =  626379227473903632      # <<< 改成你實際的 mod role ID
 
 # ---------- Helpers ----------
 def _bot_member(guild: discord.Guild, bot: commands.Bot) -> Optional[discord.Member]:
