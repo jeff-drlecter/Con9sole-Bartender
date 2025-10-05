@@ -17,8 +17,8 @@ intents = discord.Intents.default()
 intents.members = True           # 成員事件（join/leave/role/nick 更新）
 intents.guilds = True
 intents.messages = True
-intents.message_content = False  # 如需讀取訊息文字可開
 intents.voice_states = True      # 語音房事件
+intents.message_content = True  # 如需讀取訊息文字可開
 
 # ---------- Bot ----------
 class Bot(commands.Bot):
