@@ -2,16 +2,23 @@
 # 雙向 Twitch <-> Discord 聊天橋接（多成員；只用 Fly.io Secrets）
 # 依賴：discord.py v2、twitchio==2.8.2
 # 環境變數（Fly secrets）：
-#   TWITCH_RELAY_CONFIG='[{"twitch_channel":"xxx","twitch_oauth":"oauth:...","discord_channel_id":"123"}]'
+#   TWITCH_RELAY_CONFIG='[
+#     {"twitch_channel":"xxx","twitch_oauth":"oauth:...","discord_channel_id":"123"},
+#     ...
+#   ]'
 
 import os
 import json
 import asyncio
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Union
 
 import discord
 from discord.ext import commands
+from discord.abc import Messageable
+from discord import TextChannel, VoiceChannel, StageChannel
+
 from twitchio.ext import commands as twitch_commands
+
 
 # ===== 讀取 Fly.io Secret =====
 RAW_CONFIG = os.getenv("TWITCH_RELAY_CONFIG", "[]")
@@ -23,9 +30,12 @@ except Exception as e:
     print(f"[TwitchRelay] ❌ 讀取 TWITCH_RELAY_CONFIG 失敗：{e}")
     RELAY_CONFIG = []
 
-# 顯示來源標籤（想隱藏可改為空字串 ""）
+# 顯示來源標籤（想隱藏可改為 ""）
 TAG_TWITCH  = "[Twitch]"
 TAG_DISCORD = "[Discord]"
+
+# 允許發送訊息的頻道型別（含 Text / Voice / Stage 的文字聊天）
+MessageableChannel = Union[TextChannel, VoiceChannel, StageChannel, Messageable]
 
 
 class TwitchRelay(commands.Cog):
@@ -37,10 +47,10 @@ class TwitchRelay(commands.Cog):
         self.discord_map: Dict[int, Tuple[str, twitch_commands.Bot]] = {}
         # twitch_channel(lower) -> discord_channel_id
         self.twitch_map: Dict[str, int] = {}
-
         self._connect_all_from_secrets()
 
     def _connect_all_from_secrets(self) -> None:
+        """根據 secrets 啟動每個 Twitch 連線"""
         loop = asyncio.get_event_loop()
 
         for entry in RELAY_CONFIG:
@@ -75,7 +85,9 @@ class TwitchRelay(commands.Cog):
                     if message.echo:
                         return
 
-                    dch = await _safe_get_text_channel(cog_self.bot, self.discord_channel_id)
+                    dch = await _safe_get_messageable_channel(
+                        cog_self.bot, self.discord_channel_id
+                    )
                     if not dch:
                         return
 
@@ -105,7 +117,7 @@ class TwitchRelay(commands.Cog):
         if not pair:
             return  # 非橋接頻道
 
-        # 避免把由 Twitch 轉過來的訊息再回送 Twitch（靠標籤判斷）
+        # 避免把從 Twitch 轉過來的訊息再回送 Twitch（靠標籤）
         if message.content.startswith(TAG_TWITCH):
             return
 
@@ -114,7 +126,7 @@ class TwitchRelay(commands.Cog):
         if not text:
             return
 
-        # 等候 Twitch 連線穩定（不同 twitchio 版本可能無此方法，失敗則略過）
+        # 等待 Twitch 連線穩定（不同 twitchio 版本可能無此方法，失敗則略過）
         try:
             await tbot.wait_for_ready()
         except Exception:
@@ -125,21 +137,23 @@ class TwitchRelay(commands.Cog):
             if getattr(tbot, "connected_channels", None):
                 await tbot.connected_channels[0].send(payload)
             else:
-                # 某些版本可改為：await tbot.get_channel(twitch_channel).send(payload)
-                # 這裡保留後備分支以防 API 差異
+                # 後備（依版本 API 而定）
                 await tbot.connected_channels[0].send(payload)
         except Exception as e:
             print(f"[Relay D→T] send error: {e}")
 
 
-async def _safe_get_text_channel(bot: commands.Bot, channel_id: int) -> Optional[discord.TextChannel]:
-    """優先用 cache，取不到再 fetch；失敗回 None。"""
+async def _safe_get_messageable_channel(
+    bot: commands.Bot, channel_id: int
+) -> Optional[MessageableChannel]:
+    """從 cache / API 取回可發訊息的頻道（Text / Voice / Stage 的文字聊天）。"""
     ch = bot.get_channel(channel_id)
-    if isinstance(ch, discord.TextChannel):
-        return ch
+    if isinstance(ch, (TextChannel, VoiceChannel, StageChannel, Messageable)):
+        return ch  # 這些型別在 discord.py 2.x 皆可 .send()
+
     try:
         ch = await bot.fetch_channel(channel_id)
-        if isinstance(ch, discord.TextChannel):
+        if isinstance(ch, (TextChannel, VoiceChannel, StageChannel, Messageable)):
             return ch
     except Exception:
         pass
