@@ -1,12 +1,5 @@
-# cogs/twitch_relay.py  (DEBUG build, loopback-safe)
-# 雙向 Twitch <-> Discord；只讀 Fly Secrets；詳盡日誌；帶去重與 loopback 防護
-# 依賴：discord.py v2、twitchio==2.8.2
-
-import os
-import json
-import asyncio
-import logging
-import time
+# cogs/twitch_relay.py  (DEBUG build, strong de-dup & channel guard)
+import os, json, asyncio, logging, time
 from typing import Dict, Tuple, Optional, Union
 
 import discord
@@ -32,64 +25,61 @@ TAG_DISCORD = "[Discord]"
 
 MessageableChannel = Union[TextChannel, VoiceChannel, StageChannel, Messageable]
 
-# ---- 簡單去重 cache：{ (discord_ch_id, text) : expire_ts } ----
-_recent_send: Dict[Tuple[int, str], float] = {}
-DEDUP_TTL_SEC = 6.0
+# ---- 去重 cache ----
+_recent_td: Dict[Tuple[int, str], float] = {}           # (discord_ch_id, content) -> expire
+_recent_tw_ids: Dict[str, float] = {}                   # twitch message id -> expire
+DEDUP_TD_TTL = 8.0
+DEDUP_TW_TTL = 8.0
 
 def _norm_text(s: str) -> str:
-    """標準化文字：strip、移除零寬字元/全形空白、合併多空白"""
     if not s:
         return ""
-    # 常見零寬 & 方向控制
-    ZERO_WIDTH = [
-        "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff",
-        "\u2061", "\u2062", "\u2063", "\u2064",
-    ]
-    for z in ZERO_WIDTH:
+    for z in ["\u200b","\u200c","\u200d","\u2060","\ufeff","\u2061","\u2062","\u2063","\u2064"]:
         s = s.replace(z, "")
-    s = s.replace("\u3000", " ")  # 全形空白
-    s = s.strip()
-    # 收斂連續空白
+    s = s.replace("\u3000", " ").strip()
     while "  " in s:
         s = s.replace("  ", " ")
     return s
 
-def _seen_recent(discord_ch_id: int, text: str) -> bool:
-    """6 秒內重覆內容則視作已見過"""
+def _seen_recent_td(ch_id: int, content: str) -> bool:
     now = time.time()
-    # 清過期
-    dead = [k for k, exp in _recent_send.items() if exp <= now]
-    for k in dead:
-        _recent_send.pop(k, None)
-    key = (discord_ch_id, text)
-    if key in _recent_send and _recent_send[key] > now:
+    for k, exp in list(_recent_td.items()):
+        if exp <= now:
+            _recent_td.pop(k, None)
+    key = (ch_id, content)
+    if key in _recent_td and _recent_td[key] > now:
         return True
-    _recent_send[key] = now + DEDUP_TTL_SEC
+    _recent_td[key] = now + DEDUP_TD_TTL
+    return False
+
+def _seen_recent_tw(msg_id: Optional[str]) -> bool:
+    if not msg_id:
+        return False
+    now = time.time()
+    for k, exp in list(_recent_tw_ids.items()):
+        if exp <= now:
+            _recent_tw_ids.pop(k, None)
+    if msg_id in _recent_tw_ids and _recent_tw_ids[msg_id] > now:
+        return True
+    _recent_tw_ids[msg_id] = now + DEDUP_TW_TTL
     return False
 
 
 class TwitchRelay(commands.Cog):
-    """雙向 Twitch <-> Discord（Debug 版，帶 loopback 防護）"""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # discord_channel_id -> (twitch_channel, twitch_bot)
         self.discord_map: Dict[int, Tuple[str, twitch_commands.Bot]] = {}
-        # twitch_channel(lower) -> discord_channel_id
         self.twitch_map: Dict[str, int] = {}
 
         log.info("🔧 RelayBoot: 已載入 %d 條配置", len(RELAY_CONFIG))
         for i, e in enumerate(RELAY_CONFIG, start=1):
-            safe = {
-                "twitch_channel": e.get("twitch_channel"),
-                "discord_channel_id": e.get("discord_channel_id"),
-                "twitch_oauth": "oauth:***hidden***" if e.get("twitch_oauth") else None,
-            }
+            safe = {"twitch_channel": e.get("twitch_channel"),
+                    "discord_channel_id": e.get("discord_channel_id"),
+                    "twitch_oauth": "oauth:***hidden***" if e.get("twitch_oauth") else None}
             log.info("🔧 RelayBoot: #%d %s", i, safe)
 
         self._connect_all_from_secrets()
 
-    # === 建立 Twitch 連線 ===
     def _connect_all_from_secrets(self) -> None:
         loop = asyncio.get_event_loop()
 
@@ -106,11 +96,7 @@ class TwitchRelay(commands.Cog):
 
             class _TwitchBot(twitch_commands.Bot):
                 def __init__(self):
-                    super().__init__(
-                        token=twitch_oauth,
-                        prefix="!",
-                        initial_channels=[twitch_channel],
-                    )
+                    super().__init__(token=twitch_oauth, prefix="!", initial_channels=[twitch_channel])
                     self.discord_channel_id = discord_ch_id
                     self.twitch_channel_name = twitch_channel
 
@@ -118,23 +104,39 @@ class TwitchRelay(commands.Cog):
                     log.info("🟣 [T] Connected as %s -> #%s", self.nick, self.twitch_channel_name)
 
                 async def event_message(self, message):
-                    # ① 官方旗標：自己送出的訊息
+                    # ---- 基本過濾 ----
                     if getattr(message, "echo", False):
                         return
-
-                    # ② 作者名就係本 bot 自己
                     try:
-                        if (message.author and message.author.name
-                                and self.nick
-                                and message.author.name.lower() == self.nick.lower()):
+                        if (message.author and message.author.name and self.nick and
+                                message.author.name.lower() == self.nick.lower()):
                             return
                     except Exception:
                         pass
 
-                    # ③ Discord→Twitch 的訊息（我們會加 TAG_DISCORD）——防回射
                     text_raw = message.content or ""
-                    text_norm = _norm_text(text_raw)
-                    if text_norm.startswith(TAG_DISCORD):
+                    text = _norm_text(text_raw)
+                    if text.startswith(TAG_DISCORD):
+                        return
+
+                    # ---- 只處理綁定的頻道 ----
+                    try:
+                        ch_name = (getattr(message.channel, "name", "") or "").lower()
+                        if ch_name != (self.twitch_channel_name or "").lower():
+                            return
+                    except Exception:
+                        pass
+
+                    # ---- 以 Twitch message-id 去重 ----
+                    msg_id = None
+                    try:
+                        # twitchio 2.x: message.tags 係 dict; 有些 client 在 tags['id']
+                        tags = getattr(message, "tags", {}) or {}
+                        msg_id = str(tags.get("id")) if "id" in tags else None
+                    except Exception:
+                        msg_id = None
+                    if _seen_recent_tw(msg_id or f"{ch_name}:{message.author.name}:{text}"):
+                        log.info("⏩ [T→D] duplicate skipped (tw)")
                         return
 
                     dch = await _safe_get_messageable_channel(cog_self.bot, self.discord_channel_id)
@@ -143,11 +145,11 @@ class TwitchRelay(commands.Cog):
                         return
 
                     author = message.author.display_name or message.author.name
-                    content = f"{TAG_TWITCH} {author}: {text_norm}"
+                    content = f"{TAG_TWITCH} {author}: {text}"
 
-                    # ④ 去重：避免短時間重覆
-                    if _seen_recent(self.discord_channel_id, content):
-                        log.info("⏩ [T→D] duplicate skipped")
+                    # 二次去重（同頻道同內容）
+                    if _seen_recent_td(self.discord_channel_id, content):
+                        log.info("⏩ [T→D] duplicate skipped (td)")
                         return
 
                     try:
@@ -161,25 +163,20 @@ class TwitchRelay(commands.Cog):
                         log.exception("❌ [T→D] send 失敗：%s", e)
 
             tbot = _TwitchBot()
-
             self.discord_map[discord_ch_id] = (twitch_channel, tbot)
             self.twitch_map[twitch_channel.lower()] = discord_ch_id
-
             loop.create_task(tbot.connect())
             log.info("🔌 啟動 Twitch 連線：#%s -> Discord(%s)", twitch_channel, discord_ch_id)
 
-    # === Discord -> Twitch ===
     @commands.Cog.listener("on_message")
     async def _discord_to_twitch(self, message: discord.Message):
-        # 忽略 bot、DM、無內容
         if message.author.bot or not message.guild or not message.content:
             return
 
         pair = self.discord_map.get(message.channel.id)
         if not pair:
-            return  # 非橋接頻道
+            return
 
-        # 防回圈：T→D 轉過來已帶 TAG_TWITCH，不回射
         if message.content.startswith(TAG_TWITCH):
             return
 
@@ -196,14 +193,11 @@ class TwitchRelay(commands.Cog):
 
         try:
             payload = f"{TAG_DISCORD} {message.author.display_name}: {text}"
-
-            # 1) 等 Twitch bot 準備好
             try:
                 await tbot.wait_for_ready()
             except Exception:
                 pass
 
-            # 2) 嘗試從已連結頻道中找目標
             chan = None
             if getattr(tbot, "connected_channels", None):
                 for c in tbot.connected_channels:
@@ -211,7 +205,6 @@ class TwitchRelay(commands.Cog):
                         chan = c
                         break
 
-            # 3) 若未找到，嘗試加入
             if chan is None:
                 try:
                     await tbot.join_channels([twitch_channel])
@@ -235,10 +228,7 @@ class TwitchRelay(commands.Cog):
             log.exception("❌ [D→T] send 失敗：%s", e)
 
 
-# === 工具：解析可發訊息的頻道（Text / Voice / Stage 的聊天） ===
-async def _safe_get_messageable_channel(
-    bot: commands.Bot, channel_id: int
-) -> Optional[MessageableChannel]:
+async def _safe_get_messageable_channel(bot: commands.Bot, channel_id: int) -> Optional[Messageable]:
     ch = bot.get_channel(channel_id)
     if isinstance(ch, (TextChannel, VoiceChannel, StageChannel, Messageable)):
         return ch
@@ -253,4 +243,4 @@ async def _safe_get_messageable_channel(
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TwitchRelay(bot))
-    log.info("🧩 TwitchRelay Cog 已載入（Debug 版，loopback-safe）")
+    log.info("🧩 TwitchRelay Cog 已載入（Debug+de-dup）")
