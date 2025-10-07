@@ -1,4 +1,4 @@
-# cogs/twitch_relay.py  (DEBUG build)
+# cogs/twitch_relay.py  (DEBUG build, with robust D→T send)
 # 雙向 Twitch <-> Discord 聊天橋接；只讀 Fly.io Secrets；詳盡日誌。
 # 依賴：discord.py v2、twitchio==2.8.2
 #
@@ -144,21 +144,48 @@ class TwitchRelay(commands.Cog):
                  type(message.channel).__name__,
                  text)
 
-        # 等連線（不同 twitchio 版本未必有 wait_for_ready，失敗略過）
-        try:
-            await tbot.wait_for_ready()
-        except Exception:
-            pass
-
+        # ==== 更穩定送出：確保連線、確保加入正確頻道，再 send ====
         try:
             payload = f"{TAG_DISCORD} {message.author.display_name}: {text}"
+
+            # 1) 等 Twitch bot 準備好
+            try:
+                await tbot.wait_for_ready()
+            except Exception:
+                pass
+
+            # 2) 嘗試從已連結的頻道中找目標
+            chan = None
             if getattr(tbot, "connected_channels", None):
-                await tbot.connected_channels[0].send(payload)
-                log.info("✅ [D→T send] #%s | %s", twitch_channel, payload)
-            else:
-                # 後備（不同版本 API 或會不可用）
-                await tbot.connected_channels[0].send(payload)
-                log.info("✅ [D→T send-fallback] #%s | %s", twitch_channel, payload)
+                for c in tbot.connected_channels:
+                    if getattr(c, "name", "").lower() == twitch_channel.lower():
+                        chan = c
+                        break
+
+            # 3) 如果未找到，嘗試加入該頻道
+            if chan is None:
+                try:
+                    await tbot.join_channels([twitch_channel])
+                    log.info("🔁 [D→T] join_channels -> #%s", twitch_channel)
+                except Exception as e:
+                    log.warning("⚠️ [D→T] join_channels 失敗：%s", e)
+
+                # 加入後再找一次
+                if getattr(tbot, "connected_channels", None):
+                    for c in tbot.connected_channels:
+                        if getattr(c, "name", "").lower() == twitch_channel.lower():
+                            chan = c
+                            break
+
+            # 4) 還是拿不到，就記錄錯誤（多半是 token 無 chat:edit / 頻道不存在）
+            if chan is None:
+                log.error("❌ [D→T] 找不到或未加入 Twitch 頻道 #%s（檢查 token 是否有 chat:edit）", twitch_channel)
+                return
+
+            # 5) 送出
+            await chan.send(payload)
+            log.info("✅ [D→T send] #%s | %s", twitch_channel, payload)
+
         except Exception as e:
             log.exception("❌ [D→T] send 失敗：%s", e)
 
