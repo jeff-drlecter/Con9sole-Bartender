@@ -220,7 +220,7 @@ class TwitchRelay(commands.Cog):
             return
 
         try:
-            payload = f"{TAG_DISCORD} {message.author.display_name}: {text}"
+            payload = f"{TAG_DISCORD} {message.author.name}: {text}"
 
             # 等 bot 準備好
             try:
