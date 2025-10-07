@@ -87,28 +87,44 @@ class TwitchRelay(commands.Cog):
                 async def event_ready(self):
                     log.info("🟣 [T] Connected as %s -> #%s", self.nick, self.twitch_channel_name)
 
-                async def event_message(self, message):
-                    # Twitch 會將自己發出的訊息標記為 echo
-                    if message.echo:
-                        return
+                # 於 _TwitchBot 內，覆蓋原本的 event_message
+async def event_message(self, message):
+    # ① 官方旗標：自己送出的訊息
+    if getattr(message, "echo", False):
+        return
 
-                    dch = await _safe_get_messageable_channel(cog_self.bot, self.discord_channel_id)
-                    if not dch:
-                        log.error("❌ [T→D] 解析不到 Discord 頻道 id=%s", self.discord_channel_id)
-                        return
+    # ② 作者名等於本 bot 的 Twitch 帳號（大小寫忽略）
+    try:
+        if (message.author and message.author.name
+                and self.nick
+                and message.author.name.lower() == self.nick.lower()):
+            return
+    except Exception:
+        pass
 
-                    author = message.author.display_name or message.author.name
-                    text = message.content
-                    content = f"{TAG_TWITCH} {author}: {text}"
-                    try:
-                        await dch.send(content)
-                        log.info("✅ [T→D] -> %s(id=%s,type=%s): %s",
-                                 getattr(dch, 'name', 'unknown'),
-                                 getattr(dch, 'id', 'n/a'),
-                                 type(dch).__name__,
-                                 content)
-                    except Exception as e:
-                        log.exception("❌ [T→D] send 失敗：%s", e)
+    # ③ 內容本身係從 Discord 來的（防回圈）
+    text = (message.content or "").lstrip()
+    if text.startswith(TAG_DISCORD):
+        # 例如 "[Discord] xxx: yyy"
+        return
+
+    # ===== 正常 T→D Relay =====
+    dch = await _safe_get_messageable_channel(cog_self.bot, self.discord_channel_id)
+    if not dch:
+        log.error("❌ [T→D] 解析不到 Discord 頻道 id=%s", self.discord_channel_id)
+        return
+
+    author = message.author.display_name or message.author.name
+    content = f"{TAG_TWITCH} {author}: {text}"
+    try:
+        await dch.send(content)
+        log.info("✅ [T→D] -> %s(id=%s,type=%s): %s",
+                 getattr(dch, 'name', 'unknown'),
+                 getattr(dch, 'id', 'n/a'),
+                 type(dch).__name__,
+                 content)
+    except Exception as e:
+        log.exception("❌ [T→D] send 失敗：%s", e)
 
             tbot = _TwitchBot()
 
