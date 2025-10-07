@@ -1,24 +1,33 @@
 name: 🛫 Fly Deploy (Remote Builder)
 
 on:
-  # 手動按「Run workflow」先會部署
-  workflow_dispatch:
+  push:
+    branches: [ main ]        # ← push 去 main 會自動部署
+  workflow_dispatch:           # ← 亦可在 Actions 手動「Run workflow」
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Deploy to Fly.io
+    concurrency:
+      group: fly-deploy-${{ github.ref }}   # 同一分支的部署不會重疊
+      cancel-in-progress: true
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@v1
 
-      - name: Deploy app to Fly.io (remote builder)
+      # （可選）顯示 fly.toml 方便排錯
+      - name: Show fly.toml
+        run: |
+          echo "----- fly.toml -----"
+          test -f fly.toml && cat fly.toml || echo "(no fly.toml found)"
+
+      - name: Deploy to Fly.io (remote builder)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP_NAME:  ${{ secrets.FLY_APP_NAME }}
         run: |
-          echo "🚀 Deploying $FLY_APP_NAME to Fly.io"
+          echo "🚀 Deploying $FLY_APP_NAME to Fly.io with remote builder"
           flyctl deploy --remote-only -a "$FLY_APP_NAME"
