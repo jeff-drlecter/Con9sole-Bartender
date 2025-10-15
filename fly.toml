@@ -1,5 +1,5 @@
 app = "con9sole-bartender"
-primary_region = "hkg"
+primary_region = "sin"
 
 [processes]
 app = "python bot.py"
