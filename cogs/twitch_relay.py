@@ -1,22 +1,12 @@
-# cogs/twitch_relay.py — Unified Twitch Bot (DEBUG + de-dup + loopback-safe)
-# 依賴：discord.py v2、twitchio==2.8.2
-# Secrets（Fly GUI 設定）：
-#   TWITCH_BOT_USERNAME : 例如 "con9sole_bot"
-#   TWITCH_BOT_OAUTH    : 例如 "oauth:xxxxxxxx"  (必含 chat:read + chat:edit)
-#   TWITCH_RELAY_CONFIG : JSON array（無 oauth）：
-#     [
-#       {"twitch_channel":"jeff_con9sole","discord_channel_id":"1424..."},
-#       {"twitch_channel":"siuq4me","discord_channel_id":"1424..."}
-#     ]
+# cogs/twitch_relay.py — Unified Twitch Bot (Auto-Reconnect + de-dup + loopback-safe)
 
-import os, json, asyncio, logging, time
+import os, json, asyncio, logging, time, aiohttp
 from typing import Dict, Tuple, Optional, Union
 
 import discord
 from discord.ext import commands
 from discord.abc import Messageable
 from discord import TextChannel, VoiceChannel, StageChannel
-
 from twitchio.ext import commands as twitch_commands
 
 log = logging.getLogger("twitch-relay")
@@ -40,10 +30,11 @@ TAG_DISCORD = "[Discord]"
 MessageableChannel = Union[TextChannel, VoiceChannel, StageChannel, Messageable]
 
 # ---- 去重 cache ----
-_recent_td: Dict[Tuple[int, str], float] = {}           # (discord_ch_id, content) -> expire
-_recent_tw_ids: Dict[str, float] = {}                   # twitch message id -> expire
+_recent_td: Dict[Tuple[int, str], float] = {}
+_recent_tw_ids: Dict[str, float] = {}
 DEDUP_TD_TTL = 8.0
 DEDUP_TW_TTL = 8.0
+
 
 def _norm_text(s: str) -> str:
     if not s:
@@ -55,6 +46,7 @@ def _norm_text(s: str) -> str:
         s = s.replace("  ", " ")
     return s
 
+
 def _seen_recent_td(ch_id: int, content: str) -> bool:
     now = time.time()
     for k, exp in list(_recent_td.items()):
@@ -65,6 +57,7 @@ def _seen_recent_td(ch_id: int, content: str) -> bool:
         return True
     _recent_td[key] = now + DEDUP_TD_TTL
     return False
+
 
 def _seen_recent_tw(msg_id: Optional[str]) -> bool:
     if not msg_id:
@@ -84,13 +77,9 @@ class TwitchRelay(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-        # Discord -> Twitch 映射：discord_channel_id -> twitch_channel
         self.d2t_map: Dict[int, str] = {}
-        # Twitch -> Discord 映射：twitch_channel(lower) -> discord_channel_id
         self.t2d_map: Dict[str, int] = {}
 
-        # 讀配置
         for i, e in enumerate(RELAY_CONFIG, start=1):
             try:
                 tchan = str(e["twitch_channel"]).strip()
@@ -105,16 +94,15 @@ class TwitchRelay(commands.Cog):
         for t, d in self.t2d_map.items():
             log.info("   - #%s  <->  Discord(%s)", t, d)
 
-        # 準備 TwitchIO Bot（單一）
         if not BOT_OAUTH:
             log.error("❌ 缺少 TWITCH_BOT_OAUTH，無法啟動 Twitch bot")
             return
 
-        initial = list({ch for ch in self.t2d_map.keys()})  # 去重
+        initial = list({ch for ch in self.t2d_map.keys()})
+
         class _UnifiedTwitchBot(twitch_commands.Bot):
             async def event_ready(self_inner):
                 log.info("🟣 [T] Connected as %s", self_inner.nick)
-                # 確保全部 channel 已加入（initial_channels 之外再保險 join）
                 try:
                     await self_inner.join_channels(initial)
                     log.info("🔁 確認 join_channels：%s", ",".join(initial))
@@ -122,7 +110,6 @@ class TwitchRelay(commands.Cog):
                     log.warning("⚠️ join_channels 失敗：%s", e)
 
             async def event_message(self_inner, message):
-                # 忽略自己 / loopback 標籤
                 if getattr(message, "echo", False):
                     return
                 try:
@@ -136,7 +123,6 @@ class TwitchRelay(commands.Cog):
                 if text.startswith(TAG_DISCORD):
                     return
 
-                # 只轉發有配置嘅頻道
                 try:
                     ch_name = (getattr(message.channel, "name", "") or "").lower()
                 except Exception:
@@ -144,7 +130,6 @@ class TwitchRelay(commands.Cog):
                 if ch_name not in self.t2d_map:
                     return
 
-                # 去重（twitch message id）
                 msg_id = None
                 try:
                     tags = getattr(message, "tags", {}) or {}
@@ -155,7 +140,6 @@ class TwitchRelay(commands.Cog):
                     log.info("⏩ [T→D] duplicate skipped (tw)")
                     return
 
-                # 送去對應 Discord channel
                 dch_id = self.t2d_map.get(ch_name)
                 dch = await _safe_get_messageable_channel(self.bot, dch_id)
                 if not dch:
@@ -165,18 +149,13 @@ class TwitchRelay(commands.Cog):
                 author = message.author.display_name or message.author.name
                 content = f"{TAG_TWITCH} {author}: {text}"
 
-                # 二次去重（同頻道同內容）
                 if _seen_recent_td(dch_id, content):
                     log.info("⏩ [T→D] duplicate skipped (td)")
                     return
 
                 try:
                     await dch.send(content)
-                    log.info("✅ [T→D] -> %s(id=%s,type=%s): %s",
-                             getattr(dch, 'name', 'unknown'),
-                             getattr(dch, 'id', 'n/a'),
-                             type(dch).__name__,
-                             content)
+                    log.info("✅ [T→D] -> %s(id=%s): %s", getattr(dch, 'name', 'unknown'), dch_id, content)
                 except Exception as e:
                     log.exception("❌ [T→D] send 失敗：%s", e)
 
@@ -186,12 +165,11 @@ class TwitchRelay(commands.Cog):
             initial_channels=initial or None
         )
 
-        # 啟動連線
         loop = asyncio.get_event_loop()
         loop.create_task(self.twitch_bot.connect())
         log.info("🔌 啟動統一 Twitch 連線：%s", ",".join(initial))
 
-    # ========== Discord -> Twitch ==========
+    # ========== Discord → Twitch ==========
     @commands.Cog.listener("on_message")
     async def _discord_to_twitch(self, message: discord.Message):
         if message.author.bot or not message.guild or not message.content:
@@ -199,9 +177,8 @@ class TwitchRelay(commands.Cog):
 
         twitch_channel = self.d2t_map.get(message.channel.id)
         if not twitch_channel:
-            return  # 非橋接頻道
+            return
 
-        # 防回圈：T→D 轉過來已帶 TAG_TWITCH
         if message.content.startswith(TAG_TWITCH):
             return
 
@@ -209,59 +186,48 @@ class TwitchRelay(commands.Cog):
         if not text:
             return
 
-        log.info("📥 [D→T recv] ch=%s(id=%s,type=%s) | %s",
+        log.info("📥 [D→T recv] ch=%s(id=%s) | %s",
                  getattr(message.channel, 'name', 'unknown'),
-                 message.channel.id,
-                 type(message.channel).__name__,
-                 text)
+                 message.channel.id, text)
 
         if not self.twitch_bot:
             log.error("❌ Twitch bot 未啟動")
             return
 
+        payload = f"{TAG_DISCORD} {message.author.name}: {text}"
+
         try:
-            payload = f"{TAG_DISCORD} {message.author.name}: {text}"
+            # 確保 WS 可用
+            ws = getattr(self.twitch_bot, "_websocket", None)
+            if ws is None or ws.closed or getattr(ws, "_closing", False):
+                log.warning("⚠️ [D→T] Twitch WS 關閉中，嘗試重連…")
+                await self.twitch_bot.connect()
+                await asyncio.sleep(2)
 
-            # 等 bot 準備好
-            try:
-                await self.twitch_bot.wait_for_ready()
-            except Exception:
-                pass
-
-            # 找對應頻道；未加入就 join
-            chan = None
-            if getattr(self.twitch_bot, "connected_channels", None):
-                for c in self.twitch_bot.connected_channels:
-                    if getattr(c, "name", "").lower() == twitch_channel.lower():
-                        chan = c
-                        break
+            # 找對應 Twitch channel
+            chan = next((c for c in getattr(self.twitch_bot, "connected_channels", [])
+                         if getattr(c, "name", "").lower() == twitch_channel.lower()), None)
             if chan is None:
-                try:
-                    await self.twitch_bot.join_channels([twitch_channel])
-                    log.info("🔁 [D→T] join_channels -> #%s", twitch_channel)
-                except Exception as e:
-                    log.warning("⚠️ [D→T] join_channels 失敗：%s", e)
-                if getattr(self.twitch_bot, "connected_channels", None):
-                    for c in self.twitch_bot.connected_channels:
-                        if getattr(c, "name", "").lower() == twitch_channel.lower():
-                            chan = c
-                            break
+                await self.twitch_bot.join_channels([twitch_channel])
+                log.info("🔁 [D→T] join_channels -> #%s", twitch_channel)
+                await asyncio.sleep(1)
+                chan = next((c for c in getattr(self.twitch_bot, "connected_channels", [])
+                             if getattr(c, "name", "").lower() == twitch_channel.lower()), None)
 
-            if chan is None:
-                log.error("❌ [D→T] 找不到/未加入 Twitch #%s（檢查 bot 是否被 /ban 或 token 是否含 chat:edit）", twitch_channel)
+            if not chan:
+                log.error("❌ [D→T] 找不到 Twitch #%s（檢查 token 是否含 chat:edit）", twitch_channel)
                 return
 
             await chan.send(payload)
             log.info("✅ [D→T send] #%s | %s", twitch_channel, payload)
 
+        except aiohttp.client_exceptions.ClientConnectionResetError:
+            log.warning("⚠️ [D→T] Twitch 重連中，略過訊息。")
         except Exception as e:
             log.exception("❌ [D→T] send 失敗：%s", e)
 
 
-# ---------- Discord channel fetch helper ----------
-async def _safe_get_messageable_channel(
-    bot: commands.Bot, channel_id: int
-) -> Optional[Messageable]:
+async def _safe_get_messageable_channel(bot: commands.Bot, channel_id: int) -> Optional[Messageable]:
     ch = bot.get_channel(channel_id)
     if isinstance(ch, (TextChannel, VoiceChannel, StageChannel, Messageable)):
         return ch
@@ -276,4 +242,4 @@ async def _safe_get_messageable_channel(
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TwitchRelay(bot))
-    log.info("🧩 TwitchRelay Cog 已載入（Unified Bot）")
+    log.info("🧩 TwitchRelay Cog 已載入（Unified Bot + Auto-Reconnect）")
