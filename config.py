@@ -11,11 +11,7 @@ ROLE_NAME_PATTERN = "{game}"       # 新角色命名
 ADMIN_ROLE_IDS: List[int] = []      # 額外管理角色（可留空）
 
 # 後備頻道
-FALLBACK_CHANNELS = {
-    "text": ["read-me", "活動（未有）"],
-    "forum": "分區討論區",
-    "voice": ["小隊Call 1", "小隊Call 2"],
-}
+FALLBACK_CHANNELS = {}
 
 # 臨時語音房設定
 VERIFIED_ROLE_ID: int = 1279040517451022419   # 擁有此角色即可用 /vc_new、/vc_teardown、/tu
