@@ -55,9 +55,7 @@ def bot_can_edit_member(bot: commands.Bot, guild: discord.Guild, member: discord
 
 
 # ---------- 角色 Autocomplete ----------
-async def role_autocomplete(
-    inter: discord.Interaction, current: str
-) -> List[app_commands.Choice[str]]:
+async def role_autocomplete(inter: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
     """回傳最多 25 個 Bot 真的有能力管理的角色（排除 @everyone）。"""
     guild = inter.guild
     if guild is None:
@@ -75,19 +73,16 @@ async def role_autocomplete(
 
     candidates = [
         r for r in guild.roles
-        if not r.is_default()
-        and r < me.top_role
+        if (not r.is_default())
+        and (r < me.top_role)
         and (q in r.name.lower() if q else True)
     ]
 
     # 將 MOD_ROLE（如可管理）置前，方便 Helper 搜尋
     mod_role = guild.get_role(MOD_ROLE_ID)
     if mod_role and mod_role in candidates:
-        try:
-            candidates.remove(mod_role)
-            candidates.insert(0, mod_role)
-        except ValueError:
-            pass
+        candidates.remove(mod_role)
+        candidates.insert(0, mod_role)
 
     candidates.sort(key=lambda rr: rr.position, reverse=True)
     return [app_commands.Choice(name=r.name, value=str(r.id)) for r in candidates[:25]]
@@ -97,7 +92,6 @@ class RoleManager(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ---------- Grant Role (single user OR role-bulk) ----------
     @app_commands.guild_only()
     @app_commands.check(lambda i: user_is_admin_or_helper(i))
     @app_commands.command(name="role_grant", description="對單一用戶或指定角色的所有成員加上某個角色")
@@ -125,7 +119,6 @@ class RoleManager(commands.Cog):
             mode="add",
         )
 
-    # ---------- Revoke Role (single user OR role-bulk) ----------
     @app_commands.guild_only()
     @app_commands.check(lambda i: user_is_admin_or_helper(i))
     @app_commands.command(name="role_revoke", description="對單一用戶或指定角色的所有成員移除某個角色")
@@ -164,10 +157,6 @@ class RoleManager(commands.Cog):
     ):
         if inter.guild is None:
             await inter.response.send_message("⚠️ 呢個指令只可以喺伺服器內使用。", ephemeral=True)
-            return
-
-        if not user_is_admin_or_helper(inter):
-            await inter.response.send_message("❌ 你無權限用呢個指令。", ephemeral=True)
             return
 
         # 必須二選一
@@ -271,15 +260,12 @@ class RoleManager(commands.Cog):
                 )
 
         await inter.followup.send(
-            "✅ 批量完成
-"
-            f"目標：擁有 `{target_role.name}` 的成員（共 {len(members)} 人）
-"
+            "✅ 批量完成\n"
+            f"目標：擁有 `{target_role.name}` 的成員（共 {len(members)} 人）\n"
             f"處理：{changed} | 略過：{skipped_have} | 跳過：{skipped_cant} | 失敗：{failed}",
             ephemeral=True,
         )
 
-    # ---------- List Roles ----------
     @app_commands.guild_only()
     @app_commands.check(lambda i: user_is_admin_or_helper(i))
     @app_commands.command(name="role_list", description="查看某位成員擁有哪些角色")
@@ -287,10 +273,6 @@ class RoleManager(commands.Cog):
     async def role_list(self, inter: discord.Interaction, member: discord.Member):
         if inter.guild is None:
             await inter.response.send_message("⚠️ 呢個指令只可以喺伺服器內使用。", ephemeral=True)
-            return
-
-        if not user_is_admin_or_helper(inter):
-            await inter.response.send_message("❌ 你無權限用呢個指令。", ephemeral=True)
             return
 
         roles = [r for r in member.roles if not r.is_default()]
@@ -301,27 +283,23 @@ class RoleManager(commands.Cog):
         roles.sort(key=lambda rr: rr.position, reverse=True)
         lines = [f"{r.mention}  (ID: `{r.id}`)" for r in roles]
 
-        desc = "
-".join(lines)
+        desc = "\n".join(lines)
         if len(desc) > 3800:
             chunks: List[str] = []
             chunk: List[str] = []
             count = 0
             for line in lines:
                 if count + len(line) + 1 > 3800:
-                    chunks.append("
-".join(chunk))
+                    chunks.append("\n".join(chunk))
                     chunk = []
                     count = 0
                 chunk.append(line)
                 count += len(line) + 1
             if chunk:
-                chunks.append("
-".join(chunk))
+                chunks.append("\n".join(chunk))
 
             await inter.response.send_message(
-                f"**{member} 的角色（高→低）**：
-```共有 {len(roles)} 個角色```",
+                f"**{member} 的角色（高→低）**：\n```共有 {len(roles)} 個角色```",
                 ephemeral=True,
             )
             for c in chunks:
