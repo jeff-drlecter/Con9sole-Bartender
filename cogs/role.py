@@ -99,7 +99,7 @@ class RoleManager(commands.Cog):
 
     # ---------- Grant Role (single user OR role-bulk) ----------
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.check(lambda i: user_is_admin_or_helper(i))
     @app_commands.command(name="role_grant", description="對單一用戶或指定角色的所有成員加上某個角色")
     @app_commands.describe(
         target_member="（二選一）目標成員",
@@ -127,7 +127,7 @@ class RoleManager(commands.Cog):
 
     # ---------- Revoke Role (single user OR role-bulk) ----------
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.check(lambda i: user_is_admin_or_helper(i))
     @app_commands.command(name="role_revoke", description="對單一用戶或指定角色的所有成員移除某個角色")
     @app_commands.describe(
         target_member="（二選一）目標成員",
@@ -271,15 +271,17 @@ class RoleManager(commands.Cog):
                 )
 
         await inter.followup.send(
-            "✅ 批量完成\n"
-            f"目標：擁有 `{target_role.name}` 的成員（共 {len(members)} 人）\n"
+            "✅ 批量完成
+"
+            f"目標：擁有 `{target_role.name}` 的成員（共 {len(members)} 人）
+"
             f"處理：{changed} | 略過：{skipped_have} | 跳過：{skipped_cant} | 失敗：{failed}",
             ephemeral=True,
         )
 
     # ---------- List Roles ----------
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.check(lambda i: user_is_admin_or_helper(i))
     @app_commands.command(name="role_list", description="查看某位成員擁有哪些角色")
     @app_commands.describe(member="要查看的成員")
     async def role_list(self, inter: discord.Interaction, member: discord.Member):
@@ -299,23 +301,27 @@ class RoleManager(commands.Cog):
         roles.sort(key=lambda rr: rr.position, reverse=True)
         lines = [f"{r.mention}  (ID: `{r.id}`)" for r in roles]
 
-        desc = "\n".join(lines)
+        desc = "
+".join(lines)
         if len(desc) > 3800:
             chunks: List[str] = []
             chunk: List[str] = []
             count = 0
             for line in lines:
                 if count + len(line) + 1 > 3800:
-                    chunks.append("\n".join(chunk))
+                    chunks.append("
+".join(chunk))
                     chunk = []
                     count = 0
                 chunk.append(line)
                 count += len(line) + 1
             if chunk:
-                chunks.append("\n".join(chunk))
+                chunks.append("
+".join(chunk))
 
             await inter.response.send_message(
-                f"**{member} 的角色（高→低）**：\n```共有 {len(roles)} 個角色```",
+                f"**{member} 的角色（高→低）**：
+```共有 {len(roles)} 個角色```",
                 ephemeral=True,
             )
             for c in chunks:
