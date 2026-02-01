@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from typing import Optional, Dict, Union
 import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -12,8 +14,12 @@ from utils import (
     track_temp_vc, untrack_temp_vc, bootstrap_track_temp_vcs,
 )
 
+
 # ---------- Mention helper (mobile/desktop clickable) ----------
-async def mention_or_id(guild: discord.Guild, user_or_id: Union[int, discord.abc.User, discord.Member, None]) -> str:
+async def mention_or_id(
+    guild: discord.Guild,
+    user_or_id: Union[int, discord.abc.User, discord.Member, None],
+) -> str:
     if user_or_id is None:
         return "（未知成員）"
     if isinstance(user_or_id, discord.Member):
@@ -46,18 +52,30 @@ def user_can_run_tempvc(inter: discord.Interaction) -> bool:
         return True
     return any(r.id == config.VERIFIED_ROLE_ID for r in m.roles)
 
-# ---------- 清理空房（強化版） ----------
-async def schedule_delete_if_empty(channel: discord.VoiceChannel):
-    """如果房間目前冇人，就開始倒數刪除；有人再入就會被 on_voice_state_update 取消。"""
+
+# ---------- 清理空房（修正版：避免 members cache 時序問題） ----------
+async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool = False):
+    """
+    - force=False：只喺「目前已空」先起倒數（避免無謂 task）
+    - force=True：用於 voice_state_update（離開 temp VC）— 不信當刻 members cache，直接起倒數，
+                  120s 後用 fresh channel 再判斷是否仍然空房
+    """
     try:
         timeout = float(getattr(config, "TEMP_VC_EMPTY_SECONDS", 120))
     except Exception:
         timeout = 120.0
 
-    if len(channel.members) > 0:
+    ch_id = channel.id
+
+    # 保守：只處理 temp VC
+    if not is_temp_vc_id(ch_id):
         return
 
-    ch_id = channel.id
+    # 非強制模式：真係空房先 schedule；唔空就順手 cancel 舊 task
+    if not force:
+        if len(channel.members) > 0:
+            cancel_delete_task(ch_id)
+            return
 
     async def _task():
         try:
@@ -65,6 +83,8 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel):
             await asyncio.sleep(timeout)
 
             guild = channel.guild
+
+            # 用 fresh object 做最終判斷（避免 stale cache）
             fresh = guild.get_channel(ch_id)
             if fresh is None:
                 try:
@@ -87,14 +107,16 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel):
                     print(f"❌ 刪除語音房失敗：{e!r}")
             else:
                 print(f"🚫 取消刪除：房間有人或已不是 temp（id={ch_id}）")
+
         except asyncio.CancelledError:
-            print(f"🛑 倒數已取消（有人進入？）id={ch_id}")
+            print(f"🛑 倒數已取消（有人進入/房間不再空）id={ch_id}")
             raise
         except Exception as e:
             print(f"⚠️ 倒數 task 發生例外 id={ch_id}：{e!r}")
         finally:
             cancel_delete_task(ch_id)
 
+    # 保證每個 VC 同一時間只有 1 個 task
     cancel_delete_task(ch_id)
     set_delete_task(ch_id, asyncio.create_task(_task()))
 
@@ -114,27 +136,58 @@ class TempVC(commands.Cog):
         for g in self.bot.guilds:
             try:
                 ids = await bootstrap_track_temp_vcs(g, name_prefixes=[config.TEMP_VC_PREFIX])
+
                 for cid in ids:
                     ch = g.get_channel(cid)
+
+                    # cache 攞唔到先 fetch（低 API call）
+                    if ch is None:
+                        try:
+                            ch = await g.fetch_channel(cid)
+                        except discord.NotFound:
+                            continue
+                        except Exception as e:
+                            print(f"[TempVC bootstrap] fetch_channel 失敗 cid={cid}：{e!r}")
+                            continue
+
+                    # bootstrap 只針對「已空」先 schedule（避免多餘 task）
                     if isinstance(ch, discord.VoiceChannel) and len(ch.members) == 0:
-                        await schedule_delete_if_empty(ch)
+                        await schedule_delete_if_empty(ch, force=False)
+
             except Exception as e:
                 print(f"[TempVC bootstrap] {g.name} 失敗：{e!r}")
 
     # 事件監聽：誰入誰走
     @commands.Cog.listener()
-    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ):
         if before.channel != after.channel:
             mtxt = await mention_or_id(member.guild, member)
             if not before.channel and after.channel:
-                await send_log(member.guild, emb("Voice Join", f"🎤 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x57F287))
+                await send_log(
+                    member.guild,
+                    emb("Voice Join", f"🎤 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x57F287),
+                )
             elif before.channel and not after.channel:
-                await send_log(member.guild, emb("Voice Leave", f"🔇 {mtxt} {voice_arrow(before.channel, after.channel)}", 0xED4245))
+                await send_log(
+                    member.guild,
+                    emb("Voice Leave", f"🔇 {mtxt} {voice_arrow(before.channel, after.channel)}", 0xED4245),
+                )
             else:
-                await send_log(member.guild, emb("Voice Move", f"🔀 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x5865F2))
+                await send_log(
+                    member.guild,
+                    emb("Voice Move", f"🔀 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x5865F2),
+                )
 
+        # 離開 temp VC：用 force=True，避免 members cache 未更新而漏 schedule
         if before.channel and is_temp_vc_id(before.channel.id):
-            await schedule_delete_if_empty(before.channel)
+            await schedule_delete_if_empty(before.channel, force=True)
+
+        # 進入 temp VC：一定 cancel（因為唔應該刪）
         if after.channel and is_temp_vc_id(after.channel.id):
             cancel_delete_task(after.channel.id)
 
@@ -169,11 +222,18 @@ class TempVC(commands.Cog):
             limit = max(1, min(99, int(limit)))
             kwargs["user_limit"] = limit
 
-        ch = await inter.guild.create_voice_channel(vc_name, category=category, reason="Create temp VC (bartender)", **kwargs)
+        ch = await inter.guild.create_voice_channel(
+            vc_name,
+            category=category,
+            reason="Create temp VC (bartender)",
+            **kwargs,
+        )
         track_temp_vc(ch.id)
 
         print(f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
-        await schedule_delete_if_empty(ch)
+
+        # 新建房：只喺「已空」先 schedule（避免無謂 task）
+        await schedule_delete_if_empty(ch, force=False)
 
         msg = (
             f"你好 {inter.user.mention} ，✅ 房間已經安排好 → {ch.mention}\n"
