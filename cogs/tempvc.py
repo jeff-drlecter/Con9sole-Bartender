@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, Iterable
 import asyncio
 
 import discord
@@ -13,6 +13,13 @@ from utils import (
     is_temp_vc_id, set_delete_task, cancel_delete_task,
     track_temp_vc, untrack_temp_vc, bootstrap_track_temp_vcs,
 )
+
+# ============================================================
+# Temp VC Manager
+# - 120s empty => auto delete
+# - resilient to discord.py member cache timing
+# - resilient to bot restarts (bootstrap + sweeper)
+# ============================================================
 
 
 # ---------- Mention helper (mobile/desktop clickable) ----------
@@ -35,9 +42,7 @@ async def mention_or_id(
     if member is None:
         try:
             member = await guild.fetch_member(uid)
-        except discord.NotFound:
-            member = None
-        except discord.HTTPException:
+        except (discord.NotFound, discord.HTTPException):
             member = None
     return member.mention if member else f"User ID: {uid}"
 
@@ -53,18 +58,39 @@ def user_can_run_tempvc(inter: discord.Interaction) -> bool:
     return any(r.id == config.VERIFIED_ROLE_ID for r in m.roles)
 
 
+def _get_timeout_seconds() -> float:
+    try:
+        return float(getattr(config, "TEMP_VC_EMPTY_SECONDS", 120))
+    except Exception:
+        return 120.0
+
+
+def _get_sweep_interval_seconds() -> float:
+    """
+    safety sweeper interval (seconds)
+    - 預設 300s（5分鐘）
+    - 你可喺 config.py 加 TEMP_VC_SWEEP_SECONDS 來改
+    - 設為 0 或負數會關掉 sweeper
+    """
+    try:
+        return float(getattr(config, "TEMP_VC_SWEEP_SECONDS", 300))
+    except Exception:
+        return 300.0
+
+
+def _get_name_prefixes() -> list[str]:
+    # 你 utils.bootstrap_track_temp_vcs 似乎係用 prefix 去找回 temp vc
+    return [getattr(config, "TEMP_VC_PREFIX", "")]
+
+
 # ---------- 清理空房（修正版：避免 members cache 時序問題） ----------
 async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool = False):
     """
     - force=False：只喺「目前已空」先起倒數（避免無謂 task）
-    - force=True：用於 voice_state_update（離開 temp VC）— 不信當刻 members cache，直接起倒數，
-                  120s 後用 fresh channel 再判斷是否仍然空房
+    - force=True：用於 voice_state_update / bootstrap / sweeper — 不信當刻 members cache，直接起倒數，
+                  timeout 後用 fresh channel 再判斷是否仍然空房
     """
-    try:
-        timeout = float(getattr(config, "TEMP_VC_EMPTY_SECONDS", 120))
-    except Exception:
-        timeout = 120.0
-
+    timeout = _get_timeout_seconds()
     ch_id = channel.id
 
     # 保守：只處理 temp VC
@@ -96,7 +122,11 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
                     print(f"⚠️ 取 channel 失敗 id={ch_id}：{e!r}")
                     return
 
-            if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0 and is_temp_vc_id(ch_id):
+            if (
+                isinstance(fresh, discord.VoiceChannel)
+                and len(fresh.members) == 0
+                and is_temp_vc_id(ch_id)
+            ):
                 print(f"🧹 自動刪除空房：#{fresh.name}（id={ch_id}）")
                 untrack_temp_vc(ch_id)
                 try:
@@ -126,6 +156,12 @@ class TempVC(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._bootstrapped = False  # 防止多次 on_ready
+        self._sweeper_task: Optional[asyncio.Task] = None
+
+    def cog_unload(self):
+        # cog 被 unload 時確保 sweeper 停止
+        if self._sweeper_task and not self._sweeper_task.done():
+            self._sweeper_task.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -133,9 +169,10 @@ class TempVC(commands.Cog):
             return
         self._bootstrapped = True
 
+        # 1) Bootstrap：重啟後找回 temp VC（非常重要）
         for g in self.bot.guilds:
             try:
-                ids = await bootstrap_track_temp_vcs(g, name_prefixes=[config.TEMP_VC_PREFIX])
+                ids = await bootstrap_track_temp_vcs(g, name_prefixes=_get_name_prefixes())
 
                 for cid in ids:
                     ch = g.get_channel(cid)
@@ -150,12 +187,59 @@ class TempVC(commands.Cog):
                             print(f"[TempVC bootstrap] fetch_channel 失敗 cid={cid}：{e!r}")
                             continue
 
-                    # bootstrap 只針對「已空」先 schedule（避免多餘 task）
-                    if isinstance(ch, discord.VoiceChannel) and len(ch.members) == 0:
-                        await schedule_delete_if_empty(ch, force=False)
+                    # ✅ 關鍵修正：boot 時一律 force=True
+                    # 原因：重啟後 members cache 經常唔準，會令「空房但以為有人」而漏 schedule
+                    if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id):
+                        await schedule_delete_if_empty(ch, force=True)
 
             except Exception as e:
                 print(f"[TempVC bootstrap] {g.name} 失敗：{e!r}")
+
+        # 2) Safety Sweeper（超輕量）
+        # - 防止 voice_state_update 漏事件、斷線、restart timing 等 edge cases
+        # - 每次 sweep：只會對「空房」的 temp VC 起倒數（force=True），唔會狂打 API
+        interval = _get_sweep_interval_seconds()
+        if interval > 0:
+            self._sweeper_task = asyncio.create_task(self._sweeper_loop(interval))
+            print(f"[TempVC] safety sweeper started (interval={interval:.0f}s)")
+        else:
+            print("[TempVC] safety sweeper disabled (TEMP_VC_SWEEP_SECONDS <= 0)")
+
+    async def _sweeper_loop(self, interval: float):
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            try:
+                await asyncio.sleep(interval)
+
+                for g in self.bot.guilds:
+                    try:
+                        ids = await bootstrap_track_temp_vcs(g, name_prefixes=_get_name_prefixes())
+                        # 注意：bootstrap_track_temp_vcs 應該係「同步 track list」，
+                        # 但我哋用佢返回 ids 來做 sweep，保持一致性。
+
+                        for cid in ids:
+                            ch = g.get_channel(cid)
+                            if ch is None:
+                                # 盡量少 fetch：只有 cache 無先 fetch
+                                try:
+                                    ch = await g.fetch_channel(cid)
+                                except discord.NotFound:
+                                    continue
+                                except Exception:
+                                    continue
+
+                            if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id):
+                                # 只對「看起來空」先 schedule（慳 task），但仍 force=True 以防 cache 錯
+                                if len(ch.members) == 0:
+                                    await schedule_delete_if_empty(ch, force=True)
+
+                    except Exception as e:
+                        print(f"[TempVC sweeper] {g.name} sweep 失敗：{e!r}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[TempVC sweeper] loop exception: {e!r}")
 
     # 事件監聽：誰入誰走
     @commands.Cog.listener()
@@ -165,6 +249,7 @@ class TempVC(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ):
+        # log join/leave/move
         if before.channel != after.channel:
             mtxt = await mention_or_id(member.guild, member)
             if not before.channel and after.channel:
@@ -200,7 +285,9 @@ class TempVC(commands.Cog):
         if not inter.guild:
             return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
-        def _category_from_ctx_channel(ch: Optional[discord.abc.GuildChannel]) -> Optional[discord.CategoryChannel]:
+        def _category_from_ctx_channel(
+            ch: Optional[discord.abc.GuildChannel],
+        ) -> Optional[discord.CategoryChannel]:
             if ch is None:
                 return None
             if isinstance(ch, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
