@@ -156,21 +156,20 @@ class RoleManager(commands.Cog):
         mode: str,
     ):
         if inter.guild is None:
-            await inter.response.send_message("⚠️ 呢個指令只可以喺伺服器內使用。", ephemeral=True)
+            await inter.response.send_message("⚠️ 呢個指令只可以喺伺服器內使用。")
             return
 
         # 必須二選一
         if (target_member is None and target_role is None) or (target_member is not None and target_role is not None):
             await inter.response.send_message(
-                "❌ 請只填其中一個：target_member 或 target_role（不可同時填）。",
-                ephemeral=True,
+                "❌ 請只填其中一個：target_member 或 target_role（不可同時填）。"
             )
             return
 
         guild = inter.guild
         role = guild.get_role(int(role_id)) if role_id.isdigit() else None
         if role is None:
-            await inter.response.send_message("❌ 找不到指定角色，請重新選擇。", ephemeral=True)
+            await inter.response.send_message("❌ 找不到指定角色，請重新選擇。")
             return
 
         # Helper（非 Admin）限制：只能對自己加/移除 MOD_ROLE
@@ -178,49 +177,49 @@ class RoleManager(commands.Cog):
             is_admin = inter.user.guild_permissions.administrator
             if (not is_admin) and user_is_helper(inter.user) and role.id == MOD_ROLE_ID:
                 if target_member is None or target_member != inter.user:
-                    await inter.response.send_message("⛔ 你只可以對自己處理 @Mod 角色。", ephemeral=True)
+                    await inter.response.send_message("⛔ 你只可以對自己處理 @Mod 角色。")
                     return
 
         if not bot_can_manage_role(self.bot, guild, role):
-            await inter.response.send_message("❌ 我冇權限或角色層級不足以處理呢個角色。", ephemeral=True)
+            await inter.response.send_message("❌ 我冇權限或角色層級不足以處理呢個角色。")
             return
 
         # --------- Single member ---------
         if target_member is not None:
             member = target_member
             if not bot_can_edit_member(self.bot, guild, member):
-                await inter.response.send_message("❌ 我唔可以修改呢位成員嘅角色（層級或身分限制）。", ephemeral=True)
+                await inter.response.send_message("❌ 我唔可以修改呢位成員嘅角色（層級或身分限制）。")
                 return
 
             try:
                 if mode == "add":
                     if role in member.roles:
-                        await inter.response.send_message("ℹ️ 佢已經有呢個角色。", ephemeral=True)
+                        await inter.response.send_message("ℹ️ 佢已經有呢個角色。")
                         return
                     await member.add_roles(role, reason=f"/role_grant by {inter.user}")
-                    await inter.response.send_message(f"✅ 已幫 {member.mention} 加上 {role.mention}。", ephemeral=True)
+                    await inter.response.send_message(f"✅ 已幫 {member.mention} 加上 {role.mention}。")
                 else:
                     if role not in member.roles:
-                        await inter.response.send_message("ℹ️ 佢本身都無呢個角色。", ephemeral=True)
+                        await inter.response.send_message("ℹ️ 佢本身都無呢個角色。")
                         return
                     await member.remove_roles(role, reason=f"/role_revoke by {inter.user}")
-                    await inter.response.send_message(f"✅ 已幫 {member.mention} 移除 {role.mention}。", ephemeral=True)
+                    await inter.response.send_message(f"✅ 已幫 {member.mention} 移除 {role.mention}。")
             except discord.Forbidden:
-                await inter.response.send_message("❌ 我無權限處理呢個角色。", ephemeral=True)
+                await inter.response.send_message("❌ 我無權限處理呢個角色。")
             except Exception as e:
-                await inter.response.send_message(f"⚠️ 出錯：{e}", ephemeral=True)
+                await inter.response.send_message(f"⚠️ 出錯：{e}")
             return
 
         # --------- Bulk by target_role ---------
         assert target_role is not None
-        await inter.response.defer(ephemeral=True)
+        await inter.response.defer()
 
         members = [m for m in guild.members if target_role in m.roles]
         if not include_bots:
             members = [m for m in members if not m.bot]
 
         if not members:
-            await inter.followup.send("ℹ️ 找不到任何符合條件的成員。", ephemeral=True)
+            await inter.followup.send("ℹ️ 找不到任何符合條件的成員。")
             return
 
         changed = 0
@@ -255,15 +254,13 @@ class RoleManager(commands.Cog):
 
             if idx % 25 == 0:
                 await inter.followup.send(
-                    f"⏳ 進度：{idx}/{len(members)} | ✅處理 {changed} | ↩️略過 {skipped_have} | ⛔跳過 {skipped_cant} | ⚠️失敗 {failed}",
-                    ephemeral=True,
+                    f"⏳ 進度：{idx}/{len(members)} | ✅處理 {changed} | ↩️略過 {skipped_have} | ⛔跳過 {skipped_cant} | ⚠️失敗 {failed}"
                 )
 
         await inter.followup.send(
             "✅ 批量完成\n"
             f"目標：擁有 `{target_role.name}` 的成員（共 {len(members)} 人）\n"
-            f"處理：{changed} | 略過：{skipped_have} | 跳過：{skipped_cant} | 失敗：{failed}",
-            ephemeral=True,
+            f"處理：{changed} | 略過：{skipped_have} | 跳過：{skipped_cant} | 失敗：{failed}"
         )
 
     @app_commands.guild_only()
@@ -272,12 +269,12 @@ class RoleManager(commands.Cog):
     @app_commands.describe(member="要查看的成員")
     async def role_list(self, inter: discord.Interaction, member: discord.Member):
         if inter.guild is None:
-            await inter.response.send_message("⚠️ 呢個指令只可以喺伺服器內使用。", ephemeral=True)
+            await inter.response.send_message("⚠️ 呢個指令只可以喺伺服器內使用。")
             return
 
         roles = [r for r in member.roles if not r.is_default()]
         if not roles:
-            await inter.response.send_message(f"ℹ️ {member.mention} 沒有任何自訂角色。", ephemeral=True)
+            await inter.response.send_message(f"ℹ️ {member.mention} 沒有任何自訂角色。")
             return
 
         roles.sort(key=lambda rr: rr.position, reverse=True)
@@ -299,11 +296,10 @@ class RoleManager(commands.Cog):
                 chunks.append("\n".join(chunk))
 
             await inter.response.send_message(
-                f"**{member} 的角色（高→低）**：\n```共有 {len(roles)} 個角色```",
-                ephemeral=True,
+                f"**{member} 的角色（高→低）**：\n```共有 {len(roles)} 個角色```"
             )
             for c in chunks:
-                await inter.followup.send(c, ephemeral=True)
+                await inter.followup.send(c)
             return
 
         embed = discord.Embed(
@@ -311,7 +307,7 @@ class RoleManager(commands.Cog):
             description=desc,
             color=discord.Color.blurple(),
         )
-        await inter.response.send_message(embed=embed, ephemeral=True)
+        await inter.response.send_message(embed=embed)
 
 
 async def setup(bot: commands.Bot):
