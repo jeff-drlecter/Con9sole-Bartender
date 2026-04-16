@@ -7,6 +7,121 @@ from discord.ext import commands
 import config
 
 MENU_COLOR = 0x2B2D31
+MAX_MEMBER_OPTIONS = 25
+
+
+def _member_options(guild: discord.Guild, *, exclude_bots: bool = True) -> list[discord.SelectOption]:
+    members = [m for m in guild.members if (not exclude_bots or not m.bot)]
+    members.sort(key=lambda m: (m.display_name.lower(), m.id))
+
+    options: list[discord.SelectOption] = []
+    for member in members[:MAX_MEMBER_OPTIONS]:
+        options.append(
+            discord.SelectOption(
+                label=member.display_name[:100],
+                value=str(member.id),
+                description=f"@{member.name}"[:100],
+            )
+        )
+    return options
+
+
+class MemberTargetSelect(discord.ui.Select):
+    def __init__(self, mode: str, author_id: int, guild: discord.Guild):
+        self.mode = mode
+        self.author_id = author_id
+        self.guild = guild
+
+        options = _member_options(guild)
+        if not options:
+            options = [
+                discord.SelectOption(
+                    label="冇可用成員",
+                    value="__none__",
+                    description="目前冇可選擇嘅非機械人成員",
+                )
+            ]
+
+        placeholder = "選擇要 Cheers 嘅對象" if mode == "cheers" else "選擇要請 Drink 嘅對象"
+        super().__init__(
+            placeholder=placeholder,
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "呢個控制面板唔屬於你。請使用 `/menu` 開自己嘅 Bartender 控制面板。",
+                ephemeral=True,
+            )
+            return
+
+        chosen = self.values[0]
+        if chosen == "__none__":
+            await interaction.response.send_message("目前冇可選擇嘅成員。", ephemeral=True)
+            return
+
+        member = self.guild.get_member(int(chosen))
+        if member is None:
+            await interaction.response.send_message("搵唔到該成員，請重新開啟 `/menu` 再試。", ephemeral=True)
+            return
+
+        if self.mode == "cheers":
+            cog = interaction.client.get_cog("Cheers")
+            if cog is None or not hasattr(cog, "do_cheers"):
+                await interaction.response.send_message("Cheers 模組未載入或未支援 menu 整合。", ephemeral=True)
+                return
+            await cog.do_cheers(interaction, to=member)
+            return
+
+        if self.mode == "drink":
+            cog = interaction.client.get_cog("Drink")
+            if cog is None or not hasattr(cog, "do_drink"):
+                await interaction.response.send_message("Drink 模組未載入或未支援 menu 整合。", ephemeral=True)
+                return
+            await cog.do_drink(interaction, to=member)
+            return
+
+        await interaction.response.send_message("未知操作。", ephemeral=True)
+
+
+class MemberTargetView(discord.ui.View):
+    def __init__(self, author_id: int, mode: str, guild: discord.Guild):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+        self.mode = mode
+        self.guild = guild
+        self.add_item(MemberTargetSelect(mode=mode, author_id=author_id, guild=guild))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "呢個控制面板唔屬於你。請使用 `/menu` 開自己嘅 Bartender 控制面板。",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def build_embed(user: discord.abc.User, mode: str) -> discord.Embed:
+        title = "🍻 Cheers 選擇對象" if mode == "cheers" else "🍹 Drink 選擇對象"
+        desc = "請喺下面選擇一位成員。"
+        embed = discord.Embed(title=title, description=desc, color=MENU_COLOR)
+        embed.set_footer(text=f"Requested by {user.display_name}")
+        return embed
+
+    @discord.ui.button(label="Back", emoji="🔙", style=discord.ButtonStyle.primary, row=1)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = MainMenuView.build_embed(interaction.user)
+        view = MainMenuView(author_id=self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
 
 
 class TempVCMenuView(discord.ui.View):
@@ -32,11 +147,7 @@ class TempVCMenuView(discord.ui.View):
         )
         embed.add_field(name="➕ Create Temp VC", value="手動建立一個 Temp VC", inline=False)
         embed.add_field(name="🗑️ Delete Current VC", value="刪除你目前身處嘅 Temp VC", inline=False)
-        embed.add_field(
-            name="📖 How it works",
-            value="加入每個分區嘅「開call」會自動建立小隊call。",
-            inline=False,
-        )
+        embed.add_field(name="📖 How it works", value="加入每個分區嘅「開call」會自動建立小隊call。", inline=False)
         embed.set_footer(text=f"Requested by {user.display_name}")
         return embed
 
@@ -44,10 +155,7 @@ class TempVCMenuView(discord.ui.View):
     async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         cog = interaction.client.get_cog("TempVC")
         if cog is None or not hasattr(cog, "create_temp_vc_from_menu"):
-            await interaction.response.send_message(
-                "TempVC 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("TempVC 模組未載入或未支援 menu 整合。", ephemeral=True)
             return
         await cog.create_temp_vc_from_menu(interaction)
 
@@ -55,10 +163,7 @@ class TempVCMenuView(discord.ui.View):
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         cog = interaction.client.get_cog("TempVC")
         if cog is None or not hasattr(cog, "teardown_temp_vc_from_menu"):
-            await interaction.response.send_message(
-                "TempVC 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("TempVC 模組未載入或未支援 menu 整合。", ephemeral=True)
             return
         await cog.teardown_temp_vc_from_menu(interaction)
 
@@ -105,8 +210,8 @@ class MainMenuView(discord.ui.View):
             description="點擊下面按鈕使用功能。",
             color=MENU_COLOR,
         )
-        embed.add_field(name="🍻 Cheers", value="敬酒 / 互動功能", inline=True)
-        embed.add_field(name="🍹 Drink", value="飲品 / 酒類功能", inline=True)
+        embed.add_field(name="🍻 Cheers", value="選擇成員後送上打氣", inline=True)
+        embed.add_field(name="🍹 Drink", value="選擇成員後請對方飲酒", inline=True)
         embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
         embed.add_field(name="ℹ️ Help", value="顯示簡單說明", inline=True)
         embed.set_footer(text=f"Requested by {user.display_name}")
@@ -114,25 +219,21 @@ class MainMenuView(discord.ui.View):
 
     @discord.ui.button(label="Cheers", emoji="🍻", style=discord.ButtonStyle.success, row=0)
     async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("Cheers")
-        if cog is None or not hasattr(cog, "do_cheers"):
-            await interaction.response.send_message(
-                "Cheers 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
             return
-        await cog.do_cheers(interaction)
+        embed = MemberTargetView.build_embed(interaction.user, mode="cheers")
+        view = MemberTargetView(author_id=self.author_id, mode="cheers", guild=interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Drink", emoji="🍹", style=discord.ButtonStyle.primary, row=0)
     async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("Drink")
-        if cog is None or not hasattr(cog, "do_drink"):
-            await interaction.response.send_message(
-                "Drink 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
             return
-        await cog.do_drink(interaction)
+        embed = MemberTargetView.build_embed(interaction.user, mode="drink")
+        view = MemberTargetView(author_id=self.author_id, mode="drink", guild=interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Temp VC", emoji="🎧", style=discord.ButtonStyle.secondary, row=1)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -195,10 +296,7 @@ class Menu(commands.Cog):
         }
 
         if content in expected_mentions:
-            await message.reply(
-                "🍻 請使用 `/menu` 開啟 Bartender 控制面板。",
-                mention_author=False,
-            )
+            await message.reply("🍻 請使用 `/menu` 開啟 Bartender 控制面板。", mention_author=False)
 
 
 async def setup(bot: commands.Bot):
