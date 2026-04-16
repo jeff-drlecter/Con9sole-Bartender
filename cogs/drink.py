@@ -26,7 +26,6 @@ ICON_MAP = {
 
 # IBA 官方 77 款（英文, 中文, 簡介, 類型）
 IBA: List[Tuple[str, str, str, str]] = [
-    # === Unforgettables (30) ===
     ("Alexander", "亞歷山大", "琴酒、可可甜酒與忌廉調製，柔和香甜。", "short"),
     ("Americano", "美式雞尾酒", "金巴利、甜苦艾酒加梳打水，清爽開胃。", "sparkling"),
     ("Angel Face", "天使之吻", "琴酒、杏子白蘭地與蘋果白蘭地，果香柔和。", "short"),
@@ -59,7 +58,6 @@ IBA: List[Tuple[str, str, str, str]] = [
     ("Whiskey Sour", "威士忌酸酒", "威士忌、檸檬汁與糖漿，酸甜濃烈。", "whisky"),
     ("White Lady", "白衣女子", "琴酒、橙酒與檸檬汁，酸香柔和。", "short"),
 
-    # === Contemporary Classics (33) ===
     ("Aperol Spritz", "阿佩羅氣泡酒", "阿佩羅、氣泡酒與梳打水，輕盈果香。", "sparkling"),
     ("Barracuda", "梭魚", "金蘭姆、加利安諾與菠蘿汁，帶氣泡。", "tropical"),
     ("B52", "B52", "分層咖啡利口酒、百利甜與橙酒，層次分明。", "short"),
@@ -94,7 +92,6 @@ IBA: List[Tuple[str, str, str, str]] = [
     ("Yellow Bird", "黃鳥", "蘭姆、加利安諾與橙汁，果香熱帶。", "tropical"),
     ("Zombie", "殭屍", "多款蘭姆與果汁，強勁有力。", "tropical"),
 
-    # === New Era Drinks (14) ===
     ("Barrio", "巴里奧", "龍舌蘭、番茄汁與香料混合，風味濃烈。", "tropical"),
     ("Bramble", "黑莓酒", "琴酒、黑莓利口酒與檸檬汁，莓果酸甜。", "short"),
     ("Dark ’n’ Stormy", "黑暗風暴", "黑蘭姆與薑汁啤酒，辛辣清爽。", "beer"),
@@ -111,14 +108,12 @@ IBA: List[Tuple[str, str, str, str]] = [
     ("Vesper", "維斯珀馬丁尼", "琴酒、伏特加與利萊酒，冷冽俐落。", "short"),
 ]
 
-# 形容詞 (英文, 中文)
 ADJECTIVES: List[Tuple[str, str]] = [
     ("Smoky", "煙燻"), ("Citrus", "柑橘"), ("Spiced", "香料"), ("Tropical", "熱帶"),
     ("Berry", "莓果"), ("Herbal", "草本"), ("Floral", "花香"), ("Sweet", "甜味"),
     ("Dry", "乾口"), ("Bold", "濃烈"), ("Fresh", "清新"), ("Creamy", "奶香"),
 ]
 
-# 基酒 (英文, 中文, 類型)
 SPIRITS: List[Tuple[str, str, str]] = [
     ("Whisky", "威士忌", "whisky"),
     ("Bourbon", "波本", "whisky"),
@@ -130,7 +125,6 @@ SPIRITS: List[Tuple[str, str, str]] = [
     ("Brandy", "白蘭地", "short"),
 ]
 
-# 風格 (英文, 中文, 類型)
 STYLES: List[Tuple[str, str, str]] = [
     ("Highball", "高球", "short"),
     ("Sour", "酸酒", "short"),
@@ -142,7 +136,6 @@ STYLES: List[Tuple[str, str, str]] = [
     ("Julep", "朱利酒", "tropical"),
 ]
 
-# 風味 (英文, 中文)
 FLAVORS: List[Tuple[str, str]] = [
     ("with Ginger", "加薑"), ("with Honey", "加蜂蜜"), ("with Mint", "加薄荷"),
     ("with Basil", "加羅勒"), ("with Peach", "加水蜜桃"), ("with Coconut", "加椰子"),
@@ -154,10 +147,8 @@ FLAVORS: List[Tuple[str, str]] = [
 def build_drink_names() -> List[Tuple[str, str, str, str]]:
     names: List[Tuple[str, str, str, str]] = []
 
-    # IBA 官方
     names.extend(IBA)
 
-    # 自動組合
     for adj_en, adj_zh in ADJECTIVES:
         for sp_en, sp_zh, sp_type in SPIRITS:
             eng = f"{adj_en} {sp_en}"
@@ -177,7 +168,6 @@ def build_drink_names() -> List[Tuple[str, str, str, str]]:
                 desc3 = f"以{sp_zh}為基酒，加入{flav_zh}，突顯{adj_zh}口感。"
                 names.append((eng3, zh3, desc3, sp_type))
 
-    # 補足到 1000
     if len(names) < 1000:
         need = 1000 - len(names)
         names.extend([
@@ -191,34 +181,42 @@ def build_drink_names() -> List[Tuple[str, str, str, str]]:
 DRINKS: List[Tuple[str, str, str, str]] = build_drink_names()
 
 
-# --- 只需把 /drink 這個 handler 換成以下版本 ---
-
 class Drink(commands.Cog):
     """/drink：隨機為指定對象點一款酒（英文+中文+簡介+類型icon）。"""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.guilds(GUILD_ID)  # guild-scoped
-    @app_commands.command(name="drink", description="隨機為某人點一款酒")
-    @app_commands.describe(to="收酒嘅人")
-    async def drink(self, interaction: discord.Interaction, to: discord.Member):
+    async def do_drink(
+        self,
+        interaction: discord.Interaction,
+        to: discord.Member | None = None,
+    ) -> None:
+        """核心邏輯：供 slash command 同 menu button 共用。"""
         eng, zh, desc, typ = random.choice(DRINKS)
         icon = ICON_MAP.get(typ, ICON_MAP["default"])
 
         giver = interaction.user.mention
-        receiver = to.mention
+        receiver = (to or interaction.user).mention
+
+        if to and to.id != interaction.user.id:
+            line = f"{icon} {giver} 為 {receiver} 點咗 **{eng} ({zh})**，請享用～"
+        else:
+            line = f"{icon} {giver} 為自己點咗 **{eng} ({zh})**，請享用～"
 
         embed = discord.Embed(
-            description=(
-                f"{icon} {giver} 為 {receiver} 點咗 **{eng} ({zh})**，請享用～\n"
-                f"➡️ 簡介：{desc}"
-            ),
+            description=f"{line}\n➡️ 簡介：{desc}",
             color=discord.Color.random(),
         )
         embed.set_author(name="Con9sole-Bartender")
 
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="drink", description="隨機為某人點一款酒")
+    @app_commands.describe(to="收酒嘅人")
+    async def drink(self, interaction: discord.Interaction, to: discord.Member):
+        await self.do_drink(interaction, to)
 
 
 async def setup(bot: commands.Bot):
