@@ -1,17 +1,26 @@
-from config import GUILD_ID
+from __future__ import annotations
+
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from datetime import datetime
 import random
-from typing import List, Tuple
+from typing import Deque, Dict, List, Tuple
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from config import GUILD_ID
+
 # ------------------------------------------------------------
 # Con9sole-Bartender: drink.py
 # Slash command: /drink to:@member
-# 功能：隨機為指定對象點一款「酒名」（英文+中文譯名），以 Embed 顯示
-# 資料來源：IBA 77 款官方雞尾酒 + 自動組合 >=1000 種
-# 額外功能：附上簡短調製介紹 + 類型對應 icon
+# 功能：隨機為指定對象點一款酒（英文+中文譯名），以 Embed 顯示
+# 升級內容：
+# 1) 抽卡式稀有度（Common / Rare / SSR）
+# 2) 季節限定款（按月份加入限定酒池）
+# 3) 個人短期去重（同一位使用者短時間內不重複抽到最近飲過的酒）
+# 4) 保持 do_drink() 可供 menu.py 共用
 # ------------------------------------------------------------
 
 ICON_MAP = {
@@ -24,7 +33,41 @@ ICON_MAP = {
     "default": "🍸",
 }
 
-# IBA 官方 77 款（英文, 中文, 簡介, 類型）
+RARITY_STYLE = {
+    "Common": {
+        "label": "Common",
+        "emoji": "⚪",
+        "weight": 78,
+        "color": 0x95A5A6,
+    },
+    "Rare": {
+        "label": "Rare",
+        "emoji": "🟣",
+        "weight": 18,
+        "color": 0x9B59B6,
+    },
+    "SSR": {
+        "label": "SSR",
+        "emoji": "🟡",
+        "weight": 4,
+        "color": 0xF1C40F,
+    },
+}
+
+RECENT_HISTORY_LIMIT = 8
+
+
+@dataclass(frozen=True)
+class DrinkEntry:
+    eng: str
+    zh: str
+    desc: str
+    typ: str
+    rarity: str = "Common"
+    limited_tag: str | None = None
+
+
+# IBA 官方基底酒池
 IBA: List[Tuple[str, str, str, str]] = [
     ("Alexander", "亞歷山大", "琴酒、可可甜酒與忌廉調製，柔和香甜。", "short"),
     ("Americano", "美式雞尾酒", "金巴利、甜苦艾酒加梳打水，清爽開胃。", "sparkling"),
@@ -57,7 +100,6 @@ IBA: List[Tuple[str, str, str, str]] = [
     ("Tuxedo", "燕尾服", "琴酒與雪莉調製，優雅辛香。", "short"),
     ("Whiskey Sour", "威士忌酸酒", "威士忌、檸檬汁與糖漿，酸甜濃烈。", "whisky"),
     ("White Lady", "白衣女子", "琴酒、橙酒與檸檬汁，酸香柔和。", "short"),
-
     ("Aperol Spritz", "阿佩羅氣泡酒", "阿佩羅、氣泡酒與梳打水，輕盈果香。", "sparkling"),
     ("Barracuda", "梭魚", "金蘭姆、加利安諾與菠蘿汁，帶氣泡。", "tropical"),
     ("B52", "B52", "分層咖啡利口酒、百利甜與橙酒，層次分明。", "short"),
@@ -91,7 +133,6 @@ IBA: List[Tuple[str, str, str, str]] = [
     ("Vampiro", "吸血鬼", "龍舌蘭、番茄汁與香料，濃烈辛辣。", "tropical"),
     ("Yellow Bird", "黃鳥", "蘭姆、加利安諾與橙汁，果香熱帶。", "tropical"),
     ("Zombie", "殭屍", "多款蘭姆與果汁，強勁有力。", "tropical"),
-
     ("Barrio", "巴里奧", "龍舌蘭、番茄汁與香料混合，風味濃烈。", "tropical"),
     ("Bramble", "黑莓酒", "琴酒、黑莓利口酒與檸檬汁，莓果酸甜。", "short"),
     ("Dark ’n’ Stormy", "黑暗風暴", "黑蘭姆與薑汁啤酒，辛辣清爽。", "beer"),
@@ -143,49 +184,125 @@ FLAVORS: List[Tuple[str, str]] = [
     ("with Lychee", "加荔枝"), ("with Passionfruit", "加熱情果"), ("with Pineapple", "加菠蘿"),
 ]
 
+SEASONAL_DRINKS: Dict[Tuple[int, ...], List[DrinkEntry]] = {
+    (12, 1, 2): [
+        DrinkEntry("Snowflake Martini", "雪花馬丁尼", "冷冽酒體配上淡甜奶香，冬日限定。", "short", "SSR", "冬日限定"),
+        DrinkEntry("Hot Honey Whisky", "熱蜜威士忌", "蜂蜜暖感與威士忌厚度交疊，適合寒夜。", "whisky", "Rare", "冬日限定"),
+    ],
+    (3, 4, 5): [
+        DrinkEntry("Sakura Fizz", "櫻花氣泡酒", "帶花香與清爽氣泡感，春日限定。", "sparkling", "SSR", "春日限定"),
+        DrinkEntry("Garden Collins", "花園可林斯", "草本與柑橘交織，輕盈明亮。", "short", "Rare", "春日限定"),
+    ],
+    (6, 7, 8): [
+        DrinkEntry("Sunset Colada", "夕陽可樂達", "椰香與果香飽滿，熱帶感爆棚。", "tropical", "SSR", "夏日限定"),
+        DrinkEntry("Mango Breeze", "芒果海風", "清甜果香配上爽口尾韻，超消暑。", "tropical", "Rare", "夏日限定"),
+    ],
+    (9, 10, 11): [
+        DrinkEntry("Maple Old Fashioned", "楓糖古典", "楓糖甜香提升威士忌層次，秋日限定。", "whisky", "SSR", "秋日限定"),
+        DrinkEntry("Roasted Fig Sour", "烤無花果酸酒", "果甜帶微酸，尾段溫潤厚實。", "short", "Rare", "秋日限定"),
+    ],
+}
 
-def build_drink_names() -> List[Tuple[str, str, str, str]]:
-    names: List[Tuple[str, str, str, str]] = []
 
-    names.extend(IBA)
+def rarity_for_generated_name(eng: str, typ: str) -> str:
+    """按名稱與類型分配預設稀有度。"""
+    rare_keywords = ("Martini", "Vesper", "Paper Plane", "Penicillin", "French 75", "Negroni")
+    ssr_keywords = ("Zombie", "Long Island", "Old Fashioned", "Manhattan", "Piña Colada", "Singapore Sling")
+
+    if any(key.lower() in eng.lower() for key in ssr_keywords):
+        return "SSR"
+    if any(key.lower() in eng.lower() for key in rare_keywords):
+        return "Rare"
+    if typ in {"wine", "sparkling"}:
+        return "Rare"
+    return "Common"
+
+
+def build_drinks() -> List[DrinkEntry]:
+    drinks: List[DrinkEntry] = []
+
+    for eng, zh, desc, typ in IBA:
+        drinks.append(DrinkEntry(eng, zh, desc, typ, rarity_for_generated_name(eng, typ)))
 
     for adj_en, adj_zh in ADJECTIVES:
         for sp_en, sp_zh, sp_type in SPIRITS:
             eng = f"{adj_en} {sp_en}"
             zh = f"{adj_zh}{sp_zh}"
             desc = f"以{sp_zh}為基酒，呈現{adj_zh}風味。"
-            names.append((eng, zh, desc, sp_type))
+            rarity = "Common"
+            if adj_en in {"Floral", "Creamy", "Bold"}:
+                rarity = "Rare"
+            drinks.append(DrinkEntry(eng, zh, desc, sp_type, rarity))
 
             for sty_en, sty_zh, sty_type in STYLES:
                 eng2 = f"{adj_en} {sp_en} {sty_en}"
                 zh2 = f"{adj_zh}{sp_zh}{sty_zh}"
                 desc2 = f"以{sp_zh}為基酒，調製成{sty_zh}風格，帶有{adj_zh}特色。"
-                names.append((eng2, zh2, desc2, sty_type))
+                rarity2 = "Rare" if sty_en in {"Martini", "Spritz"} or adj_en in {"Bold", "Floral"} else "Common"
+                drinks.append(DrinkEntry(eng2, zh2, desc2, sty_type, rarity2))
 
             for flav_en, flav_zh in FLAVORS:
                 eng3 = f"{sp_en} {flav_en} ({adj_en})"
                 zh3 = f"{adj_zh}{sp_zh}{flav_zh}"
                 desc3 = f"以{sp_zh}為基酒，加入{flav_zh}，突顯{adj_zh}口感。"
-                names.append((eng3, zh3, desc3, sp_type))
+                rarity3 = "SSR" if flav_en in {"with Yuzu", "with Lychee", "with Passionfruit"} and adj_en in {"Floral", "Fresh"} else "Rare" if flav_en in {"with Coffee", "with Chocolate"} else "Common"
+                drinks.append(DrinkEntry(eng3, zh3, desc3, sp_type, rarity3))
 
-    if len(names) < 1000:
-        need = 1000 - len(names)
-        names.extend([
-            (f"House Recipe #{i+1}", f"特調 #{i+1}", f"特調配方 #{i+1}，隨機風味。", "default")
-            for i in range(need)
-        ])
-
-    return names[:1000]
+    return drinks
 
 
-DRINKS: List[Tuple[str, str, str, str]] = build_drink_names()
+ALL_DRINKS: List[DrinkEntry] = build_drinks()
+
+
+def current_seasonal_pool() -> List[DrinkEntry]:
+    month = datetime.now().month
+    for months, pool in SEASONAL_DRINKS.items():
+        if month in months:
+            return pool
+    return []
 
 
 class Drink(commands.Cog):
-    """/drink：隨機為指定對象點一款酒（英文+中文+簡介+類型icon）。"""
+    """/drink：隨機為指定對象點一款酒（抽卡式稀有度 + 限定 + 去重）。"""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self.user_recent_draws: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=RECENT_HISTORY_LIMIT))
+
+    def _pick_rarity(self) -> str:
+        labels = list(RARITY_STYLE.keys())
+        weights = [RARITY_STYLE[label]["weight"] for label in labels]
+        return random.choices(labels, weights=weights, k=1)[0]
+
+    def _build_pool_for_rarity(self, rarity: str) -> List[DrinkEntry]:
+        pool = [drink for drink in ALL_DRINKS if drink.rarity == rarity]
+        seasonal = [drink for drink in current_seasonal_pool() if drink.rarity == rarity]
+        return pool + seasonal
+
+    def _pick_unique_drink(self, user_id: int, rarity: str) -> DrinkEntry:
+        pool = self._build_pool_for_rarity(rarity)
+        if not pool:
+            pool = ALL_DRINKS + current_seasonal_pool()
+
+        recent = set(self.user_recent_draws[user_id])
+        candidates = [d for d in pool if d.eng not in recent]
+        chosen = random.choice(candidates or pool)
+        self.user_recent_draws[user_id].append(chosen.eng)
+        return chosen
+
+    def _build_header_line(
+        self,
+        interaction: discord.Interaction,
+        to: discord.Member | None,
+        drink: DrinkEntry,
+    ) -> str:
+        icon = ICON_MAP.get(drink.typ, ICON_MAP["default"])
+        giver = interaction.user.mention
+        receiver = (to or interaction.user).mention
+
+        if to and to.id != interaction.user.id:
+            return f"{icon} {giver} 為 {receiver} 抽到 **{drink.eng} ({drink.zh})**，請享用～"
+        return f"{icon} {giver} 為自己抽到 **{drink.eng} ({drink.zh})**，請享用～"
 
     async def do_drink(
         self,
@@ -193,22 +310,29 @@ class Drink(commands.Cog):
         to: discord.Member | None = None,
     ) -> None:
         """核心邏輯：供 slash command 同 menu button 共用。"""
-        eng, zh, desc, typ = random.choice(DRINKS)
-        icon = ICON_MAP.get(typ, ICON_MAP["default"])
+        rarity = self._pick_rarity()
+        drink = self._pick_unique_drink(interaction.user.id, rarity)
 
-        giver = interaction.user.mention
-        receiver = (to or interaction.user).mention
-
-        if to and to.id != interaction.user.id:
-            line = f"{icon} {giver} 為 {receiver} 點咗 **{eng} ({zh})**，請享用～"
-        else:
-            line = f"{icon} {giver} 為自己點咗 **{eng} ({zh})**，請享用～"
+        rarity_meta = RARITY_STYLE[drink.rarity]
+        header = self._build_header_line(interaction, to, drink)
+        limited_text = f"\n🌟 限定：{drink.limited_tag}" if drink.limited_tag else ""
 
         embed = discord.Embed(
-            description=f"{line}\n➡️ 簡介：{desc}",
-            color=discord.Color.random(),
+            description=f"{header}\n➡️ 簡介：{drink.desc}{limited_text}",
+            color=rarity_meta["color"],
         )
         embed.set_author(name="Con9sole-Bartender")
+        embed.add_field(
+            name="抽卡結果",
+            value=f"{rarity_meta['emoji']} **{rarity_meta['label']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="最近去重",
+            value=f"已避開你最近 {RECENT_HISTORY_LIMIT} 杯酒",
+            inline=True,
+        )
+        embed.set_footer(text="Common 78% · Rare 18% · SSR 4%")
 
         await interaction.response.send_message(embed=embed)
 
