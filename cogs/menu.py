@@ -9,6 +9,54 @@ import config
 MENU_COLOR = 0x2B2D31
 
 
+class SocialsMenuView(discord.ui.View):
+    def __init__(self, author_id: int):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+
+        self.add_item(
+            discord.ui.Button(
+                label="Instagram",
+                emoji="📸",
+                style=discord.ButtonStyle.link,
+                url=config.SOCIAL_INSTAGRAM_URL,
+                row=0,
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="Threads",
+                emoji="🧵",
+                style=discord.ButtonStyle.link,
+                url=config.SOCIAL_THREADS_URL,
+                row=0,
+            )
+        )
+
+    @staticmethod
+    def build_embed(user: discord.abc.User) -> discord.Embed:
+        embed = discord.Embed(
+            title="📱 Con9sole Socials",
+            description="點擊下面按鈕前往 Con9sole 官方社交平台。",
+            color=MENU_COLOR,
+        )
+        embed.add_field(name="📸 Instagram", value="查看 Con9sole 官方 Instagram", inline=False)
+        embed.add_field(name="🧵 Threads", value="查看 Con9sole 官方 Threads", inline=False)
+        embed.set_footer(text=f"Requested by {user.display_name}")
+        return embed
+
+    @discord.ui.button(label="Back", emoji="🔙", style=discord.ButtonStyle.primary, row=1)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = MainMenuView.build_embed(interaction.user)
+        view = MainMenuView(author_id=self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) and item.style != discord.ButtonStyle.link:
+                item.disabled = True
+
+
 class TempVCMenuView(discord.ui.View):
     def __init__(self, author_id: int):
         super().__init__(timeout=180)
@@ -99,6 +147,7 @@ class MainMenuView(discord.ui.View):
         embed.add_field(name="🍻 Cheers", value="為自己送上一句打氣", inline=True)
         embed.add_field(name="🍹 Drink", value="為自己隨機點一杯酒", inline=True)
         embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
+        embed.add_field(name="📱 Socials", value="查看 Con9sole 官方 IG / Threads", inline=True)
         embed.add_field(name="ℹ️ Help", value="顯示簡單說明", inline=True)
         embed.set_footer(text=f"Requested by {user.display_name}")
         return embed
@@ -154,7 +203,18 @@ class MainMenuView(discord.ui.View):
             "- Cheers：任何人都可用\n"
             "- Drink：任何人都可用\n"
             "- Menu：任何人都可開自己一份 menu\n"
+            "- Socials：查看 Con9sole 官方 IG / Threads\n"
             "- Temp VC：只限原本 panel 擁有者進入",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Socials", emoji="📱", style=discord.ButtonStyle.secondary, row=2)
+    async def socials_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = SocialsMenuView.build_embed(interaction.user)
+        view = SocialsMenuView(author_id=interaction.user.id)
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
             ephemeral=True,
         )
 
