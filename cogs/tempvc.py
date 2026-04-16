@@ -21,18 +21,7 @@ from utils import (
     bootstrap_track_temp_vcs,
 )
 
-# ============================================================
-# Temp VC Manager
-# - /vc_new 手動建立 temp VC
-# - 每個分區都有一個固定 VC「開call」
-# - 成員加入任何分區內的「開call」=> bot 在同分區建立「小隊call N」並 move 成員入去
-# - 120s empty => auto delete
-# - resilient to discord.py member cache timing
-# - resilient to bot restarts (bootstrap + sweeper)
-# ============================================================
 
-
-# ---------- Mention helper (mobile/desktop clickable) ----------
 async def mention_or_id(
     guild: discord.Guild,
     user_or_id: Union[int, discord.abc.User, discord.Member, None],
@@ -57,7 +46,6 @@ async def mention_or_id(
     return member.mention if member else f"User ID: {uid}"
 
 
-# ---------- 權限 ----------
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
     if not inter.user or not isinstance(inter.user, discord.Member):
         return False
@@ -68,7 +56,6 @@ def user_can_run_tempvc(inter: discord.Interaction) -> bool:
     return any(r.id == config.VERIFIED_ROLE_ID for r in m.roles)
 
 
-# ---------- Config helpers ----------
 def _get_timeout_seconds() -> float:
     try:
         return float(getattr(config, "TEMP_VC_EMPTY_SECONDS", 120))
@@ -77,12 +64,6 @@ def _get_timeout_seconds() -> float:
 
 
 def _get_sweep_interval_seconds() -> float:
-    """
-    safety sweeper interval (seconds)
-    - 預設 300s（5分鐘）
-    - 你可喺 config.py 加 TEMP_VC_SWEEP_SECONDS 來改
-    - 設為 0 或負數會關掉 sweeper
-    """
     try:
         return float(getattr(config, "TEMP_VC_SWEEP_SECONDS", 300))
     except Exception:
@@ -90,7 +71,7 @@ def _get_sweep_interval_seconds() -> float:
 
 
 def _get_name_prefixes() -> list[str]:
-    return [getattr(config, "TEMP_VC_PREFIX", "小隊call")]
+    return [getattr(config, "TEMP_VC_PREFIX", "小隊call •")]
 
 
 def _get_hub_channel_name() -> str:
@@ -98,11 +79,10 @@ def _get_hub_channel_name() -> str:
 
 
 def _get_temp_channel_base_name() -> str:
-    return str(getattr(config, "TEMP_VC_PREFIX", "小隊call")).strip() or "小隊call"
+    return str(getattr(config, "TEMP_VC_PREFIX", "小隊call •")).strip() or "小隊call •"
 
 
 def _get_auto_vc_user_limit() -> Optional[int]:
-    """自動建立 temp VC 時預設 user_limit；None = 無限制"""
     value = getattr(config, "TEMP_VC_DEFAULT_USER_LIMIT", None)
     if value in (None, "", 0, "0"):
         return None
@@ -112,7 +92,6 @@ def _get_auto_vc_user_limit() -> Optional[int]:
         return None
 
 
-# ---------- Name / category helpers ----------
 def _category_from_ctx_channel(
     ch: Optional[discord.abc.GuildChannel],
 ) -> Optional[discord.CategoryChannel]:
@@ -138,10 +117,6 @@ def _normalize_temp_base_for_match() -> str:
 
 
 def _next_temp_channel_name_in_category(category: Optional[discord.CategoryChannel], guild: discord.Guild) -> str:
-    """
-    同一個分區內自動搵最細未使用編號：
-    小隊call 1, 小隊call 2, 小隊call 3 ...
-    """
     base = _normalize_temp_base_for_match()
     pattern = re.compile(rf"^{re.escape(base)}\s+(\d+)$")
     used_numbers: set[int] = set()
@@ -163,23 +138,16 @@ def _next_temp_channel_name_in_category(category: Optional[discord.CategoryChann
     return f"{base} {n}"
 
 
-# ---------- 清理空房（修正版：避免 members cache 時序問題） ----------
 async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool = False):
-    """
-    - force=False：只喺「目前已空」先起倒數（避免無謂 task）
-    - force=True：用於 voice_state_update / bootstrap / sweeper — 不信當刻 members cache，直接起倒數，
-                  timeout 後用 fresh channel 再判斷是否仍然空房
-    """
     timeout = _get_timeout_seconds()
     ch_id = channel.id
 
     if not is_temp_vc_id(ch_id):
         return
 
-    if not force:
-        if len(channel.members) > 0:
-            cancel_delete_task(ch_id)
-            return
+    if not force and len(channel.members) > 0:
+        cancel_delete_task(ch_id)
+        return
 
     async def _task():
         try:
@@ -198,11 +166,7 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
                     print(f"⚠️ 取 channel 失敗 id={ch_id}：{e!r}")
                     return
 
-            if (
-                isinstance(fresh, discord.VoiceChannel)
-                and len(fresh.members) == 0
-                and is_temp_vc_id(ch_id)
-            ):
+            if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0 and is_temp_vc_id(ch_id):
                 print(f"🧹 自動刪除空房：#{fresh.name}（id={ch_id}）")
                 untrack_temp_vc(ch_id)
                 try:
@@ -226,7 +190,6 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
     set_delete_task(ch_id, asyncio.create_task(_task()))
 
 
-# ---------- Cog ----------
 class TempVC(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -238,18 +201,77 @@ class TempVC(commands.Cog):
         if self._sweeper_task and not self._sweeper_task.done():
             self._sweeper_task.cancel()
 
+    async def _create_manual_temp_vc(
+        self,
+        guild: discord.Guild,
+        category: Optional[discord.CategoryChannel],
+        *,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> discord.VoiceChannel:
+        base = _get_temp_channel_base_name()
+        vc_name = f"{base} {name.strip()}" if name and name.strip() else _next_temp_channel_name_in_category(category, guild)
+
+        kwargs: Dict[str, object] = {"bitrate": guild.bitrate_limit}
+        if limit is not None:
+            kwargs["user_limit"] = max(1, min(99, int(limit)))
+
+        ch = await guild.create_voice_channel(
+            vc_name,
+            category=category,
+            reason="Create temp VC (bartender)",
+            **kwargs,
+        )
+        track_temp_vc(ch.id)
+        print(f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
+        await schedule_delete_if_empty(ch, force=False)
+        return ch
+
+    async def _teardown_temp_vc(self, target: discord.VoiceChannel) -> None:
+        untrack_temp_vc(target.id)
+        cancel_delete_task(target.id)
+        print(f"🗑️ 手動刪除 Temp VC：#{target.name}（id={target.id}）")
+        await target.delete(reason="Manual teardown temp VC")
+
+    async def create_temp_vc_from_menu(self, interaction: discord.Interaction):
+        if not user_can_run_tempvc(interaction):
+            await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
+            return
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
+            return
+
+        category = _category_from_ctx_channel(interaction.channel)
+        ch = await self._create_manual_temp_vc(interaction.guild, category)
+        await interaction.response.send_message(
+            f"✅ Temp VC 已建立：{ch.mention}\n（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or '無限制'}）",
+            ephemeral=True,
+        )
+
+    async def teardown_temp_vc_from_menu(self, interaction: discord.Interaction):
+        if not user_can_run_tempvc(interaction):
+            await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
+            return
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member) or not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.response.send_message("你而家未身處任何語音房。", ephemeral=True)
+            return
+
+        target = interaction.user.voice.channel
+        if not isinstance(target, discord.VoiceChannel) or not is_temp_vc_id(target.id):
+            await interaction.response.send_message("你目前身處嘅唔係由 Bot 建立嘅臨時語音房。", ephemeral=True)
+            return
+
+        await self._teardown_temp_vc(target)
+        await interaction.response.send_message("✅ 已刪除你目前嘅 Temp VC。", ephemeral=True)
+
     async def _create_temp_vc_for_member(
         self,
         member: discord.Member,
         source_channel: discord.VoiceChannel,
     ) -> Optional[discord.VoiceChannel]:
-        """
-        成員加入任何分區內的「開call」後：
-        1) 用該 Hub VC 所在 category 建立 temp VC
-        2) 名稱為同分區內最細未使用編號：小隊call 1 / 2 / 3 ...
-        3) track temp VC
-        4) move member 入去
-        """
         guild = member.guild
         category = source_channel.category
         vc_name = _next_temp_channel_name_in_category(category, guild)
@@ -274,10 +296,7 @@ class TempVC(commands.Cog):
             return None
 
         track_temp_vc(ch.id)
-        print(
-            f"✅ 自動建立 Temp VC：#{ch.name}（id={ch.id}）"
-            f" for user={member.id} from hub=#{source_channel.name}"
-        )
+        print(f"✅ 自動建立 Temp VC：#{ch.name}（id={ch.id}） for user={member.id} from hub=#{source_channel.name}")
 
         try:
             await member.move_to(ch, reason="Moved to newly auto-created temp VC")
@@ -302,7 +321,6 @@ class TempVC(commands.Cog):
         for g in self.bot.guilds:
             try:
                 ids = await bootstrap_track_temp_vcs(g, name_prefixes=_get_name_prefixes())
-
                 for cid in ids:
                     ch = g.get_channel(cid)
                     if ch is None:
@@ -316,7 +334,6 @@ class TempVC(commands.Cog):
 
                     if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id):
                         await schedule_delete_if_empty(ch, force=True)
-
             except Exception as e:
                 print(f"[TempVC bootstrap] {g.name} 失敗：{e!r}")
 
@@ -332,11 +349,9 @@ class TempVC(commands.Cog):
         while not self.bot.is_closed():
             try:
                 await asyncio.sleep(interval)
-
                 for g in self.bot.guilds:
                     try:
                         ids = await bootstrap_track_temp_vcs(g, name_prefixes=_get_name_prefixes())
-
                         for cid in ids:
                             ch = g.get_channel(cid)
                             if ch is None:
@@ -347,13 +362,10 @@ class TempVC(commands.Cog):
                                 except Exception:
                                     continue
 
-                            if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id):
-                                if len(ch.members) == 0:
-                                    await schedule_delete_if_empty(ch, force=True)
-
+                            if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id) and len(ch.members) == 0:
+                                await schedule_delete_if_empty(ch, force=True)
                     except Exception as e:
                         print(f"[TempVC sweeper] {g.name} sweep 失敗：{e!r}")
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -369,34 +381,21 @@ class TempVC(commands.Cog):
         if member.bot:
             return
 
-        # log join/leave/move
         if before.channel != after.channel:
             mtxt = await mention_or_id(member.guild, member)
             if not before.channel and after.channel:
-                await send_log(
-                    member.guild,
-                    emb("Voice Join", f"🎤 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x57F287),
-                )
+                await send_log(member.guild, emb("Voice Join", f"🎤 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x57F287))
             elif before.channel and not after.channel:
-                await send_log(
-                    member.guild,
-                    emb("Voice Leave", f"🔇 {mtxt} {voice_arrow(before.channel, after.channel)}", 0xED4245),
-                )
+                await send_log(member.guild, emb("Voice Leave", f"🔇 {mtxt} {voice_arrow(before.channel, after.channel)}", 0xED4245))
             else:
-                await send_log(
-                    member.guild,
-                    emb("Voice Move", f"🔀 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x5865F2),
-                )
+                await send_log(member.guild, emb("Voice Move", f"🔀 {mtxt} {voice_arrow(before.channel, after.channel)}", 0x5865F2))
 
-        # 離開 temp VC：用 force=True，避免 members cache 未更新而漏 schedule
         if before.channel and is_temp_vc_id(before.channel.id):
             await schedule_delete_if_empty(before.channel, force=True)
 
-        # 進入 temp VC：一定 cancel（因為唔應該刪）
         if after.channel and is_temp_vc_id(after.channel.id):
             cancel_delete_task(after.channel.id)
 
-        # -------- Join-to-Create：加入任何分區內的「開call」自動開 temp VC --------
         if (
             after.channel
             and _is_hub_channel(after.channel)
@@ -424,28 +423,8 @@ class TempVC(commands.Cog):
             return await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
 
         category = _category_from_ctx_channel(inter.channel)
-        base = _get_temp_channel_base_name()
-        vc_name = f"{base} {name.strip()}" if name and name.strip() else _next_temp_channel_name_in_category(category, inter.guild)
-
         await inter.response.defer(ephemeral=False)
-
-        max_bitrate = inter.guild.bitrate_limit
-        kwargs: Dict[str, object] = {"bitrate": max_bitrate}
-        if limit is not None:
-            limit = max(1, min(99, int(limit)))
-            kwargs["user_limit"] = limit
-
-        ch = await inter.guild.create_voice_channel(
-            vc_name,
-            category=category,
-            reason="Create temp VC (bartender)",
-            **kwargs,
-        )
-        track_temp_vc(ch.id)
-
-        print(f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
-
-        await schedule_delete_if_empty(ch, force=False)
+        ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=limit)
 
         msg = (
             f"你好 {inter.user.mention} ，✅ 房間已經安排好 → {ch.mention}\n"
@@ -465,17 +444,14 @@ class TempVC(commands.Cog):
         await inter.response.defer(ephemeral=True)
         target = channel
         if target is None and isinstance(inter.user, discord.Member) and inter.user.voice and inter.user.voice.channel:
-            target = inter.user.voice.channel  # type: ignore[assignment]
+            target = inter.user.voice.channel
 
         if not isinstance(target, discord.VoiceChannel):
             return await inter.followup.send("請指定或身處一個語音房。", ephemeral=True)
         if not is_temp_vc_id(target.id):
             return await inter.followup.send("呢個唔係由 Bot 建立的臨時語音房。", ephemeral=True)
 
-        untrack_temp_vc(target.id)
-        cancel_delete_task(target.id)
-        print(f"🗑️ 手動刪除 Temp VC：#{target.name}（id={target.id}）")
-        await target.delete(reason="Manual teardown temp VC")
+        await self._teardown_temp_vc(target)
         await inter.followup.send("✅ 已刪除。", ephemeral=True)
 
 
