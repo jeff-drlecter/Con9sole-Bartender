@@ -21,6 +21,9 @@ TEMP_VC_HUB_NAME: str = "開call"
 TEMP_VC_PREFIX: str = "小隊call •"   # 👈 有空格 + 點
 TEMP_VC_SWEEP_SECONDS: int = 300
 TEMP_VC_DEFAULT_USER_LIMIT: int = 32
+#social media link
+SOCIAL_INSTAGRAM_URL = "https://www.instagram.com/con9sole/"
+SOCIAL_THREADS_URL = "https://threads.net/con9sole"
 
 # 歡迎訊息頻道 ID
 WELCOME_CHANNEL_ID: int = 1010456227769229355
