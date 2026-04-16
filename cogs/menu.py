@@ -111,11 +111,12 @@ async def cheers_button(self, interaction: discord.Interaction, button: discord.
     await cog.do_cheers(interaction)
 
     @discord.ui.button(label="Drink", emoji="🍹", style=discord.ButtonStyle.primary, row=0)
-    async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🍹 Drink 功能按鈕已收到。你而家可以保留現有 `/drink`；之後再接駁成按一下直接執行。",
-            ephemeral=True,
-        )
+async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    cog = interaction.client.get_cog("Drink")
+    if cog is None or not hasattr(cog, "do_drink"):
+        await interaction.response.send_message("Drink 模組未載入或未支援 menu 整合。", ephemeral=True)
+        return
+    await cog.do_drink(interaction)
 
     @discord.ui.button(label="Temp VC", emoji="🎧", style=discord.ButtonStyle.secondary, row=1)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
