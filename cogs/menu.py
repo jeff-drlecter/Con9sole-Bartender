@@ -48,8 +48,12 @@ class SocialsMenuView(discord.ui.View):
     @discord.ui.button(label="Back", emoji="🔙", style=discord.ButtonStyle.primary, row=1)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = MainMenuView.build_embed(interaction.user)
-        view = MainMenuView(author_id=self.author_id)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view = MainMenuView(author_id=interaction.user.id)
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
+        )
 
     async def on_timeout(self):
         for item in self.children:
@@ -124,8 +128,12 @@ class TempVCMenuView(discord.ui.View):
     @discord.ui.button(label="Back", emoji="🔙", style=discord.ButtonStyle.primary, row=1)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = MainMenuView.build_embed(interaction.user)
-        view = MainMenuView(author_id=self.author_id)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view = MainMenuView(author_id=interaction.user.id)
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
+        )
 
     async def on_timeout(self):
         for item in self.children:
@@ -180,7 +188,7 @@ class MainMenuView(discord.ui.View):
             embed = MainMenuView.build_embed(interaction.user)
             view = MainMenuView(author_id=interaction.user.id)
             await interaction.response.send_message(
-                "呢個 Temp VC 控制唔屬於你，我幫你開返自己嘅 Menu。",
+                content="呢個 Temp VC 控制唔屬於你，我幫你開返自己嘅 Menu。",
                 embed=embed,
                 view=view,
                 ephemeral=True,
@@ -188,8 +196,12 @@ class MainMenuView(discord.ui.View):
             return
 
         embed = TempVCMenuView.build_embed(interaction.user)
-        view = TempVCMenuView(author_id=self.author_id)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view = TempVCMenuView(author_id=interaction.user.id)
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="Help", emoji="ℹ️", style=discord.ButtonStyle.secondary, row=1)
     async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -204,7 +216,7 @@ class MainMenuView(discord.ui.View):
             "- Drink：任何人都可用\n"
             "- Menu：任何人都可開自己一份 menu\n"
             "- Socials：查看 Con9sole 官方 IG / Threads\n"
-            "- Temp VC：只限原本 panel 擁有者進入",
+            "- Temp VC：只限原本 panel 擁有者開私人控制面板",
             ephemeral=True,
         )
 
