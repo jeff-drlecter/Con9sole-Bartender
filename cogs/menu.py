@@ -21,7 +21,7 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
         description="點擊下面按鈕，直接使用自己嘅功能。",
         color=MENU_COLOR,
     )
-    embed.add_field(name="🍻 Cheers", value="為自己送上一句打氣", inline=True)
+    embed.add_field(name="🍻 Cheers", value="為大家送上一句打氣", inline=True)
     embed.add_field(name="🍹 Drink", value="為自己隨機點一杯酒", inline=True)
     embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
     embed.add_field(name="📱 Socials", value="查看 Con9sole 官方 IG / Threads", inline=True)
