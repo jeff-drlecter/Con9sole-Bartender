@@ -14,13 +14,13 @@ ADMIN_ROLE_IDS: List[int] = []      # 額外管理角色（可留空）
 FALLBACK_CHANNELS = {}
 
 # 臨時語音房設定
-VERIFIED_ROLE_ID: int = 1279040517451022419   # 擁有此角色即可用 /vc_new、/vc_teardown、/tu
-TEMP_VC_EMPTY_SECONDS: int = 120              # 無人時自動刪除的等待秒數
-TEMP_VC_HUB_NAME: str = "開call"              # 每個分區用來觸發自動開房的 VC 名
-TEMP_VC_PREFIX: str = "小隊call"              # 自動建立房間名稱前綴，例如 小隊call 1
-TEMP_VC_SWEEP_SECONDS: int = 300              # safety sweeper 間隔秒數
-TEMP_VC_DEFAULT_USER_LIMIT = None             # 自動開房的人數上限；None = 無限制
-TEMP_VC_PREFIX: str = "小隊call•"            # 自動命名前綴
+VERIFIED_ROLE_ID: int = 1279040517451022419
+TEMP_VC_EMPTY_SECONDS: int = 120
+TEMP_VC_HUB_NAME: str = "開call"
+
+TEMP_VC_PREFIX: str = "小隊call •"   # 👈 有空格 + 點
+TEMP_VC_SWEEP_SECONDS: int = 300
+TEMP_VC_DEFAULT_USER_LIMIT: int = 32
 
 # 歡迎訊息頻道 ID
 WELCOME_CHANNEL_ID: int = 1010456227769229355
