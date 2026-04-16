@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import inspect
+from typing import Awaitable, Callable
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -8,18 +11,77 @@ import config
 
 MENU_COLOR = 0x2B2D31
 
+INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
+THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://www.threads.net/@con9sole")
 
-class SocialsMenuView(discord.ui.View):
-    def __init__(self, author_id: int):
-        super().__init__(timeout=180)
-        self.author_id = author_id
 
+def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
+    embed = discord.Embed(
+        title="🍻 Bartender 控制面板",
+        description="點擊下面按鈕，直接使用自己嘅功能。",
+        color=MENU_COLOR,
+    )
+    embed.add_field(name="🍻 Cheers", value="為自己送上一句打氣", inline=True)
+    embed.add_field(name="🍹 Drink", value="為自己隨機點一杯酒", inline=True)
+    embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
+    embed.add_field(name="📱 Socials", value="查看 Con9sole 官方 IG / Threads", inline=True)
+    embed.add_field(name="ℹ️ Help", value="顯示簡單說明", inline=True)
+    embed.add_field(name="📋 Menu", value="重新顯示主選單", inline=True)
+    embed.set_footer(text=f"Requested by {user.display_name}")
+    return embed
+
+
+def build_help_embed(user: discord.abc.User) -> discord.Embed:
+    embed = discord.Embed(
+        title="ℹ️ Bartender Help",
+        description="以下按鈕可直接使用常用功能：",
+        color=MENU_COLOR,
+    )
+    embed.add_field(name="🍻 Cheers", value="送出一條隨機中英對照打氣語錄。", inline=False)
+    embed.add_field(name="🍹 Drink", value="隨機點一杯酒；如 drink.py 有抽卡系統會直接沿用。", inline=False)
+    embed.add_field(name="🎧 Temp VC", value="打開 Temp VC 控制面板。", inline=False)
+    embed.add_field(name="📱 Socials", value="查看官方 Instagram / Threads。", inline=False)
+    embed.add_field(name="📋 Menu", value="重新送出一個主選單。", inline=False)
+    embed.add_field(name="🗑️ Close", value="刪除當前公開 menu 訊息。", inline=False)
+    embed.set_footer(text=f"Requested by {user.display_name}")
+    return embed
+
+
+def build_socials_embed(user: discord.abc.User) -> discord.Embed:
+    embed = discord.Embed(
+        title="📱 Con9sole Socials",
+        description="點擊下面按鈕前往 Con9sole 官方社交平台。",
+        color=MENU_COLOR,
+    )
+    embed.add_field(name="📸 Instagram", value="查看 Con9sole 官方 Instagram", inline=False)
+    embed.add_field(name="🧵 Threads", value="查看 Con9sole 官方 Threads", inline=False)
+    embed.set_footer(text=f"Requested by {user.display_name}")
+    return embed
+
+
+async def send_or_followup(
+    interaction: discord.Interaction,
+    *,
+    content: str | None = None,
+    embed: discord.Embed | None = None,
+    view: discord.ui.View | None = None,
+    ephemeral: bool = False,
+) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=ephemeral)
+    else:
+        await interaction.response.send_message(content=content, embed=embed, view=view, ephemeral=ephemeral)
+
+
+class SocialLinksView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
         self.add_item(
             discord.ui.Button(
                 label="Instagram",
                 emoji="📸",
                 style=discord.ButtonStyle.link,
-                url=config.SOCIAL_INSTAGRAM_URL,
+                url=INSTAGRAM_URL,
                 row=0,
             )
         )
@@ -28,274 +90,263 @@ class SocialsMenuView(discord.ui.View):
                 label="Threads",
                 emoji="🧵",
                 style=discord.ButtonStyle.link,
-                url=config.SOCIAL_THREADS_URL,
+                url=THREADS_URL,
                 row=0,
             )
         )
 
-    @staticmethod
-    def build_embed(user: discord.abc.User) -> discord.Embed:
-        embed = discord.Embed(
-            title="📱 Con9sole Socials",
-            description="點擊下面按鈕前往 Con9sole 官方社交平台。",
-            color=MENU_COLOR,
-        )
-        embed.add_field(name="📸 Instagram", value="查看 Con9sole 官方 Instagram", inline=False)
-        embed.add_field(name="🧵 Threads", value="查看 Con9sole 官方 Threads", inline=False)
-        embed.set_footer(text=f"Requested by {user.display_name}")
-        return embed
 
-    @discord.ui.button(label="Back", emoji="🔙", style=discord.ButtonStyle.primary, row=1)
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = MainMenuView.build_embed(interaction.user)
-        view = MainMenuView(author_id=interaction.user.id)
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
-
-    async def on_timeout(self):
-        for item in self.children:
-            if isinstance(item, discord.ui.Button) and item.style != discord.ButtonStyle.link:
-                item.disabled = True
-
-
-class TempVCMenuView(discord.ui.View):
-    def __init__(self, author_id: int):
-        super().__init__(timeout=180)
-        self.author_id = author_id
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message(
-                "呢個 Temp VC 控制面板唔屬於你。",
-                ephemeral=True,
+class SocialsMenuView(discord.ui.View):
+    def __init__(self, cog: "Menu") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.add_item(
+            discord.ui.Button(
+                label="Instagram",
+                emoji="📸",
+                style=discord.ButtonStyle.link,
+                url=INSTAGRAM_URL,
+                row=0,
             )
-            return False
-        return True
-
-    @staticmethod
-    def build_embed(user: discord.abc.User) -> discord.Embed:
-        embed = discord.Embed(
-            title="🎧 Temp VC 控制面板",
-            description="點擊下面按鈕管理臨時語音房。",
-            color=MENU_COLOR,
         )
-        embed.add_field(name="➕ Create Temp VC", value="手動建立一個 Temp VC", inline=False)
-        embed.add_field(name="🗑️ Delete Current VC", value="刪除你目前身處嘅 Temp VC", inline=False)
-        embed.add_field(
-            name="📖 How it works",
-            value="加入每個分區嘅「開call」會自動建立小隊call。",
-            inline=False,
-        )
-        embed.set_footer(text=f"Requested by {user.display_name}")
-        return embed
-
-    @discord.ui.button(label="Create", emoji="➕", style=discord.ButtonStyle.success, row=0)
-    async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("TempVC")
-        if cog is None or not hasattr(cog, "create_temp_vc_from_menu"):
-            await interaction.response.send_message(
-                "TempVC 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
+        self.add_item(
+            discord.ui.Button(
+                label="Threads",
+                emoji="🧵",
+                style=discord.ButtonStyle.link,
+                url=THREADS_URL,
+                row=0,
             )
-            return
-        await cog.create_temp_vc_from_menu(interaction)
-
-    @discord.ui.button(label="Delete", emoji="🗑️", style=discord.ButtonStyle.danger, row=0)
-    async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("TempVC")
-        if cog is None or not hasattr(cog, "teardown_temp_vc_from_menu"):
-            await interaction.response.send_message(
-                "TempVC 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
-            return
-        await cog.teardown_temp_vc_from_menu(interaction)
-
-    @discord.ui.button(label="How it works", emoji="📖", style=discord.ButtonStyle.secondary, row=1)
-    async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🎧 Temp VC 說明：\n"
-            "- 每個分區都有一個 `開call` Hub VC\n"
-            "- 成員加入 `開call` 時，Bot 會喺同分區建立 `小隊call • N`\n"
-            "- 空房達指定秒數後會自動刪除\n"
-            "- 你亦可以喺呢個面板手動建立 / 刪除 Temp VC",
-            ephemeral=True,
         )
 
-    @discord.ui.button(label="Back", emoji="🔙", style=discord.ButtonStyle.primary, row=1)
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = MainMenuView.build_embed(interaction.user)
-        view = MainMenuView(author_id=interaction.user.id)
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,
+    @discord.ui.button(
+        label="Back",
+        emoji="🔙",
+        style=discord.ButtonStyle.primary,
+        custom_id="bartender:socials:back",
+        row=1,
+    )
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await send_or_followup(
+            interaction,
+            embed=build_main_menu_embed(interaction.user),
+            view=MainMenuView(self.cog),
+            ephemeral=False,
         )
 
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
+
+class HelpMenuView(discord.ui.View):
+    def __init__(self, cog: "Menu") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Back",
+        emoji="🔙",
+        style=discord.ButtonStyle.primary,
+        custom_id="bartender:help:back",
+        row=0,
+    )
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await send_or_followup(
+            interaction,
+            embed=build_main_menu_embed(interaction.user),
+            view=MainMenuView(self.cog),
+            ephemeral=False,
+        )
 
 
 class MainMenuView(discord.ui.View):
-    def __init__(self, author_id: int):
-        super().__init__(timeout=180)
-        self.author_id = author_id
+    def __init__(self, cog: "Menu") -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
 
-    @staticmethod
-    def build_embed(user: discord.abc.User) -> discord.Embed:
-        embed = discord.Embed(
-            title="🍻 Bartender 控制面板",
-            description="點擊下面按鈕，直接使用自己嘅功能。",
-            color=MENU_COLOR,
-        )
-        embed.add_field(name="🍻 Cheers", value="為自己送上一句打氣", inline=True)
-        embed.add_field(name="🍹 Drink", value="為自己隨機點一杯酒", inline=True)
-        embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
-        embed.add_field(name="📱 Socials", value="查看 Con9sole 官方 IG / Threads", inline=True)
-        embed.add_field(name="ℹ️ Help", value="顯示簡單說明", inline=True)
-        embed.set_footer(text=f"Requested by {user.display_name}")
-        return embed
-
-    @discord.ui.button(label="Cheers", emoji="🍻", style=discord.ButtonStyle.success, row=0)
-    async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("Cheers")
-        if cog is None or not hasattr(cog, "do_cheers"):
-            await interaction.response.send_message(
-                "Cheers 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
-            return
-        await cog.do_cheers(interaction)
-
-    @discord.ui.button(label="Drink", emoji="🍹", style=discord.ButtonStyle.primary, row=0)
-    async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("Drink")
-        if cog is None or not hasattr(cog, "do_drink"):
-            await interaction.response.send_message(
-                "Drink 模組未載入或未支援 menu 整合。",
-                ephemeral=True,
-            )
-            return
-        await cog.do_drink(interaction)
-
-    @discord.ui.button(label="Temp VC", emoji="🎧", style=discord.ButtonStyle.secondary, row=1)
-    async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.author_id:
-            embed = MainMenuView.build_embed(interaction.user)
-            view = MainMenuView(author_id=interaction.user.id)
-            await interaction.response.send_message(
-                content="呢個 Temp VC 控制唔屬於你，我幫你開返自己嘅 Menu。",
-                embed=embed,
-                view=view,
-                ephemeral=True,
-            )
+    async def _call_cog_method(
+        self,
+        interaction: discord.Interaction,
+        *,
+        cog_name: str,
+        method_names: list[str],
+        missing_message: str,
+    ) -> None:
+        target_cog = interaction.client.get_cog(cog_name)
+        if not target_cog:
+            await send_or_followup(interaction, content=missing_message, ephemeral=True)
             return
 
-        embed = TempVCMenuView.build_embed(interaction.user)
-        view = TempVCMenuView(author_id=interaction.user.id)
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
+        method: Callable[..., Awaitable[None]] | None = None
+        for method_name in method_names:
+            candidate = getattr(target_cog, method_name, None)
+            if candidate and inspect.iscoroutinefunction(candidate):
+                method = candidate
+                break
 
-    @discord.ui.button(label="Help", emoji="ℹ️", style=discord.ButtonStyle.secondary, row=1)
-    async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "可用方式：\n"
-            "- `/menu`：開啟 Bartender 控制面板\n"
-            "- `/cheers`：使用 Cheers\n"
-            "- `/drink`：使用 Drink\n"
-            "- `@con9sole-bartender`：提示你去用 `/menu`\n\n"
-            "主頁按鈕：\n"
-            "- Cheers：任何人都可用\n"
-            "- Drink：任何人都可用\n"
-            "- Menu：任何人都可開自己一份 menu\n"
-            "- Socials：查看 Con9sole 官方 IG / Threads\n"
-            "- Temp VC：只限原本 panel 擁有者開私人控制面板",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Socials", emoji="📱", style=discord.ButtonStyle.secondary, row=2)
-    async def socials_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = SocialsMenuView.build_embed(interaction.user)
-        view = SocialsMenuView(author_id=interaction.user.id)
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Menu", emoji="📋", style=discord.ButtonStyle.secondary, row=2)
-    async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = MainMenuView.build_embed(interaction.user)
-        view = MainMenuView(author_id=interaction.user.id)
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Close", emoji="🗑️", style=discord.ButtonStyle.danger, row=2)
-    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message(
-                "呢個控制面板唔屬於你。",
-                ephemeral=True,
-            )
+        if method is None:
+            await send_or_followup(interaction, content=missing_message, ephemeral=True)
             return
 
-        for item in self.children:
-            item.disabled = True
+        try:
+            await method(interaction)
+        except TypeError:
+            # 某些既有方法簽名可能要求 keyword / positional to=None
+            try:
+                await method(interaction, None)
+            except TypeError:
+                await method(interaction, to=None)
+        except discord.InteractionResponded:
+            pass
+        except Exception as exc:
+            await send_or_followup(
+                interaction,
+                content=f"❌ 執行功能時出錯：{type(exc).__name__}",
+                ephemeral=True,
+            )
 
-        embed = discord.Embed(
-            title="🍻 Bartender 控制面板",
-            description="控制面板已關閉。請使用 `/menu` 再次開啟。",
-            color=MENU_COLOR,
+    @discord.ui.button(
+        label="Cheers",
+        emoji="🍻",
+        style=discord.ButtonStyle.success,
+        custom_id="bartender:main:cheers",
+        row=0,
+    )
+    async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._call_cog_method(
+            interaction,
+            cog_name="Cheers",
+            method_names=["do_cheers", "cheers_cmd", "cheers"],
+            missing_message="❌ Cheers 功能未載入。",
         )
-        await interaction.response.edit_message(embed=embed, view=self)
 
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
+    @discord.ui.button(
+        label="Drink",
+        emoji="🍹",
+        style=discord.ButtonStyle.primary,
+        custom_id="bartender:main:drink",
+        row=0,
+    )
+    async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._call_cog_method(
+            interaction,
+            cog_name="Drink",
+            method_names=["do_drink", "drink"],
+            missing_message="❌ Drink 功能未載入。",
+        )
+
+    @discord.ui.button(
+        label="Temp VC",
+        emoji="🎧",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:main:tempvc",
+        row=1,
+    )
+    async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        tempvc_cog = interaction.client.get_cog("TempVC")
+        if not tempvc_cog:
+            await send_or_followup(interaction, content="❌ Temp VC 功能未載入。", ephemeral=True)
+            return
+
+        for method_name in ["send_control_panel", "tempvc_panel", "tempvc", "panel"]:
+            method = getattr(tempvc_cog, method_name, None)
+            if method and inspect.iscoroutinefunction(method):
+                try:
+                    await method(interaction)
+                except TypeError:
+                    await method(interaction, None)
+                except discord.InteractionResponded:
+                    pass
+                except Exception as exc:
+                    await send_or_followup(
+                        interaction,
+                        content=f"❌ Temp VC 出錯：{type(exc).__name__}",
+                        ephemeral=True,
+                    )
+                return
+
+        await send_or_followup(interaction, content="❌ 搵唔到 Temp VC 控制面板入口。", ephemeral=True)
+
+    @discord.ui.button(
+        label="Help",
+        emoji="ℹ️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:main:help",
+        row=1,
+    )
+    async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await send_or_followup(
+            interaction,
+            embed=build_help_embed(interaction.user),
+            view=HelpMenuView(self.cog),
+            ephemeral=False,
+        )
+
+    @discord.ui.button(
+        label="Socials",
+        emoji="📱",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:main:socials",
+        row=2,
+    )
+    async def socials_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await send_or_followup(
+            interaction,
+            embed=build_socials_embed(interaction.user),
+            view=SocialsMenuView(self.cog),
+            ephemeral=False,
+        )
+
+    @discord.ui.button(
+        label="Menu",
+        emoji="📋",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:main:menu",
+        row=2,
+    )
+    async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await send_or_followup(
+            interaction,
+            embed=build_main_menu_embed(interaction.user),
+            view=MainMenuView(self.cog),
+            ephemeral=False,
+        )
+
+    @discord.ui.button(
+        label="Close",
+        emoji="🗑️",
+        style=discord.ButtonStyle.danger,
+        custom_id="bartender:main:close",
+        row=2,
+    )
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            await interaction.followup.send("❌ 呢個 menu 刪除失敗。", ephemeral=True)
 
 
 class Menu(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._views_registered = False
 
-    @app_commands.command(name="menu", description="開啟 Bartender 控制面板")
+    async def cog_load(self) -> None:
+        if self._views_registered:
+            return
+        self.bot.add_view(MainMenuView(self))
+        self.bot.add_view(SocialsMenuView(self))
+        self.bot.add_view(HelpMenuView(self))
+        self._views_registered = True
+
+    @app_commands.command(name="menu", description="顯示 Bartender 控制面板")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
-    async def menu(self, interaction: discord.Interaction):
-        embed = MainMenuView.build_embed(interaction.user)
-        view = MainMenuView(author_id=interaction.user.id)
-        await interaction.response.send_message(embed=embed, view=view)
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot:
-            return
-        if not message.guild:
-            return
-        if self.bot.user is None:
-            return
-
-        content = (message.content or "").strip()
-        expected_mentions = {
-            f"<@{self.bot.user.id}>",
-            f"<@!{self.bot.user.id}>",
-        }
-
-        if content in expected_mentions:
-            await message.reply(
-                "🍻 請使用 `/menu` 開啟 Bartender 控制面板。",
-                mention_author=False,
-            )
+    async def menu(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(
+            embed=build_main_menu_embed(interaction.user),
+            view=MainMenuView(self),
+            ephemeral=False,
+        )
 
 
-async def setup(bot: commands.Bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Menu(bot))
