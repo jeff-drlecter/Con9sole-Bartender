@@ -276,7 +276,7 @@ class MainMenuView(discord.ui.View):
             interaction,
             embed=build_help_embed(interaction.user),
             view=HelpMenuView(self.cog),
-            ephemeral=False,
+            ephemeral=True,
         )
 
     @discord.ui.button(
@@ -291,7 +291,7 @@ class MainMenuView(discord.ui.View):
             interaction,
             embed=build_socials_embed(interaction.user),
             view=SocialsMenuView(self.cog),
-            ephemeral=False,
+            ephemeral=True,
         )
 
     @discord.ui.button(
@@ -306,7 +306,7 @@ class MainMenuView(discord.ui.View):
             interaction,
             embed=build_main_menu_embed(interaction.user),
             view=MainMenuView(self.cog),
-            ephemeral=False,
+            ephemeral=True,
         )
 
     @discord.ui.button(
