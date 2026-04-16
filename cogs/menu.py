@@ -131,7 +131,7 @@ class SocialsMenuView(discord.ui.View):
             interaction,
             embed=build_main_menu_embed(interaction.user),
             view=MainMenuView(self.cog),
-            ephemeral=False,
+            ephemeral=True,
         )
 
 
