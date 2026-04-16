@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -9,90 +7,6 @@ from discord.ext import commands
 import config
 
 MENU_COLOR = 0x2B2D31
-
-
-def resolve_member_from_input(guild: discord.Guild, raw: str) -> discord.Member | None:
-    raw = raw.strip()
-
-    m = re.fullmatch(r"<@!?(\d+)>", raw)
-    if m:
-        return guild.get_member(int(m.group(1)))
-
-    if raw.isdigit():
-        return guild.get_member(int(raw))
-
-    lowered = raw.lower()
-    for member in guild.members:
-        if member.bot:
-            continue
-        if member.name.lower() == lowered or member.display_name.lower() == lowered:
-            return member
-
-    return None
-
-
-class TargetInputModal(discord.ui.Modal):
-    def __init__(self, mode: str, author_id: int):
-        title = "🍻 Cheers - 輸入對象" if mode == "cheers" else "🍹 Drink - 輸入對象"
-        super().__init__(title=title)
-
-        self.mode = mode
-        self.author_id = author_id
-
-        label = "請輸入 @成員 / User ID / 名稱"
-        placeholder = "@Jeff / 123456789012345678 / Jeff"
-
-        self.target_input = discord.ui.TextInput(
-            label=label,
-            placeholder=placeholder,
-            required=True,
-            max_length=100,
-        )
-        self.add_item(self.target_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message(
-                "呢個控制面板唔屬於你。請使用 `/menu` 開自己嘅 Bartender 控制面板。",
-                ephemeral=True,
-            )
-            return
-
-        if not interaction.guild:
-            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
-            return
-
-        target = resolve_member_from_input(interaction.guild, str(self.target_input.value))
-        if target is None:
-            await interaction.response.send_message(
-                "搵唔到呢位成員。請輸入正確 @mention、User ID 或顯示名稱。",
-                ephemeral=True,
-            )
-            return
-
-        if self.mode == "cheers":
-            cog = interaction.client.get_cog("Cheers")
-            if cog is None or not hasattr(cog, "do_cheers"):
-                await interaction.response.send_message(
-                    "Cheers 模組未載入或未支援 menu 整合。",
-                    ephemeral=True,
-                )
-                return
-            await cog.do_cheers(interaction, to=target)
-            return
-
-        if self.mode == "drink":
-            cog = interaction.client.get_cog("Drink")
-            if cog is None or not hasattr(cog, "do_drink"):
-                await interaction.response.send_message(
-                    "Drink 模組未載入或未支援 menu 整合。",
-                    ephemeral=True,
-                )
-                return
-            await cog.do_drink(interaction, to=target)
-            return
-
-        await interaction.response.send_message("未知操作。", ephemeral=True)
 
 
 class TempVCMenuView(discord.ui.View):
@@ -188,11 +102,11 @@ class MainMenuView(discord.ui.View):
     def build_embed(user: discord.abc.User) -> discord.Embed:
         embed = discord.Embed(
             title="🍻 Bartender 控制面板",
-            description="點擊下面按鈕使用功能。",
+            description="點擊下面按鈕，直接使用自己嘅功能。",
             color=MENU_COLOR,
         )
-        embed.add_field(name="🍻 Cheers", value="輸入 @成員後送上打氣", inline=True)
-        embed.add_field(name="🍹 Drink", value="輸入 @成員後請對方飲酒", inline=True)
+        embed.add_field(name="🍻 Cheers", value="為自己送上一句打氣", inline=True)
+        embed.add_field(name="🍹 Drink", value="為自己隨機點一杯酒", inline=True)
         embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
         embed.add_field(name="ℹ️ Help", value="顯示簡單說明", inline=True)
         embed.set_footer(text=f"Requested by {user.display_name}")
@@ -200,11 +114,25 @@ class MainMenuView(discord.ui.View):
 
     @discord.ui.button(label="Cheers", emoji="🍻", style=discord.ButtonStyle.success, row=0)
     async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(TargetInputModal(mode="cheers", author_id=self.author_id))
+        cog = interaction.client.get_cog("Cheers")
+        if cog is None or not hasattr(cog, "do_cheers"):
+            await interaction.response.send_message(
+                "Cheers 模組未載入或未支援 menu 整合。",
+                ephemeral=True,
+            )
+            return
+        await cog.do_cheers(interaction)
 
     @discord.ui.button(label="Drink", emoji="🍹", style=discord.ButtonStyle.primary, row=0)
     async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(TargetInputModal(mode="drink", author_id=self.author_id))
+        cog = interaction.client.get_cog("Drink")
+        if cog is None or not hasattr(cog, "do_drink"):
+            await interaction.response.send_message(
+                "Drink 模組未載入或未支援 menu 整合。",
+                ephemeral=True,
+            )
+            return
+        await cog.do_drink(interaction)
 
     @discord.ui.button(label="Temp VC", emoji="🎧", style=discord.ButtonStyle.secondary, row=1)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -220,10 +148,9 @@ class MainMenuView(discord.ui.View):
             "- `/cheers`：使用 Cheers\n"
             "- `/drink`：使用 Drink\n"
             "- `@con9sole-bartender`：提示你去用 `/menu`\n\n"
-            "Cheers / Drink 按鈕現可輸入：\n"
-            "- @mention\n"
-            "- User ID\n"
-            "- 成員名稱",
+            "目前 panel 內：\n"
+            "- Cheers：只會對自己送上打氣\n"
+            "- Drink：只會為自己點酒",
             ephemeral=True,
         )
 
