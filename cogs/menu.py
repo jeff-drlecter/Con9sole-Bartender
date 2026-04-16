@@ -103,11 +103,12 @@ class MainMenuView(discord.ui.View):
         return embed
 
     @discord.ui.button(label="Cheers", emoji="🍻", style=discord.ButtonStyle.success, row=0)
-    async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🍻 Cheers 功能按鈕已收到。你而家可以保留現有 `/cheers`；之後再接駁成按一下直接執行。",
-            ephemeral=True,
-        )
+async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    cog = interaction.client.get_cog("Cheers")
+    if cog is None or not hasattr(cog, "do_cheers"):
+        await interaction.response.send_message("Cheers 模組未載入或未支援 menu 整合。", ephemeral=True)
+        return
+    await cog.do_cheers(interaction)
 
     @discord.ui.button(label="Drink", emoji="🍹", style=discord.ButtonStyle.primary, row=0)
     async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
