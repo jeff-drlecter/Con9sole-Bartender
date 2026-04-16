@@ -32,7 +32,11 @@ class TempVCMenuView(discord.ui.View):
         )
         embed.add_field(name="➕ Create Temp VC", value="手動建立一個 Temp VC", inline=False)
         embed.add_field(name="🗑️ Delete Current VC", value="刪除你目前身處嘅 Temp VC", inline=False)
-        embed.add_field(name="📖 How it works", value="加入每個分區嘅「開call」會自動建立小隊call。", inline=False)
+        embed.add_field(
+            name="📖 How it works",
+            value="加入每個分區嘅「開call」會自動建立小隊call。",
+            inline=False,
+        )
         embed.set_footer(text=f"Requested by {user.display_name}")
         return embed
 
@@ -40,7 +44,10 @@ class TempVCMenuView(discord.ui.View):
     async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         cog = interaction.client.get_cog("TempVC")
         if cog is None or not hasattr(cog, "create_temp_vc_from_menu"):
-            await interaction.response.send_message("TempVC 模組未載入或未支援 menu 整合。", ephemeral=True)
+            await interaction.response.send_message(
+                "TempVC 模組未載入或未支援 menu 整合。",
+                ephemeral=True,
+            )
             return
         await cog.create_temp_vc_from_menu(interaction)
 
@@ -48,7 +55,10 @@ class TempVCMenuView(discord.ui.View):
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         cog = interaction.client.get_cog("TempVC")
         if cog is None or not hasattr(cog, "teardown_temp_vc_from_menu"):
-            await interaction.response.send_message("TempVC 模組未載入或未支援 menu 整合。", ephemeral=True)
+            await interaction.response.send_message(
+                "TempVC 模組未載入或未支援 menu 整合。",
+                ephemeral=True,
+            )
             return
         await cog.teardown_temp_vc_from_menu(interaction)
 
@@ -103,20 +113,26 @@ class MainMenuView(discord.ui.View):
         return embed
 
     @discord.ui.button(label="Cheers", emoji="🍻", style=discord.ButtonStyle.success, row=0)
-async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-    cog = interaction.client.get_cog("Cheers")
-    if cog is None or not hasattr(cog, "do_cheers"):
-        await interaction.response.send_message("Cheers 模組未載入或未支援 menu 整合。", ephemeral=True)
-        return
-    await cog.do_cheers(interaction)
+    async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("Cheers")
+        if cog is None or not hasattr(cog, "do_cheers"):
+            await interaction.response.send_message(
+                "Cheers 模組未載入或未支援 menu 整合。",
+                ephemeral=True,
+            )
+            return
+        await cog.do_cheers(interaction)
 
     @discord.ui.button(label="Drink", emoji="🍹", style=discord.ButtonStyle.primary, row=0)
-async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-    cog = interaction.client.get_cog("Drink")
-    if cog is None or not hasattr(cog, "do_drink"):
-        await interaction.response.send_message("Drink 模組未載入或未支援 menu 整合。", ephemeral=True)
-        return
-    await cog.do_drink(interaction)
+    async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("Drink")
+        if cog is None or not hasattr(cog, "do_drink"):
+            await interaction.response.send_message(
+                "Drink 模組未載入或未支援 menu 整合。",
+                ephemeral=True,
+            )
+            return
+        await cog.do_drink(interaction)
 
     @discord.ui.button(label="Temp VC", emoji="🎧", style=discord.ButtonStyle.secondary, row=1)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -179,7 +195,10 @@ class Menu(commands.Cog):
         }
 
         if content in expected_mentions:
-            await message.reply("🍻 請使用 `/menu` 開啟 Bartender 控制面板。", mention_author=False)
+            await message.reply(
+                "🍻 請使用 `/menu` 開啟 Bartender 控制面板。",
+                mention_author=False,
+            )
 
 
 async def setup(bot: commands.Bot):
