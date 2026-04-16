@@ -17,7 +17,7 @@ class TempVCMenuView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "呢個控制面板唔屬於你。請使用 `/menu` 開自己嘅 Bartender 控制面板。",
+                "呢個 Temp VC 控制面板唔屬於你。",
                 ephemeral=True,
             )
             return False
@@ -89,15 +89,6 @@ class MainMenuView(discord.ui.View):
         super().__init__(timeout=180)
         self.author_id = author_id
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message(
-                "呢個控制面板唔屬於你。請使用 `/menu` 開自己嘅 Bartender 控制面板。",
-                ephemeral=True,
-            )
-            return False
-        return True
-
     @staticmethod
     def build_embed(user: discord.abc.User) -> discord.Embed:
         embed = discord.Embed(
@@ -136,6 +127,17 @@ class MainMenuView(discord.ui.View):
 
     @discord.ui.button(label="Temp VC", emoji="🎧", style=discord.ButtonStyle.secondary, row=1)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            embed = MainMenuView.build_embed(interaction.user)
+            view = MainMenuView(author_id=interaction.user.id)
+            await interaction.response.send_message(
+                "呢個 Temp VC 控制唔屬於你，我幫你開返自己嘅 Menu。",
+                embed=embed,
+                view=view,
+                ephemeral=True,
+            )
+            return
+
         embed = TempVCMenuView.build_embed(interaction.user)
         view = TempVCMenuView(author_id=self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
@@ -148,14 +150,33 @@ class MainMenuView(discord.ui.View):
             "- `/cheers`：使用 Cheers\n"
             "- `/drink`：使用 Drink\n"
             "- `@con9sole-bartender`：提示你去用 `/menu`\n\n"
-            "目前 panel 內：\n"
-            "- Cheers：只會對自己送上打氣\n"
-            "- Drink：只會為自己點酒",
+            "主頁按鈕：\n"
+            "- Cheers：任何人都可用\n"
+            "- Drink：任何人都可用\n"
+            "- Menu：任何人都可開自己一份 menu\n"
+            "- Temp VC：只限原本 panel 擁有者進入",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Menu", emoji="📋", style=discord.ButtonStyle.secondary, row=2)
+    async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = MainMenuView.build_embed(interaction.user)
+        view = MainMenuView(author_id=interaction.user.id)
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
             ephemeral=True,
         )
 
     @discord.ui.button(label="Close", emoji="🗑️", style=discord.ButtonStyle.danger, row=2)
     async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "呢個控制面板唔屬於你。",
+                ephemeral=True,
+            )
+            return
+
         for item in self.children:
             item.disabled = True
 
