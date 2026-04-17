@@ -26,52 +26,52 @@ USER_MENU_COOLDOWNS: dict[int, float] = {}
 
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
-        title="🍻 Bartender 控制面板",
-        description="揀一個功能開始。",
+        title="🍸 Con9sole Bartender",
+        description="你走近吧檯，酒保放下手中的雪克杯，抬頭看向你。\n\n**「歡迎光臨，要點什麼？」**",
         color=MENU_COLOR,
     )
-    embed.add_field(name="📋 Menu", value="主選單", inline=True)
-    embed.add_field(name="👥 組隊", value="開團招募", inline=True)
-    embed.add_field(name="🎧 小隊 Call", value="臨時語音", inline=True)
+    embed.add_field(name="📋 主選單", value="回到這裡", inline=True)
+    embed.add_field(name="👥 召集隊友", value="一起出發", inline=True)
+    embed.add_field(name="🎧 小隊房", value="開語音房", inline=True)
 
-    embed.add_field(name="🎉 打氣時間", value="隨機打氣", inline=True)
-    embed.add_field(name="🍹 調酒", value="隨機飲品", inline=True)
-    embed.add_field(name="📱 Social", value="IG / Threads", inline=True)
+    embed.add_field(name="🎉 來一點鼓勵", value="提升氣氛", inline=True)
+    embed.add_field(name="🍹 來一杯", value="隨機調酒", inline=True)
+    embed.add_field(name="📱 社群", value="IG / Threads", inline=True)
 
-    embed.add_field(name="ℹ️ Help", value="使用說明", inline=True)
-    embed.add_field(name="🗑️ Close", value="關閉面板", inline=True)
-    embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"Requested by {user.display_name}")
+    embed.add_field(name="ℹ️ 說明", value="查看功能", inline=True)
+    embed.add_field(name="🗑️ 關閉", value="收起面板", inline=True)
+    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+    embed.set_footer(text=f"{user.display_name}，今晚由我為你服務。")
     return embed
 
 
 def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
-        title="ℹ️ Bartender Help",
-        description="常用功能快速入口。",
+        title="ℹ️ 使用說明",
+        description="酒保已經準備好，以下是你可以使用的服務。",
         color=MENU_COLOR,
     )
-    embed.add_field(name="👥 組隊", value="開團 / 招募隊友", inline=False)
-    embed.add_field(name="🎧 小隊 Call", value="建立臨時語音房", inline=False)
-    embed.add_field(name="🎉 打氣時間", value="發送隨機打氣句", inline=False)
-    embed.add_field(name="🍹 調酒", value="抽一杯隨機飲品", inline=False)
-    embed.add_field(name="📱 Social", value="查看官方連結", inline=False)
-    embed.add_field(name="🗑️ Close", value="刪除此 menu", inline=False)
-    embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"Requested by {user.display_name}")
+    embed.add_field(name="👥 召集隊友", value="發起組隊 / 招募隊友", inline=False)
+    embed.add_field(name="🎧 開一間小隊房", value="建立臨時語音房", inline=False)
+    embed.add_field(name="🎉 來一點鼓勵", value="送出隨機打氣內容", inline=False)
+    embed.add_field(name="🍹 來一杯", value="抽一杯隨機飲品", inline=False)
+    embed.add_field(name="📱 社群", value="查看官方 IG / Threads", inline=False)
+    embed.add_field(name="🗑️ 關閉", value="關閉目前面板", inline=False)
+    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+    embed.set_footer(text=f"{user.display_name}，慢慢揀，我喺度等你。")
     return embed
 
 
 def build_socials_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
-        title="📱 Con9sole Social",
-        description="官方社交平台連結。",
+        title="📱 Con9sole 社群",
+        description="想追蹤最新動態？酒保幫你準備好官方連結。",
         color=MENU_COLOR,
     )
     embed.add_field(name="📸 Instagram", value="官方 IG", inline=False)
     embed.add_field(name="🧵 Threads", value="官方 Threads", inline=False)
-    embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"Requested by {user.display_name}")
+    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+    embed.set_footer(text=f"{user.display_name}，有空都可以去逛逛。")
     return embed
 
 
@@ -162,7 +162,7 @@ class SocialsMenuView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label="Back",
+        label="返回主選單",
         emoji="🔙",
         style=discord.ButtonStyle.primary,
         custom_id="bartender:socials:back",
@@ -186,7 +186,7 @@ class HelpMenuView(BaseMenuView):
         super().__init__(cog)
 
     @discord.ui.button(
-        label="Back",
+        label="返回主選單",
         emoji="🔙",
         style=discord.ButtonStyle.primary,
         custom_id="bartender:help:back",
@@ -201,6 +201,7 @@ class HelpMenuView(BaseMenuView):
             embed=build_main_menu_embed(interaction.user),
             view=MainMenuView(self.cog),
             ephemeral=True,
+            file=build_menu_file(),
         )
 
 
@@ -252,7 +253,7 @@ class MainMenuView(BaseMenuView):
             )
 
     @discord.ui.button(
-        label="Menu",
+        label="主選單",
         emoji="📋",
         style=discord.ButtonStyle.secondary,
         custom_id="bartender:main:menu",
@@ -267,10 +268,11 @@ class MainMenuView(BaseMenuView):
             embed=build_main_menu_embed(interaction.user),
             view=MainMenuView(self.cog),
             ephemeral=True,
+            file=build_menu_file(),
         )
 
     @discord.ui.button(
-        label="組隊",
+        label="召集隊友",
         emoji="👥",
         style=discord.ButtonStyle.primary,
         custom_id="bartender:main:team",
@@ -281,11 +283,11 @@ class MainMenuView(BaseMenuView):
             interaction,
             cog_name="Teams",
             method_names=["open_team_menu", "start_team_menu", "team_menu"],
-            missing_message="❌ 組隊功能未載入。",
+            missing_message="❌ 召集隊友功能未載入。",
         )
 
     @discord.ui.button(
-        label="建立小隊 call",
+        label="開一間小隊房",
         emoji="🎧",
         style=discord.ButtonStyle.primary,
         custom_id="bartender:main:tempvc",
@@ -302,11 +304,11 @@ class MainMenuView(BaseMenuView):
                 "tempvc",
                 "panel",
             ],
-            missing_message="❌ 搵唔到 Temp VC 控制面板入口。",
+            missing_message="❌ 搵唔到小隊房控制面板入口。",
         )
 
     @discord.ui.button(
-        label="打氣時間",
+        label="來一點鼓勵",
         emoji="🎉",
         style=discord.ButtonStyle.success,
         custom_id="bartender:main:cheers",
@@ -317,11 +319,11 @@ class MainMenuView(BaseMenuView):
             interaction,
             cog_name="Cheers",
             method_names=["do_cheers", "cheers_cmd", "cheers"],
-            missing_message="❌ 打氣時間功能未載入。",
+            missing_message="❌ 鼓勵功能未載入。",
         )
 
     @discord.ui.button(
-        label="調酒",
+        label="來一杯",
         emoji="🍹",
         style=discord.ButtonStyle.success,
         custom_id="bartender:main:drink",
@@ -336,7 +338,7 @@ class MainMenuView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label="Social Link",
+        label="社群",
         emoji="📱",
         style=discord.ButtonStyle.secondary,
         custom_id="bartender:main:socials",
@@ -355,7 +357,7 @@ class MainMenuView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label="Help",
+        label="說明",
         emoji="ℹ️",
         style=discord.ButtonStyle.secondary,
         custom_id="bartender:main:help",
@@ -374,7 +376,7 @@ class MainMenuView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label="Close",
+        label="關閉",
         emoji="🗑️",
         style=discord.ButtonStyle.danger,
         custom_id="bartender:main:close",
@@ -390,7 +392,7 @@ class MainMenuView(BaseMenuView):
         try:
             await interaction.message.delete()
         except discord.HTTPException:
-            await interaction.followup.send("❌ 呢個 menu 刪除失敗。", ephemeral=True)
+            await interaction.followup.send("❌ 呢個面板刪除失敗。", ephemeral=True)
 
 
 class Menu(commands.Cog):
@@ -431,7 +433,7 @@ class Menu(commands.Cog):
         self.bot.add_view(HelpMenuView(self))
         self._views_registered = True
 
-    @app_commands.command(name="menu", description="顯示 Bartender 控制面板")
+    @app_commands.command(name="menu", description="顯示 Con9sole Bartender 面板")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
