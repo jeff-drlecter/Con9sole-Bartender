@@ -215,36 +215,42 @@ class MainMenuView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="建立小隊 call",
-        emoji="🎧",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:main:tempvc",
-        row=0,
-    )
-    async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        tempvc_cog = interaction.client.get_cog("TempVC")
-        if not tempvc_cog:
-            await send_or_followup(interaction, content="❌ Temp VC 功能未載入。", ephemeral=True)
+    label="建立小隊 call",
+    emoji="🎧",
+    style=discord.ButtonStyle.primary,
+    custom_id="bartender:main:tempvc",
+    row=0,
+)
+async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    tempvc_cog = interaction.client.get_cog("TempVC")
+    if not tempvc_cog:
+        await send_or_followup(interaction, content="❌ Temp VC 功能未載入。", ephemeral=True)
+        return
+
+    for method_name in [
+        "create_temp_vc_from_menu",
+        "send_control_panel",
+        "tempvc_panel",
+        "tempvc",
+        "panel",
+    ]:
+        method = getattr(tempvc_cog, method_name, None)
+        if method and inspect.iscoroutinefunction(method):
+            try:
+                await method(interaction)
+            except TypeError:
+                await method(interaction, None)
+            except discord.InteractionResponded:
+                pass
+            except Exception as exc:
+                await send_or_followup(
+                    interaction,
+                    content=f"❌ Temp VC 出錯：{type(exc).__name__}",
+                    ephemeral=True,
+                )
             return
 
-        for method_name in ["send_control_panel", "tempvc_panel", "tempvc", "panel"]:
-            method = getattr(tempvc_cog, method_name, None)
-            if method and inspect.iscoroutinefunction(method):
-                try:
-                    await method(interaction)
-                except TypeError:
-                    await method(interaction, None)
-                except discord.InteractionResponded:
-                    pass
-                except Exception as exc:
-                    await send_or_followup(
-                        interaction,
-                        content=f"❌ Temp VC 出錯：{type(exc).__name__}",
-                        ephemeral=True,
-                    )
-                return
-
-        await send_or_followup(interaction, content="❌ 搵唔到 Temp VC 控制面板入口。", ephemeral=True)
+    await send_or_followup(interaction, content="❌ 搵唔到 Temp VC 控制面板入口。", ephemeral=True)
 
     @discord.ui.button(
         label="打氣時間",
