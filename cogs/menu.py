@@ -24,6 +24,7 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed.add_field(name="🍻 Cheers", value="為大家送上一句打氣", inline=True)
     embed.add_field(name="🍹 Drink", value="為自己隨機點一杯酒", inline=True)
     embed.add_field(name="🎧 Temp VC", value="臨時語音房控制", inline=True)
+    embed.add_field(name="👥 組隊", value="召集隊友，建立公開招募", inline=True)
     embed.add_field(name="📱 Socials", value="查看 Con9sole 官方 IG / Threads", inline=True)
     embed.add_field(name="ℹ️ Help", value="顯示簡單說明", inline=True)
     embed.add_field(name="📋 Menu", value="重新顯示主選單", inline=True)
@@ -40,6 +41,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed.add_field(name="🍻 Cheers", value="送出一條隨機中英對照打氣語錄。", inline=False)
     embed.add_field(name="🍹 Drink", value="隨機點一杯酒；如 drink.py 有抽卡系統會直接沿用。", inline=False)
     embed.add_field(name="🎧 Temp VC", value="打開 Temp VC 控制面板。", inline=False)
+    embed.add_field(name="👥 組隊", value="開啟組隊招募流程。", inline=False)
     embed.add_field(name="📱 Socials", value="查看官方 Instagram / Threads。", inline=False)
     embed.add_field(name="📋 Menu", value="重新送出一個主選單。", inline=False)
     embed.add_field(name="🗑️ Close", value="刪除當前公開 menu 訊息。", inline=False)
@@ -152,7 +154,7 @@ class HelpMenuView(discord.ui.View):
             interaction,
             embed=build_main_menu_embed(interaction.user),
             view=MainMenuView(self.cog),
-            ephemeral=False,
+            ephemeral=True,
         )
 
 
@@ -188,7 +190,6 @@ class MainMenuView(discord.ui.View):
         try:
             await method(interaction)
         except TypeError:
-            # 某些既有方法簽名可能要求 keyword / positional to=None
             try:
                 await method(interaction, None)
             except TypeError:
@@ -263,6 +264,21 @@ class MainMenuView(discord.ui.View):
                 return
 
         await send_or_followup(interaction, content="❌ 搵唔到 Temp VC 控制面板入口。", ephemeral=True)
+
+    @discord.ui.button(
+        label="組隊",
+        emoji="👥",
+        style=discord.ButtonStyle.primary,
+        custom_id="bartender:main:team",
+        row=1,
+    )
+    async def team_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._call_cog_method(
+            interaction,
+            cog_name="Teams",
+            method_names=["open_team_menu", "start_team_menu", "team_menu"],
+            missing_message="❌ 組隊功能未載入。",
+        )
 
     @discord.ui.button(
         label="Help",
