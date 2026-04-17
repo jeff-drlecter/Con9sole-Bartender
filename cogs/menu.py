@@ -205,6 +205,37 @@ class HelpMenuView(BaseMenuView):
         )
 
 
+class MenuEntryView(BaseMenuView):
+    def __init__(self, cog: "Menu") -> None:
+        super().__init__(cog)
+
+    @discord.ui.button(
+        label="主選單",
+        emoji="📋",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:entry:menu",
+        row=0,
+    )
+    async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+
+        await send_or_followup(
+            interaction,
+            embed=build_main_menu_embed(interaction.user),
+            view=MainMenuView(self.cog),
+            ephemeral=True,
+            file=build_menu_file(),
+        )
+
+
+def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View | None:
+    menu_cog = interaction.client.get_cog("Menu")
+    if menu_cog is None:
+        return None
+    return MenuEntryView(menu_cog)
+
+
 class MainMenuView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
@@ -429,6 +460,7 @@ class Menu(commands.Cog):
         if self._views_registered:
             return
         self.bot.add_view(MainMenuView(self))
+        self.bot.add_view(MenuEntryView(self))
         self.bot.add_view(SocialsMenuView(self))
         self.bot.add_view(HelpMenuView(self))
         self._views_registered = True
