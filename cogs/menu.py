@@ -217,7 +217,7 @@ class MainMenuView(discord.ui.View):
     @discord.ui.button(
         label="建立小隊 call",
         emoji="🎧",
-        style=discord.ButtonStyle.secondary,
+        style=discord.ButtonStyle.primary,
         custom_id="bartender:main:tempvc",
         row=0,
     )
@@ -264,7 +264,7 @@ class MainMenuView(discord.ui.View):
     @discord.ui.button(
         label="調酒",
         emoji="🍹",
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.success,
         custom_id="bartender:main:drink",
         row=1,
     )
