@@ -326,7 +326,16 @@ class Menu(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._views_registered = False
+        
+    async def open_main_menu(self, interaction: discord.Interaction) -> None:
+        await send_or_followup(
+            interaction,
+            embed=build_main_menu_embed(interaction.user),
+            view=MainMenuView(self),
+            ephemeral=True,
+        )
 
+    
     async def cog_load(self) -> None:
         if self._views_registered:
             return
