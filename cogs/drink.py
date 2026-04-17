@@ -11,18 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
-from cogs.menu import build_menu_entry_view
-
-# ------------------------------------------------------------
-# Con9sole-Bartender: drink.py
-# Slash command: /drink to:@member
-# 功能：隨機為指定對象點一款酒（英文+中文譯名），以 Embed 顯示
-# 升級內容：
-# 1) 抽卡式稀有度（Common / Rare / SSR）
-# 2) 季節限定款（按月份加入限定酒池）
-# 3) 個人短期去重（同一位使用者短時間內不重複抽到最近飲過的酒）
-# 4) 保持 do_drink() 可供 menu.py 共用
-# ------------------------------------------------------------
+from cogs.menu import build_full_menu_view, build_main_menu_embed, build_menu_file
 
 ICON_MAP = {
     "short": "🍸",
@@ -273,7 +262,7 @@ class Drink(commands.Cog):
         weights = [RARITY_STYLE[label]["weight"] for label in labels]
         return random.choices(labels, weights=weights, k=1)[0]
 
-    def _build_pool_for_rarity(self) -> List[DrinkEntry]:
+    def _build_pool_for_rarity(self, rarity: str) -> List[DrinkEntry]:
         pool = [drink for drink in ALL_DRINKS if drink.rarity == rarity]
         seasonal = [drink for drink in current_seasonal_pool() if drink.rarity == rarity]
         return pool + seasonal
@@ -315,11 +304,9 @@ class Drink(commands.Cog):
         header = self._build_header_line(interaction, to, drink)
         limited_text = f"\n🌟 限定：{drink.limited_tag}" if drink.limited_tag else ""
 
-        embed = discord.Embed(
-            description=f"{header}\n➡️ 簡介：{drink.desc}{limited_text}",
-            color=rarity_meta["color"],
-        )
-        embed.set_author(name="Con9sole-Bartender")
+        embed = build_main_menu_embed(interaction.user)
+        embed.color = rarity_meta["color"]
+        embed.add_field(name="　", value=f"{header}\n➡️ 簡介：{drink.desc}{limited_text}", inline=False)
         embed.add_field(
             name="抽卡結果",
             value=f"{rarity_meta['emoji']} **{rarity_meta['label']}**",
@@ -334,13 +321,15 @@ class Drink(commands.Cog):
 
         await interaction.response.send_message(
             embed=embed,
-            view=build_menu_entry_view(interaction),
+            view=build_full_menu_view(interaction),
+            file=build_menu_file(),
+            ephemeral=True,
         )
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="隨機為某人點一款酒")
     @app_commands.describe(to="收酒嘅人")
-    async def drink(self, interaction: discord.Interaction, to: discord.Member):
+    async def drink(self, interaction: discord.Interaction, to: discord.Member | None = None):
         await self.do_drink(interaction, to)
 
 
