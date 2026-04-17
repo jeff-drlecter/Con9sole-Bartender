@@ -1,5 +1,5 @@
 # cogs/cheers.py
-# Embed + 30s cooldown + 主選單入口 button
+# Embed + 30s cooldown + 沉浸式 bartender 圖 + 完整主面板按鈕
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from discord import Embed, app_commands
 from discord.ext import commands
 
 import config
-from cogs.menu import build_menu_entry_view
+from cogs.menu import build_full_menu_view, build_main_menu_embed, build_menu_file
 
 
 CHEERS_QUOTES: list[tuple[str, str, str]] = [
@@ -144,11 +144,13 @@ class Cheers(commands.Cog):
         eng, zh, author = random.choice(CHEERS_QUOTES)
 
         if to:
-            desc = f"🎉 給 {to.mention} 的打氣！\n\n**{author} 講過：**"
+            result_desc = f"🎉 給 {to.mention} 的打氣！\n\n**{author} 講過：**"
         else:
-            desc = f"{inter.user.mention} 的打氣時間！ 🎉\n\n**{author} 講過：**"
+            result_desc = f"{inter.user.mention} 的打氣時間！ 🎉\n\n**{author} 講過：**"
 
-        embed = Embed(description=desc, color=0x57F287)
+        embed = build_main_menu_embed(inter.user)
+        embed.color = 0x57F287
+        embed.add_field(name="　", value=result_desc, inline=False)
         embed.add_field(name="English", value=f"💬 {eng}", inline=False)
         embed.add_field(name="中文", value=f"➡️ {zh}", inline=False)
         embed.set_footer(text="Con9sole-Bartender Cheers")
@@ -156,7 +158,9 @@ class Cheers(commands.Cog):
 
         await inter.response.send_message(
             embed=embed,
-            view=build_menu_entry_view(inter),
+            view=build_full_menu_view(inter),
+            file=build_menu_file(),
+            ephemeral=True,
         )
 
     @app_commands.command(name="cheers", description="隨機派一句名人鼓勵語錄（中英對照，Embed）")
