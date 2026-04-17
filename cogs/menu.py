@@ -27,21 +27,25 @@ USER_MENU_COOLDOWNS: dict[int, float] = {}
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
-        description="你走近吧檯，酒保放下手中的雪克杯，抬頭看向你。\n\n**「歡迎光臨，要點什麼？」**",
+        description="你走近吧檯，酒保抬頭看向你。\n\n**「歡迎光臨，要點什麼？」**",
         color=MENU_COLOR,
     )
-    embed.add_field(name="📋 主選單", value="回到這裡", inline=True)
-    embed.add_field(name="👥 召集隊友", value="一起出發", inline=True)
-    embed.add_field(name="🎧 小隊房", value="開語音房", inline=True)
 
-    embed.add_field(name="🎉 來一點鼓勵", value="提升氣氛", inline=True)
-    embed.add_field(name="🍹 來一杯", value="隨機調酒", inline=True)
-    embed.add_field(name="📱 社群", value="IG / Threads", inline=True)
+    # 👉 只保留「選項名稱」，唔再教學
+    embed.add_field(name="📋 主選單", value="\u200b", inline=True)
+    embed.add_field(name="👥 召集隊友", value="\u200b", inline=True)
+    embed.add_field(name="🎧 小隊房", value="\u200b", inline=True)
 
-    embed.add_field(name="ℹ️ 說明", value="查看功能", inline=True)
-    embed.add_field(name="🗑️ 關閉", value="收起面板", inline=True)
+    embed.add_field(name="🎉 來一點鼓勵", value="\u200b", inline=True)
+    embed.add_field(name="🍹 來一杯", value="\u200b", inline=True)
+    embed.add_field(name="📱 社群", value="\u200b", inline=True)
+
+    embed.add_field(name="ℹ️ 說明", value="\u200b", inline=True)
+    embed.add_field(name="🗑️ 關閉", value="\u200b", inline=True)
+
     embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
     embed.set_footer(text=f"{user.display_name}，今晚由我為你服務。")
+
     return embed
 
 
