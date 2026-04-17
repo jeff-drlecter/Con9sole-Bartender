@@ -1,13 +1,16 @@
 # cogs/cheers.py
-# Embed + 30s cooldown + 可供 menu.py 重用
+# Embed + 30s cooldown + 主選單入口 button
 
 from __future__ import annotations
 
 import random
+
 import discord
-from discord import app_commands, Embed
+from discord import Embed, app_commands
 from discord.ext import commands
+
 import config
+from cogs.menu import build_menu_entry_view
 
 
 CHEERS_QUOTES: list[tuple[str, str, str]] = [
@@ -126,7 +129,6 @@ CHEERS_QUOTES: list[tuple[str, str, str]] = [
     ("We are what we think.", "我們即是我們所想。", "Buddha"),
 ]
 
-# 每人 30 秒冷卻（只套用喺 slash command）
 COOLDOWN = app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
 
 
@@ -139,7 +141,6 @@ class Cheers(commands.Cog):
         inter: discord.Interaction,
         to: discord.Member | None = None,
     ) -> None:
-        """核心邏輯：供 slash command 同 menu button 共用。"""
         eng, zh, author = random.choice(CHEERS_QUOTES)
 
         if to:
@@ -153,7 +154,10 @@ class Cheers(commands.Cog):
         embed.set_footer(text="Con9sole-Bartender Cheers")
         embed.timestamp = discord.utils.utcnow()
 
-        await inter.response.send_message(embed=embed)
+        await inter.response.send_message(
+            embed=embed,
+            view=build_menu_entry_view(inter),
+        )
 
     @app_commands.command(name="cheers", description="隨機派一句名人鼓勵語錄（中英對照，Embed）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
