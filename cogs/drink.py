@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
+from cogs.menu import build_menu_entry_view
 
 # ------------------------------------------------------------
 # Con9sole-Bartender: drink.py
@@ -67,7 +68,6 @@ class DrinkEntry:
     limited_tag: str | None = None
 
 
-# IBA 官方基底酒池
 IBA: List[Tuple[str, str, str, str]] = [
     ("Alexander", "亞歷山大", "琴酒、可可甜酒與忌廉調製，柔和香甜。", "short"),
     ("Americano", "美式雞尾酒", "金巴利、甜苦艾酒加梳打水，清爽開胃。", "sparkling"),
@@ -205,7 +205,6 @@ SEASONAL_DRINKS: Dict[Tuple[int, ...], List[DrinkEntry]] = {
 
 
 def rarity_for_generated_name(eng: str, typ: str) -> str:
-    """按名稱與類型分配預設稀有度。"""
     rare_keywords = ("Martini", "Vesper", "Paper Plane", "Penicillin", "French 75", "Negroni")
     ssr_keywords = ("Zombie", "Long Island", "Old Fashioned", "Manhattan", "Piña Colada", "Singapore Sling")
 
@@ -274,7 +273,7 @@ class Drink(commands.Cog):
         weights = [RARITY_STYLE[label]["weight"] for label in labels]
         return random.choices(labels, weights=weights, k=1)[0]
 
-    def _build_pool_for_rarity(self, rarity: str) -> List[DrinkEntry]:
+    def _build_pool_for_rarity(self) -> List[DrinkEntry]:
         pool = [drink for drink in ALL_DRINKS if drink.rarity == rarity]
         seasonal = [drink for drink in current_seasonal_pool() if drink.rarity == rarity]
         return pool + seasonal
@@ -309,7 +308,6 @@ class Drink(commands.Cog):
         interaction: discord.Interaction,
         to: discord.Member | None = None,
     ) -> None:
-        """核心邏輯：供 slash command 同 menu button 共用。"""
         rarity = self._pick_rarity()
         drink = self._pick_unique_drink(interaction.user.id, rarity)
 
@@ -334,7 +332,10 @@ class Drink(commands.Cog):
         )
         embed.set_footer(text="Common 78% · Rare 18% · SSR 4%")
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(
+            embed=embed,
+            view=build_menu_entry_view(interaction),
+        )
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="隨機為某人點一款酒")
