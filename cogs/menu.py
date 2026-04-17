@@ -227,6 +227,11 @@ def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View |
         return None
     return MenuEntryView(menu_cog)
 
+def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | None:
+    menu_cog = interaction.client.get_cog("Menu")
+    if menu_cog is None:
+        return None
+    return MainMenuView(menu_cog)
 
 class MainMenuView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
