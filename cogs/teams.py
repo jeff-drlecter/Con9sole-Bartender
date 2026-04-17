@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import discord
-from discord.ext import commands
 from dataclasses import dataclass, field
 
+import discord
+from discord.ext import commands
 
-# =========================
-# Data
-# =========================
 
 @dataclass
 class TeamState:
@@ -16,34 +13,39 @@ class TeamState:
     mode: str
     channel_id: int
     message_id: int | None = None
-
     join_now: set[int] = field(default_factory=set)
     join_later: set[int] = field(default_factory=set)
-
     cancelled: bool = False
 
-
-# =========================
-# Main Cog
-# =========================
 
 class Teams(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.states: dict[int, TeamState] = {}
+        self._views_registered = False
 
-    # ===== Entry from menu.py =====
-    async def open_team_menu(self, interaction: discord.Interaction):
+    async def cog_load(self) -> None:
+        if self._views_registered:
+            return
+        self.bot.add_view(CancelledTeamView(self))
+        self._views_registered = True
+
+    async def open_team_menu(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            "請選擇需要多少位隊友：",
-            view=TeamCountView(self),
+            content="請選擇需要多少位隊友：",
+            view=TeamCountView(self, interaction.user.id),
             ephemeral=True,
         )
 
-    # ===== 建立招募 =====
-    async def create_team(self, interaction: discord.Interaction, count: int, mode: str):
-        if not mode.strip():
-            mode = "未知"
+    async def open_cancelled_menu(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(
+            content="❌ 呢個組隊行動已取消，你可以重新開一個新組隊。",
+            view=CancelledTeamView(self),
+            ephemeral=True,
+        )
+
+    async def create_team(self, interaction: discord.Interaction, count: int, mode: str) -> None:
+        mode = mode.strip() or "未知"
 
         state = TeamState(
             leader_id=interaction.user.id,
@@ -52,158 +54,227 @@ class Teams(commands.Cog):
             channel_id=interaction.channel_id,
         )
 
-        msg = await interaction.followup.send(
-            self.build_message(state),
+        message = await interaction.followup.send(
+            content=self.build_message(state),
             view=TeamView(self, state),
         )
 
-        state.message_id = msg.id
-        self.states[msg.id] = state
+        state.message_id = message.id
+        self.states[message.id] = state
 
-    # ===== Render =====
     def build_message(self, state: TeamState) -> str:
         filled = len(state.join_now) + len(state.join_later)
         remaining = max(state.required - filled, 0)
 
-        def fmt(ids):
-            return " ".join(f"<@{i}>" for i in ids) if ids else "暫時未有人"
+        def fmt(user_ids: set[int]) -> str:
+            if not user_ids:
+                return "暫時未有人"
+            return " ".join(f"<@{uid}>" for uid in sorted(user_ids))
 
         if state.cancelled:
-            return f"❌ 組隊行動已取消。\n召集人：<@{state.leader_id}>"
+            return (
+                "❌ 組隊行動已取消。\n"
+                f"召集人：<@{state.leader_id}>"
+            )
 
         if remaining == 0:
-            status = "✅ 已齊人，可以開始！\n請按「建立小隊 call」開始對話。\n"
+            status = "✅ 已齊人，可以開始！\n請按「建立小隊 call」開始對話。"
+            remaining_text = "0（已滿）"
         else:
-            status = "如果加入請按「立即加入」或「稍後加入」。\n"
+            status = "如果加入請按「立即加入」或「稍後加入」。"
+            remaining_text = str(remaining)
 
         return (
             f"<@{state.leader_id}> 正在召集隊友，需要 {state.required} 位！\n"
             f"遊玩模式：{state.mode}\n\n"
-            f"{status}"
-            f"目前尚欠人數：{remaining}\n\n"
+            f"{status}\n"
+            f"目前尚欠人數：{remaining_text}\n\n"
             f"可以立即加入：{fmt(state.join_now)}\n"
             f"可以稍後加入：{fmt(state.join_later)}"
         )
 
+    def is_full(self, state: TeamState) -> bool:
+        return len(state.join_now) + len(state.join_later) >= state.required
 
-# =========================
-# Select View
-# =========================
 
 class TeamCountView(discord.ui.View):
-    def __init__(self, cog: Teams):
-        super().__init__(timeout=60)
+    def __init__(self, cog: Teams, owner_id: int) -> None:
+        super().__init__(timeout=120)
         self.cog = cog
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個選單只限召集人使用。", ephemeral=True)
+            return False
+        return True
 
     @discord.ui.select(
-        placeholder="選擇人數",
-        options=[
-            discord.SelectOption(label=str(i), value=str(i))
-            for i in range(1, 17)
-        ],
+        placeholder="選擇需要幾多位隊友",
+        options=[discord.SelectOption(label=str(i), value=str(i)) for i in range(1, 17)],
+        custom_id="teams:count_select",
     )
-    async def select(self, interaction: discord.Interaction, select: discord.ui.Select):
+    async def select_count(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         count = int(select.values[0])
         await interaction.response.send_modal(TeamModeModal(self.cog, count))
 
 
-# =========================
-# Modal
-# =========================
-
 class TeamModeModal(discord.ui.Modal, title="設定遊玩模式"):
-    def __init__(self, cog: Teams, count: int):
+    def __init__(self, cog: Teams, count: int) -> None:
         super().__init__()
         self.cog = cog
         self.count = count
 
         self.mode = discord.ui.TextInput(
             label="遊玩模式（可留空）",
-            required=False,
             placeholder="例如：Rank / ARAM / 任務",
+            required=False,
+            max_length=100,
         )
         self.add_item(self.mode)
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        await self.cog.create_team(interaction, self.count, self.mode.value)
+        await self.cog.create_team(interaction, self.count, str(self.mode.value))
 
 
-# =========================
-# Recruit View
-# =========================
+class CancelledTeamView(discord.ui.View):
+    def __init__(self, cog: Teams) -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="Menu",
+        emoji="📋",
+        style=discord.ButtonStyle.secondary,
+        custom_id="teams:cancelled:menu",
+        row=0,
+    )
+    async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        menu_cog = interaction.client.get_cog("Menu")
+        if not menu_cog:
+            await interaction.response.send_message("❌ Menu 功能未載入。", ephemeral=True)
+            return
+
+        open_main_menu = getattr(menu_cog, "open_main_menu", None)
+        if callable(open_main_menu):
+            await open_main_menu(interaction)
+            return
+
+        try:
+            from cogs.menu import MainMenuView, build_main_menu_embed
+
+            await interaction.response.send_message(
+                embed=build_main_menu_embed(interaction.user),
+                view=MainMenuView(menu_cog),
+                ephemeral=True,
+            )
+        except Exception:
+            await interaction.response.send_message("❌ Menu 開啟失敗。", ephemeral=True)
+
+    @discord.ui.button(
+        label="組隊",
+        emoji="👥",
+        style=discord.ButtonStyle.primary,
+        custom_id="teams:cancelled:team",
+        row=0,
+    )
+    async def team_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.open_team_menu(interaction)
+
 
 class TeamView(discord.ui.View):
-    def __init__(self, cog: Teams, state: TeamState):
+    def __init__(self, cog: Teams, state: TeamState) -> None:
         super().__init__(timeout=None)
         self.cog = cog
         self.state = state
 
-    def refresh(self, interaction: discord.Interaction):
-        return interaction.response.edit_message(
+    async def refresh(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(
             content=self.cog.build_message(self.state),
             view=self,
         )
 
-    @discord.ui.button(label="立即加入", style=discord.ButtonStyle.success)
-    async def join_now(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="立即加入",
+        style=discord.ButtonStyle.success,
+        custom_id="teams:join_now",
+    )
+    async def join_now(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.state.cancelled:
+            await interaction.response.send_message("❌ 呢個組隊已取消。", ephemeral=True)
             return
 
         uid = interaction.user.id
 
         if uid == self.state.leader_id:
-            return await interaction.response.send_message("你係召集人", ephemeral=True)
+            await interaction.response.send_message("你係召集人，唔需要再加入名單。", ephemeral=True)
+            return
 
-        filled = len(self.state.join_now) + len(self.state.join_later)
-        if filled >= self.state.required:
-            return await interaction.response.send_message("❌ 已滿人", ephemeral=True)
+        if uid in self.state.join_now:
+            await interaction.response.send_message("你已經喺「立即加入」名單。", ephemeral=True)
+            return
+
+        if self.cog.is_full(self.state) and uid not in self.state.join_later:
+            await interaction.response.send_message("❌ 呢個組隊已齊人。", ephemeral=True)
+            return
 
         self.state.join_later.discard(uid)
         self.state.join_now.add(uid)
-
         await self.refresh(interaction)
 
-    @discord.ui.button(label="稍後加入", style=discord.ButtonStyle.primary)
-    async def join_later(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="稍後加入",
+        style=discord.ButtonStyle.primary,
+        custom_id="teams:join_later",
+    )
+    async def join_later(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.state.cancelled:
+            await interaction.response.send_message("❌ 呢個組隊已取消。", ephemeral=True)
             return
 
         uid = interaction.user.id
 
         if uid == self.state.leader_id:
-            return await interaction.response.send_message("你係召集人", ephemeral=True)
+            await interaction.response.send_message("你係召集人，唔需要再加入名單。", ephemeral=True)
+            return
 
-        filled = len(self.state.join_now) + len(self.state.join_later)
-        if filled >= self.state.required:
-            return await interaction.response.send_message("❌ 已滿人", ephemeral=True)
+        if uid in self.state.join_later:
+            await interaction.response.send_message("你已經喺「稍後加入」名單。", ephemeral=True)
+            return
+
+        if self.cog.is_full(self.state) and uid not in self.state.join_now:
+            await interaction.response.send_message("❌ 呢個組隊已齊人。", ephemeral=True)
+            return
 
         self.state.join_now.discard(uid)
         self.state.join_later.add(uid)
-
         await self.refresh(interaction)
 
-    @discord.ui.button(label="取消", style=discord.ButtonStyle.danger)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="取消",
+        style=discord.ButtonStyle.danger,
+        custom_id="teams:cancel",
+    )
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         uid = interaction.user.id
 
-        # leader cancel
         if uid == self.state.leader_id:
             self.state.cancelled = True
-            return await interaction.response.edit_message(
+            await interaction.response.edit_message(
                 content=self.cog.build_message(self.state),
-                view=None,
+                view=CancelledTeamView(self.cog),
             )
+            return
 
-        # member cancel
         if uid not in self.state.join_now and uid not in self.state.join_later:
-            return await interaction.response.send_message("你未加入", ephemeral=True)
+            await interaction.response.send_message("你未加入呢個組隊。", ephemeral=True)
+            return
 
         self.state.join_now.discard(uid)
         self.state.join_later.discard(uid)
-
         await self.refresh(interaction)
 
 
-async def setup(bot: commands.Bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Teams(bot))
