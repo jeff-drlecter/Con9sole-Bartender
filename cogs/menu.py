@@ -43,7 +43,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     )
     embed.add_field(name="📋 Menu", value="重新顯示主選單。", inline=False)
     embed.add_field(name="👥 組隊", value="開啟組隊招募流程。", inline=False)
-    embed.add_field(name="🎧 建立小隊 call", value="打開 Temp VC 控制面板。", inline=False)
+    embed.add_field(name="🎧 建立小隊 call", value="建立臨時語音房。", inline=False)
     embed.add_field(name="🎉 打氣時間", value="送出一條隨機中英對照打氣語錄。", inline=False)
     embed.add_field(name="🍹 調酒", value="隨機點一杯酒；如 drink.py 有抽卡系統會直接沿用。", inline=False)
     embed.add_field(name="📱 Social Link", value="查看官方 Instagram / Threads。", inline=False)
@@ -215,42 +215,25 @@ class MainMenuView(discord.ui.View):
         )
 
     @discord.ui.button(
-    label="建立小隊 call",
-    emoji="🎧",
-    style=discord.ButtonStyle.primary,
-    custom_id="bartender:main:tempvc",
-    row=0,
-)
-async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-    tempvc_cog = interaction.client.get_cog("TempVC")
-    if not tempvc_cog:
-        await send_or_followup(interaction, content="❌ Temp VC 功能未載入。", ephemeral=True)
-        return
-
-    for method_name in [
-        "create_temp_vc_from_menu",
-        "send_control_panel",
-        "tempvc_panel",
-        "tempvc",
-        "panel",
-    ]:
-        method = getattr(tempvc_cog, method_name, None)
-        if method and inspect.iscoroutinefunction(method):
-            try:
-                await method(interaction)
-            except TypeError:
-                await method(interaction, None)
-            except discord.InteractionResponded:
-                pass
-            except Exception as exc:
-                await send_or_followup(
-                    interaction,
-                    content=f"❌ Temp VC 出錯：{type(exc).__name__}",
-                    ephemeral=True,
-                )
-            return
-
-    await send_or_followup(interaction, content="❌ 搵唔到 Temp VC 控制面板入口。", ephemeral=True)
+        label="建立小隊 call",
+        emoji="🎧",
+        style=discord.ButtonStyle.primary,
+        custom_id="bartender:main:tempvc",
+        row=0,
+    )
+    async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._call_cog_method(
+            interaction,
+            cog_name="TempVC",
+            method_names=[
+                "create_temp_vc_from_menu",
+                "send_control_panel",
+                "tempvc_panel",
+                "tempvc",
+                "panel",
+            ],
+            missing_message="❌ 搵唔到 Temp VC 控制面板入口。",
+        )
 
     @discord.ui.button(
         label="打氣時間",
@@ -332,7 +315,7 @@ class Menu(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._views_registered = False
-        
+
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
         await send_or_followup(
             interaction,
@@ -341,7 +324,6 @@ class Menu(commands.Cog):
             ephemeral=True,
         )
 
-    
     async def cog_load(self) -> None:
         if self._views_registered:
             return
