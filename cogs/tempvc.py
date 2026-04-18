@@ -275,12 +275,16 @@ class TempVCLimitView(discord.ui.View):
             limit=self.selected_limit,
         )
 
-        await interaction.followup.send(
-            f"✅ Temp VC 已建立：{ch.mention}\n"
-            f"📝 名稱：{ch.name}\n"
-            f"👥 人數上限：{ch.user_limit or self.selected_limit}",
-            ephemeral=True,
+        msg = (
+            f"🍸 **Temp VC 已建立**：{ch.mention}\n"
+            f"📝 **名稱**：`{ch.name}`\n"
+            f"👥 **人數上限**：`{ch.user_limit or self.selected_limit}`\n"
+            f"🎛️ **房間設定**：`bitrate={ch.bitrate // 1000}kbps` · `limit={ch.user_limit or self.selected_limit}`\n"
+            f"✨ 祝你哋傾得開心。"
         )
+
+        await interaction.followup.send(msg, ephemeral=True)
+        
         self.stop()
 
     @discord.ui.button(
@@ -304,12 +308,16 @@ class TempVCLimitView(discord.ui.View):
             limit=32,
         )
 
-        await interaction.followup.send(
-            f"✅ Temp VC 已建立：{ch.mention}\n"
-            f"📝 名稱：{ch.name}\n"
-            f"👥 人數上限：{ch.user_limit or 32}",
-            ephemeral=True,
+        msg = (
+            f"🍸 **Temp VC 已建立**：{ch.mention}\n"
+            f"📝 **名稱**：`{ch.name}`\n"
+            f"👥 **人數上限**：`{ch.user_limit or 32}`\n"
+            f"🎛️ **房間設定**：`bitrate={ch.bitrate // 1000}kbps` · `limit={ch.user_limit or 32}`\n"
+            f"✨ 祝你哋傾得開心。"
         )
+
+        await interaction.followup.send(msg, ephemeral=True)
+        
         self.stop()
 
     @discord.ui.button(
@@ -594,11 +602,14 @@ class TempVC(commands.Cog):
         ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=final_limit)
 
         msg = (
-            f"你好 {inter.user.mention} ，✅ 房間已經安排好 → {ch.mention}\n"
-            f"（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or final_limit}）"
+            f"🍸 **Temp VC 已建立**：{ch.mention}\n"
+            f"📝 **名稱**：`{ch.name}`\n"
+            f"👥 **人數上限**：`{ch.user_limit or final_limit}`\n"
+            f"🎛️ **房間設定**：`bitrate={ch.bitrate // 1000}kbps` · `limit={ch.user_limit or final_limit}`\n"
+            f"✨ 祝你哋傾得開心。"
         )
-        await inter.followup.send(msg)
 
+        await inter.followup.send(msg)
     @app_commands.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.describe(channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）")
