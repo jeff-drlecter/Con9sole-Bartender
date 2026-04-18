@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 import random
+import time
 from typing import Deque, Dict, List, Tuple
 
 import discord
@@ -45,6 +46,8 @@ RARITY_STYLE = {
 }
 
 RECENT_HISTORY_LIMIT = 8
+DRINK_COOLDOWN_SECONDS = 30.0
+DRINK_USER_COOLDOWNS: dict[int, float] = {}
 
 
 @dataclass(frozen=True)
@@ -193,6 +196,17 @@ SEASONAL_DRINKS: Dict[Tuple[int, ...], List[DrinkEntry]] = {
 }
 
 
+def get_drink_retry_after(user_id: int) -> float:
+    last_used = DRINK_USER_COOLDOWNS.get(user_id, 0.0)
+    elapsed = time.time() - last_used
+    retry_after = DRINK_COOLDOWN_SECONDS - elapsed
+    return retry_after if retry_after > 0 else 0.0
+
+
+def touch_drink_cooldown(user_id: int) -> None:
+    DRINK_USER_COOLDOWNS[user_id] = time.time()
+
+
 def rarity_for_generated_name(eng: str, typ: str) -> str:
     rare_keywords = ("Martini", "Vesper", "Paper Plane", "Penicillin", "French 75", "Negroni")
     ssr_keywords = ("Zombie", "Long Island", "Old Fashioned", "Manhattan", "Piña Colada", "Singapore Sling")
@@ -257,6 +271,19 @@ class Drink(commands.Cog):
         self.bot = bot
         self.user_recent_draws: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=RECENT_HISTORY_LIMIT))
 
+    async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+        retry_after = get_drink_retry_after(interaction.user.id)
+        if retry_after > 0:
+            message = f"⏳ 請等 {retry_after:.1f} 秒後再抽酒。"
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+            return False
+
+        touch_drink_cooldown(interaction.user.id)
+        return True
+
     def _pick_rarity(self) -> str:
         labels = list(RARITY_STYLE.keys())
         weights = [RARITY_STYLE[label]["weight"] for label in labels]
@@ -296,7 +323,14 @@ class Drink(commands.Cog):
         self,
         interaction: discord.Interaction,
         to: discord.Member | None = None,
+        *,
+        enforce_cooldown: bool = True,
     ) -> None:
+        if enforce_cooldown:
+            ok = await self._enforce_drink_cooldown(interaction)
+            if not ok:
+                return
+
         rarity = self._pick_rarity()
         drink = self._pick_unique_drink(interaction.user.id, rarity)
 
@@ -319,18 +353,26 @@ class Drink(commands.Cog):
         )
         embed.set_footer(text="Common 78% · Rare 18% · SSR 4%")
 
-        await interaction.response.send_message(
-            embed=embed,
-            view=build_full_menu_view(interaction),
-            file=build_menu_file(),
-            ephemeral=True,
-        )
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                embed=embed,
+                view=build_full_menu_view(interaction),
+                file=build_menu_file(),
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                embed=embed,
+                view=build_full_menu_view(interaction),
+                file=build_menu_file(),
+                ephemeral=True,
+            )
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="隨機為某人點一款酒")
     @app_commands.describe(to="收酒嘅人")
     async def drink(self, interaction: discord.Interaction, to: discord.Member | None = None):
-        await self.do_drink(interaction, to)
+        await self.do_drink(interaction, to, enforce_cooldown=True)
 
 
 async def setup(bot: commands.Bot):
