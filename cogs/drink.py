@@ -355,17 +355,17 @@ class Drink(commands.Cog):
 
         if interaction.response.is_done():
             await interaction.followup.send(
-                embed=embed,
+                 embed=embed,
                 view=build_full_menu_view(interaction),
                 file=build_menu_file(),
-                ephemeral=True,
+                ephemeral=False,  # 🔥 公開
             )
         else:
             await interaction.response.send_message(
                 embed=embed,
                 view=build_full_menu_view(interaction),
                 file=build_menu_file(),
-                ephemeral=True,
+                ephemeral=False,  # 🔥 公開
             )
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
