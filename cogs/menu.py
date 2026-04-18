@@ -33,7 +33,6 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
 
     embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
     embed.set_footer(text=f"{user.display_name}，今晚由我為你服務。")
-
     return embed
 
 
@@ -227,11 +226,13 @@ def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View |
         return None
     return MenuEntryView(menu_cog)
 
+
 def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | None:
     menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
     return MainMenuView(menu_cog)
+
 
 class MainMenuView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
@@ -452,7 +453,8 @@ class Menu(commands.Cog):
             ephemeral=True,
             file=build_menu_file(),
         )
-        @commands.Cog.listener()
+
+    @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
             return
@@ -463,7 +465,6 @@ class Menu(commands.Cog):
         if self.bot.user is None:
             return
 
-        # 只在「純 mention bot」時觸發，避免日常對話都彈 menu
         mention_forms = {
             f"<@{self.bot.user.id}>",
             f"<@!{self.bot.user.id}>",
@@ -486,7 +487,7 @@ class Menu(commands.Cog):
             )
         except discord.HTTPException:
             pass
-            
+
     async def cog_load(self) -> None:
         if self._views_registered:
             return
