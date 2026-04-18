@@ -1,12 +1,10 @@
-# cogs/cheers.py
-# Embed + 30s cooldown + 沉浸式 bartender 圖 + 完整主面板按鈕
-
 from __future__ import annotations
 
 import random
+import time
 
 import discord
-from discord import Embed, app_commands
+from discord import app_commands
 from discord.ext import commands
 
 import config
@@ -129,18 +127,50 @@ CHEERS_QUOTES: list[tuple[str, str, str]] = [
     ("We are what we think.", "我們即是我們所想。", "Buddha"),
 ]
 
-COOLDOWN = app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
+CHEERS_COOLDOWN_SECONDS = 30.0
+CHEERS_USER_COOLDOWNS: dict[int, float] = {}
+
+
+def get_cheers_retry_after(user_id: int) -> float:
+    last_used = CHEERS_USER_COOLDOWNS.get(user_id, 0.0)
+    elapsed = time.time() - last_used
+    retry_after = CHEERS_COOLDOWN_SECONDS - elapsed
+    return retry_after if retry_after > 0 else 0.0
+
+
+def touch_cheers_cooldown(user_id: int) -> None:
+    CHEERS_USER_COOLDOWNS[user_id] = time.time()
 
 
 class Cheers(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _enforce_cheers_cooldown(self, inter: discord.Interaction) -> bool:
+        retry_after = get_cheers_retry_after(inter.user.id)
+        if retry_after > 0:
+            message = f"⏳ 請等 {retry_after:.1f} 秒後再使用打氣時間。"
+            if inter.response.is_done():
+                await inter.followup.send(message, ephemeral=True)
+            else:
+                await inter.response.send_message(message, ephemeral=True)
+            return False
+
+        touch_cheers_cooldown(inter.user.id)
+        return True
+
     async def do_cheers(
         self,
         inter: discord.Interaction,
         to: discord.Member | None = None,
+        *,
+        enforce_cooldown: bool = True,
     ) -> None:
+        if enforce_cooldown:
+            ok = await self._enforce_cheers_cooldown(inter)
+            if not ok:
+                return
+
         eng, zh, author = random.choice(CHEERS_QUOTES)
 
         if to:
@@ -156,23 +186,30 @@ class Cheers(commands.Cog):
         embed.set_footer(text="Con9sole-Bartender Cheers")
         embed.timestamp = discord.utils.utcnow()
 
-        await inter.response.send_message(
-            embed=embed,
-            view=build_full_menu_view(inter),
-            file=build_menu_file(),
-            ephemeral=True,
-        )
+        if inter.response.is_done():
+            await inter.followup.send(
+                embed=embed,
+                view=build_full_menu_view(inter),
+                file=build_menu_file(),
+                ephemeral=True,
+            )
+        else:
+            await inter.response.send_message(
+                embed=embed,
+                view=build_full_menu_view(inter),
+                file=build_menu_file(),
+                ephemeral=True,
+            )
 
     @app_commands.command(name="cheers", description="隨機派一句名人鼓勵語錄（中英對照，Embed）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.describe(to="可選：@某人，送上鼓勵")
-    @COOLDOWN
     async def cheers_cmd(
         self,
         inter: discord.Interaction,
         to: discord.Member | None = None,
     ) -> None:
-        await self.do_cheers(inter, to)
+        await self.do_cheers(inter, to, enforce_cooldown=True)
 
 
 async def setup(bot: commands.Bot):
