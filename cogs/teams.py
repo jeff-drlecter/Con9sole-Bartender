@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, field
 
 import discord
 from discord.ext import commands
+
+
+STATE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
+SWEEP_INTERVAL_SECONDS = 10 * 60  # 10 minutes
 
 
 @dataclass
@@ -16,6 +22,8 @@ class TeamState:
     join_now: set[int] = field(default_factory=set)
     join_later: set[int] = field(default_factory=set)
     cancelled: bool = False
+    created_at: float = field(default_factory=time.time)
+    last_touched: float = field(default_factory=time.time)
 
 
 class Teams(commands.Cog):
@@ -23,12 +31,50 @@ class Teams(commands.Cog):
         self.bot = bot
         self.states: dict[int, TeamState] = {}
         self._views_registered = False
+        self._sweeper_task: asyncio.Task | None = None
 
     async def cog_load(self) -> None:
-        if self._views_registered:
+        if not self._views_registered:
+            self.bot.add_view(CancelledTeamView(self))
+            self._views_registered = True
+
+        if self._sweeper_task is None or self._sweeper_task.done():
+            self._sweeper_task = asyncio.create_task(self._sweeper_loop())
+
+    def cog_unload(self) -> None:
+        if self._sweeper_task and not self._sweeper_task.done():
+            self._sweeper_task.cancel()
+
+    def touch_state(self, state: TeamState) -> None:
+        state.last_touched = time.time()
+
+    def remove_state_by_message_id(self, message_id: int | None) -> None:
+        if message_id is None:
             return
-        self.bot.add_view(CancelledTeamView(self))
-        self._views_registered = True
+        self.states.pop(message_id, None)
+
+    def get_state_by_message_id(self, message_id: int | None) -> TeamState | None:
+        if message_id is None:
+            return None
+        return self.states.get(message_id)
+
+    def is_state_expired(self, state: TeamState) -> bool:
+        return (time.time() - state.last_touched) >= STATE_TTL_SECONDS
+
+    async def _sweeper_loop(self) -> None:
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            try:
+                await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
+                expired_ids = [
+                    mid for mid, state in list(self.states.items()) if self.is_state_expired(state)
+                ]
+                for mid in expired_ids:
+                    self.states.pop(mid, None)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
     async def open_team_menu(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
@@ -60,6 +106,7 @@ class Teams(commands.Cog):
         )
 
         state.message_id = message.id
+        self.touch_state(state)
         self.states[message.id] = state
 
     def build_message(self, state: TeamState) -> str:
@@ -96,6 +143,10 @@ class Teams(commands.Cog):
     def is_full(self, state: TeamState) -> bool:
         return len(state.join_now) + len(state.join_later) >= state.required
 
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        self.remove_state_by_message_id(payload.message_id)
+
 
 class TeamCountView(discord.ui.View):
     def __init__(self, cog: Teams, owner_id: int) -> None:
@@ -117,6 +168,9 @@ class TeamCountView(discord.ui.View):
     async def select_count(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
         count = int(select.values[0])
         await interaction.response.send_modal(TeamModeModal(self.cog, count))
+
+    async def on_timeout(self) -> None:
+        self.stop()
 
 
 class TeamModeModal(discord.ui.Modal, title="設定遊玩模式"):
@@ -185,15 +239,20 @@ class CancelledTeamView(discord.ui.View):
 
 class TeamView(discord.ui.View):
     def __init__(self, cog: Teams, state: TeamState) -> None:
-        super().__init__(timeout=None)
+        super().__init__(timeout=STATE_TTL_SECONDS)
         self.cog = cog
         self.state = state
 
     async def refresh(self, interaction: discord.Interaction) -> None:
+        self.cog.touch_state(self.state)
         await interaction.response.edit_message(
             content=self.cog.build_message(self.state),
             view=self,
         )
+
+    async def on_timeout(self) -> None:
+        self.cog.remove_state_by_message_id(self.state.message_id)
+        self.stop()
 
     @discord.ui.button(
         label="立即加入",
@@ -261,10 +320,12 @@ class TeamView(discord.ui.View):
 
         if uid == self.state.leader_id:
             self.state.cancelled = True
+            self.cog.remove_state_by_message_id(self.state.message_id)
             await interaction.response.edit_message(
                 content=self.cog.build_message(self.state),
                 view=CancelledTeamView(self.cog),
             )
+            self.stop()
             return
 
         if uid not in self.state.join_now and uid not in self.state.join_later:
