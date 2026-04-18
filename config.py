@@ -16,7 +16,7 @@ FALLBACK_CHANNELS = {}
 # 臨時語音房設定
 VERIFIED_ROLE_ID: int = 1279040517451022419
 TEMP_VC_EMPTY_SECONDS: int = 120
-TEMP_VC_HUB_NAME: str = "開call"
+TEMP_VC_HUB_NAME: str = "開一個小隊 call"
 
 TEMP_VC_PREFIX: str = "小隊call •"   # 👈 有空格 + 點
 TEMP_VC_SWEEP_SECONDS: int = 300
