@@ -266,7 +266,7 @@ class TempVCLimitView(discord.ui.View):
             await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         ch = await self.cog._create_manual_temp_vc(
             interaction.guild,
@@ -283,8 +283,7 @@ class TempVCLimitView(discord.ui.View):
             f"✨ 祝你哋傾得開心。"
         )
 
-        await interaction.followup.send(msg, ephemeral=True)
-        
+        await interaction.followup.send(msg)
         self.stop()
 
     @discord.ui.button(
@@ -299,7 +298,7 @@ class TempVCLimitView(discord.ui.View):
             return
 
         self.selected_limit = 32
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         ch = await self.cog._create_manual_temp_vc(
             interaction.guild,
@@ -316,8 +315,7 @@ class TempVCLimitView(discord.ui.View):
             f"✨ 祝你哋傾得開心。"
         )
 
-        await interaction.followup.send(msg, ephemeral=True)
-        
+        await interaction.followup.send(msg)
         self.stop()
 
     @discord.ui.button(
@@ -610,6 +608,7 @@ class TempVC(commands.Cog):
         )
 
         await inter.followup.send(msg)
+
     @app_commands.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.describe(channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）")
