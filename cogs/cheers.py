@@ -191,14 +191,14 @@ class Cheers(commands.Cog):
                 embed=embed,
                 view=build_full_menu_view(inter),
                 file=build_menu_file(),
-                ephemeral=True,
+                ephemeral=False,   # 🔥 改呢度
             )
         else:
             await inter.response.send_message(
                 embed=embed,
                 view=build_full_menu_view(inter),
                 file=build_menu_file(),
-                ephemeral=True,
+                ephemeral=False,   # 🔥 改呢度
             )
 
     @app_commands.command(name="cheers", description="隨機派一句名人鼓勵語錄（中英對照，Embed）")
