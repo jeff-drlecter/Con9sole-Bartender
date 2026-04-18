@@ -92,6 +92,15 @@ def _get_auto_vc_user_limit() -> Optional[int]:
         return None
 
 
+def _normalize_limit(limit: Optional[int], *, default: int = 32) -> int:
+    if limit in (None, "", 0, "0"):
+        return default
+    try:
+        return max(1, min(99, int(limit)))
+    except Exception:
+        return default
+
+
 def _category_from_ctx_channel(
     ch: Optional[discord.abc.GuildChannel],
 ) -> Optional[discord.CategoryChannel]:
@@ -190,6 +199,169 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
     set_delete_task(ch_id, asyncio.create_task(_task()))
 
 
+class TempVCLimitSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="2 人", value="2"),
+            discord.SelectOption(label="4 人", value="4"),
+            discord.SelectOption(label="8 人", value="8"),
+            discord.SelectOption(label="12 人", value="12"),
+            discord.SelectOption(label="16 人", value="16"),
+            discord.SelectOption(label="24 人", value="24"),
+            discord.SelectOption(label="32 人（預設）", value="32"),
+        ]
+        super().__init__(
+            placeholder="選擇房間人數上限（可留空，預設 32）",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not isinstance(self.view, TempVCLimitView):
+            return
+
+        self.view.selected_limit = _normalize_limit(self.values[0], default=32)
+        await interaction.response.edit_message(
+            content=(
+                f"📝 房間名稱：{self.view.room_name or '（留空）'}\n"
+                f"👥 已選人數上限：{self.view.selected_limit}"
+            ),
+            view=self.view,
+        )
+
+
+class TempVCLimitView(discord.ui.View):
+    def __init__(
+        self,
+        cog: "TempVC",
+        *,
+        owner_id: int,
+        room_name: Optional[str],
+        category: Optional[discord.CategoryChannel],
+    ):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.room_name = room_name.strip() if room_name else None
+        self.category = category
+        self.selected_limit: int = 32
+        self.add_item(TempVCLimitSelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個面板只限發起者使用。", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(
+        label="建立房間",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        row=1,
+    )
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        ch = await self.cog._create_manual_temp_vc(
+            interaction.guild,
+            self.category,
+            name=self.room_name,
+            limit=self.selected_limit,
+        )
+
+        await interaction.followup.send(
+            f"✅ Temp VC 已建立：{ch.mention}\n"
+            f"📝 名稱：{ch.name}\n"
+            f"👥 人數上限：{ch.user_limit or self.selected_limit}",
+            ephemeral=True,
+        )
+        self.stop()
+
+    @discord.ui.button(
+        label="用預設 32 建立",
+        emoji="⚡",
+        style=discord.ButtonStyle.primary,
+        row=1,
+    )
+    async def default_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
+            return
+
+        self.selected_limit = 32
+        await interaction.response.defer(ephemeral=True)
+
+        ch = await self.cog._create_manual_temp_vc(
+            interaction.guild,
+            self.category,
+            name=self.room_name,
+            limit=32,
+        )
+
+        await interaction.followup.send(
+            f"✅ Temp VC 已建立：{ch.mention}\n"
+            f"📝 名稱：{ch.name}\n"
+            f"👥 人數上限：{ch.user_limit or 32}",
+            ephemeral=True,
+        )
+        self.stop()
+
+    @discord.ui.button(
+        label="取消",
+        emoji="🗑️",
+        style=discord.ButtonStyle.danger,
+        row=1,
+    )
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="已取消建立小隊房。", view=None)
+        self.stop()
+
+
+class TempVCNameModal(discord.ui.Modal, title="建立小隊房"):
+    room_name = discord.ui.TextInput(
+        label="房間名稱",
+        placeholder="可留空，例如：Apex / Rank / 深夜房",
+        required=False,
+        max_length=50,
+    )
+
+    def __init__(self, cog: "TempVC"):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not user_can_run_tempvc(interaction):
+            await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
+            return
+
+        category = _category_from_ctx_channel(interaction.channel)
+        name_value = str(self.room_name.value).strip() or None
+
+        await interaction.response.send_message(
+            content=(
+                f"📝 房間名稱：{name_value or '（留空）'}\n"
+                f"👥 請選擇房間人數上限（可直接用預設 32）"
+            ),
+            view=TempVCLimitView(
+                self.cog,
+                owner_id=interaction.user.id,
+                room_name=name_value,
+                category=category,
+            ),
+            ephemeral=True,
+        )
+
+
 class TempVC(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -213,8 +385,7 @@ class TempVC(commands.Cog):
         vc_name = f"{base} {name.strip()}" if name and name.strip() else _next_temp_channel_name_in_category(category, guild)
 
         kwargs: Dict[str, object] = {"bitrate": guild.bitrate_limit}
-        if limit is not None:
-            kwargs["user_limit"] = max(1, min(99, int(limit)))
+        kwargs["user_limit"] = _normalize_limit(limit, default=32)
 
         ch = await guild.create_voice_channel(
             vc_name,
@@ -241,12 +412,7 @@ class TempVC(commands.Cog):
             await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
             return
 
-        category = _category_from_ctx_channel(interaction.channel)
-        ch = await self._create_manual_temp_vc(interaction.guild, category)
-        await interaction.response.send_message(
-            f"✅ Temp VC 已建立：{ch.mention}\n（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or '無限制'}）",
-            ephemeral=True,
-        )
+        await interaction.response.send_modal(TempVCNameModal(self))
 
     async def teardown_temp_vc_from_menu(self, interaction: discord.Interaction):
         if not user_can_run_tempvc(interaction):
@@ -415,7 +581,7 @@ class TempVC(commands.Cog):
 
     @app_commands.command(name="vc_new", description="建立一個臨時語音房（空房 120 秒自動刪除）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
-    @app_commands.describe(name="語音房名稱（可選）", limit="人數上限（可選；不填＝無限制）")
+    @app_commands.describe(name="語音房名稱（可選）", limit="人數上限（可選；不填＝32）")
     async def vc_new(self, inter: discord.Interaction, name: Optional[str] = None, limit: Optional[int] = None):
         if not user_can_run_tempvc(inter):
             return await inter.response.send_message("你未有使用權限。", ephemeral=True)
@@ -424,11 +590,12 @@ class TempVC(commands.Cog):
 
         category = _category_from_ctx_channel(inter.channel)
         await inter.response.defer(ephemeral=False)
-        ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=limit)
+        final_limit = _normalize_limit(limit, default=32)
+        ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=final_limit)
 
         msg = (
             f"你好 {inter.user.mention} ，✅ 房間已經安排好 → {ch.mention}\n"
-            f"（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or '無限制'}）"
+            f"（bitrate={ch.bitrate // 1000}kbps, limit={ch.user_limit or final_limit}）"
         )
         await inter.followup.send(msg)
 
