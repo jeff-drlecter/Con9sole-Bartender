@@ -452,7 +452,41 @@ class Menu(commands.Cog):
             ephemeral=True,
             file=build_menu_file(),
         )
+        @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot:
+            return
 
+        if message.guild is None:
+            return
+
+        if self.bot.user is None:
+            return
+
+        # 只在「純 mention bot」時觸發，避免日常對話都彈 menu
+        mention_forms = {
+            f"<@{self.bot.user.id}>",
+            f"<@!{self.bot.user.id}>",
+        }
+        if message.content.strip() not in mention_forms:
+            return
+
+        retry_after = get_retry_after(message.author.id)
+        if retry_after > 0:
+            return
+
+        touch_cooldown(message.author.id)
+
+        try:
+            await message.reply(
+                embed=build_main_menu_embed(message.author),
+                view=MainMenuView(self),
+                file=build_menu_file(),
+                mention_author=False,
+            )
+        except discord.HTTPException:
+            pass
+            
     async def cog_load(self) -> None:
         if self._views_registered:
             return
