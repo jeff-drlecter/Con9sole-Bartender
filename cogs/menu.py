@@ -840,12 +840,27 @@ class Menu(commands.Cog):
         if self.bot.user is None:
             return
 
+        # 支援「直接 tag bot」叫出公開 menu。
+        # 用 message.mentions 先判斷，避免只靠 message.content，減少 Message Content Intent 影響。
+        bot_was_mentioned = self.bot.user in message.mentions
+        raw_content = (message.content or "").strip()
         mention_forms = {
             f"<@{self.bot.user.id}>",
             f"<@!{self.bot.user.id}>",
         }
-        if message.content.strip() not in mention_forms:
+
+        # 只接受純 tag bot；例如「@Bot」或 content 係純 mention。
+        # 如果想「@Bot menu」都觸發，可以將下一行改成：if not bot_was_mentioned:
+        if not bot_was_mentioned and raw_content not in mention_forms:
             return
+
+        # 如果 bot 被提及但同時有其他文字，避免誤觸一般對話。
+        if raw_content and raw_content not in mention_forms:
+            cleaned = raw_content
+            for mention_text in mention_forms:
+                cleaned = cleaned.replace(mention_text, "")
+            if cleaned.strip():
+                return
 
         retry_after = get_retry_after(message.author.id)
         if retry_after > 0:
