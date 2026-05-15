@@ -15,6 +15,7 @@ import config
 
 MENU_COLOR = 0x2B2D31
 COOLDOWN_SECONDS = 3.0
+
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BARTENDER_IMAGE = ASSETS_DIR / "bartender.png"
 BARTENDER_ATTACHMENT_NAME = "bartender.png"
@@ -33,10 +34,10 @@ THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://www.threads.net/@co
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
-# Admin Stats 權限：Manage Server 或 Helper role 都可以使用
+# /admin_stats 權限：Manage Server 或 Helper role 都可以使用
 # 可選 config.py：
 # HELPER_ROLE_IDS = [123456789012345678]
-# HELPER_ROLE_NAMES = ["Helper", "helper"]
+# HELPER_ROLE_NAMES = ["Helper", "helper", "社群助手"]
 HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
 HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper"]))
 
@@ -189,8 +190,7 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
         emoji = FEATURE_EMOJIS.get(feature, "🔹")
         label = FEATURE_LABELS.get(feature, feature)
         lines.append(f"{emoji} **{label}**：`{total}` 次")
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 
 def can_use_admin_stats(member: discord.Member | discord.User) -> bool:
@@ -240,7 +240,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed.add_field(name="🍹 調酒", value="抽一杯隨機飲品", inline=False)
     embed.add_field(name="📱 Social Link", value="查看 Con9sole IG / Threads", inline=False)
     embed.add_field(name="🧭 Community Hub", value="公開社群入口，適合放喺新人頻道", inline=False)
-    embed.add_field(name="📊 Admin Stats", value="Admin 查看功能使用數據", inline=False)
+    embed.add_field(name="📊 Admin Stats", value="Admin / Helper 查看功能使用數據", inline=False)
     embed.add_field(name="🗑️ Close", value="關閉目前面板", inline=False)
     embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
     embed.set_footer(text=f"{user.display_name}，慢慢揀，我喺度等你。")
@@ -721,16 +721,51 @@ class CommunityHubView(BaseMenuView):
                 )
             )
 
-    async def _call_main_feature(self, interaction: discord.Interaction, feature_button: str) -> None:
-        main = MainMenuView(self.cog)
-        if feature_button == "team":
-            await main.team_button.callback(interaction)  # type: ignore[attr-defined]
-        elif feature_button == "tempvc":
-            await main.tempvc_button.callback(interaction)  # type: ignore[attr-defined]
-        elif feature_button == "cheers":
-            await main.cheers_button.callback(interaction)  # type: ignore[attr-defined]
-        elif feature_button == "drink":
-            await main.drink_button.callback(interaction)  # type: ignore[attr-defined]
+    async def _call_cog_method(
+        self,
+        interaction: discord.Interaction,
+        *,
+        feature: str,
+        cog_name: str,
+        method_names: list[str],
+        missing_message: str,
+    ) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+
+        await self._record(interaction, feature)
+
+        target_cog = interaction.client.get_cog(cog_name)
+        if not target_cog:
+            await send_or_followup(interaction, content=missing_message, ephemeral=True)
+            return
+
+        method: Callable[..., Awaitable[None]] | None = None
+        for method_name in method_names:
+            candidate = getattr(target_cog, method_name, None)
+            if candidate and inspect.iscoroutinefunction(candidate):
+                method = candidate
+                break
+
+        if method is None:
+            await send_or_followup(interaction, content=missing_message, ephemeral=True)
+            return
+
+        try:
+            await method(interaction)
+        except TypeError:
+            try:
+                await method(interaction, None)
+            except TypeError:
+                await method(interaction, to=None)
+        except discord.InteractionResponded:
+            pass
+        except Exception as exc:
+            await send_or_followup(
+                interaction,
+                content=f"❌ 執行功能時出錯：{type(exc).__name__}",
+                ephemeral=True,
+            )
 
     @discord.ui.button(
         label="組隊",
@@ -740,7 +775,13 @@ class CommunityHubView(BaseMenuView):
         row=0,
     )
     async def hub_team_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._call_main_feature(interaction, "team")
+        await self._call_cog_method(
+            interaction,
+            feature="team",
+            cog_name="Teams",
+            method_names=["open_team_menu", "start_team_menu", "team_menu"],
+            missing_message="❌ 組隊功能未載入。",
+        )
 
     @discord.ui.button(
         label="建立小隊 call",
@@ -750,7 +791,19 @@ class CommunityHubView(BaseMenuView):
         row=0,
     )
     async def hub_tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._call_main_feature(interaction, "tempvc")
+        await self._call_cog_method(
+            interaction,
+            feature="tempvc",
+            cog_name="TempVC",
+            method_names=[
+                "create_temp_vc_from_menu",
+                "send_control_panel",
+                "tempvc_panel",
+                "tempvc",
+                "panel",
+            ],
+            missing_message="❌ 搵唔到小隊房控制面板入口。",
+        )
 
     @discord.ui.button(
         label="打氣時間",
@@ -760,7 +813,13 @@ class CommunityHubView(BaseMenuView):
         row=1,
     )
     async def hub_cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._call_main_feature(interaction, "cheers")
+        await self._call_cog_method(
+            interaction,
+            feature="cheers",
+            cog_name="Cheers",
+            method_names=["do_cheers", "cheers_cmd", "cheers"],
+            missing_message="❌ 打氣時間功能未載入。",
+        )
 
     @discord.ui.button(
         label="調酒",
@@ -770,7 +829,13 @@ class CommunityHubView(BaseMenuView):
         row=1,
     )
     async def hub_drink_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._call_main_feature(interaction, "drink")
+        await self._call_cog_method(
+            interaction,
+            feature="drink",
+            cog_name="Drink",
+            method_names=["do_drink", "drink"],
+            missing_message="❌ 調酒功能未載入。",
+        )
 
     @discord.ui.button(
         label="Menu",
@@ -829,45 +894,18 @@ class Menu(commands.Cog):
             file=build_menu_file(),
         )
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message) -> None:
-        if message.author.bot:
-            return
-
-        if message.guild is None:
-            return
-
-        if self.bot.user is None:
-            return
-
-        # 支援「直接 tag bot」叫出公開 menu。
-        # 用 message.mentions 先判斷，避免只靠 message.content，減少 Message Content Intent 影響。
-        bot_was_mentioned = self.bot.user in message.mentions
-        raw_content = (message.content or "").strip()
-        mention_forms = {
-            f"<@{self.bot.user.id}>",
-            f"<@!{self.bot.user.id}>",
-        }
-
-        # 只接受純 tag bot；例如「@Bot」或 content 係純 mention。
-        # 如果想「@Bot menu」都觸發，可以將下一行改成：if not bot_was_mentioned:
-        if not bot_was_mentioned and raw_content not in mention_forms:
-            return
-
-        # 如果 bot 被提及但同時有其他文字，避免誤觸一般對話。
-        if raw_content and raw_content not in mention_forms:
-            cleaned = raw_content
-            for mention_text in mention_forms:
-                cleaned = cleaned.replace(mention_text, "")
-            if cleaned.strip():
-                return
-
+    async def send_mention_menu(self, message: discord.Message) -> None:
+        """畀 bot.py 全局 on_message fallback 呼叫：純 tag bot 時出公開 Menu。"""
         retry_after = get_retry_after(message.author.id)
         if retry_after > 0:
             return
 
         touch_cooldown(message.author.id)
-        record_usage_sync("mention_menu", message.author.id, message.guild.id)
+        record_usage_sync(
+            "mention_menu",
+            message.author.id,
+            message.guild.id if message.guild else None,
+        )
 
         try:
             await message.reply(
@@ -969,7 +1007,7 @@ class Menu(commands.Cog):
         )
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
-        # 按你之前要求：Admin 操作公開，方便其他 Admin 一齊睇。
+        # 按你之前要求：Admin/Helper 操作公開，方便其他管理人員一齊睇。
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
