@@ -33,6 +33,13 @@ THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://www.threads.net/@co
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
+# Admin Stats 權限：Manage Server 或 Helper role 都可以使用
+# 可選 config.py：
+# HELPER_ROLE_IDS = [123456789012345678]
+# HELPER_ROLE_NAMES = ["Helper", "helper"]
+HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
+HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper"]))
+
 # 全局 user cooldown：同一個 user 撳任何 menu / submenu 按鈕都會共用 CD
 USER_MENU_COOLDOWNS: dict[int, float] = {}
 
@@ -182,7 +189,25 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
         emoji = FEATURE_EMOJIS.get(feature, "🔹")
         label = FEATURE_LABELS.get(feature, feature)
         lines.append(f"{emoji} **{label}**：`{total}` 次")
-    return "\n".join(lines)
+    return "
+".join(lines)
+
+
+def can_use_admin_stats(member: discord.Member | discord.User) -> bool:
+    """Manage Server 或 Helper role 都可以使用 /admin_stats。"""
+    if not isinstance(member, discord.Member):
+        return False
+
+    if member.guild_permissions.manage_guild:
+        return True
+
+    for role in member.roles:
+        if role.id in HELPER_ROLE_IDS:
+            return True
+        if role.name in HELPER_ROLE_NAMES:
+            return True
+
+    return False
 
 
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
@@ -885,9 +910,9 @@ class Menu(commands.Cog):
         ]
     )
     async def admin_stats(self, interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
-        if not interaction.user.guild_permissions.manage_guild:
+        if not can_use_admin_stats(interaction.user):
             await interaction.response.send_message(
-                "❌ 你需要 `Manage Server` 權限先可以查看統計。",
+                "❌ 你需要 `Manage Server` 權限或 Helper role 先可以查看統計。",
                 ephemeral=True,
             )
             return
