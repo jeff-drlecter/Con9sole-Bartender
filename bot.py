@@ -86,6 +86,70 @@ class Bot(commands.Bot):
     async def on_ready(self) -> None:
         log.info("✅ Logged in as %s (%s)", self.user, self.user and self.user.id)
 
+    async def on_message(self, message: discord.Message) -> None:
+        """全局 fallback：純 tag bot 時叫出 Menu。
+
+        放喺 bot.py 主 Bot class，比單靠 Cog listener 更穩陣。
+        注意：最後一定要 process_commands，避免影響 prefix / hybrid commands。
+        """
+        if message.author.bot:
+            return
+
+        if message.guild is None:
+            await self.process_commands(message)
+            return
+
+        if self.user is None:
+            await self.process_commands(message)
+            return
+
+        bot_was_mentioned = self.user in message.mentions
+
+        if bot_was_mentioned:
+            raw_content = (message.content or "").strip()
+            mention_forms = {
+                f"<@{self.user.id}>",
+                f"<@!{self.user.id}>",
+            }
+
+            # 只接受純 tag bot，例如：@Con9sole-Bartender
+            # 避免「@Bot hello」呢類普通對話都彈 Menu。
+            is_pure_mention = False
+            if raw_content in mention_forms:
+                is_pure_mention = True
+            else:
+                cleaned = raw_content
+                for mention_text in mention_forms:
+                    cleaned = cleaned.replace(mention_text, "")
+                if cleaned.strip() == "":
+                    is_pure_mention = True
+
+            if is_pure_mention:
+                menu_cog = self.get_cog("Menu")
+
+                if menu_cog and hasattr(menu_cog, "send_mention_menu"):
+                    try:
+                        await menu_cog.send_mention_menu(message)
+                        return
+                    except Exception:
+                        log.exception("Failed to send mention menu via Menu.send_mention_menu")
+
+                # 後備方案：如果 menu.py 未有 send_mention_menu，都盡量直接用現有 helper 出 Menu。
+                try:
+                    import cogs.menu as menu_module
+
+                    await message.reply(
+                        embed=menu_module.build_main_menu_embed(message.author),
+                        view=menu_module.MainMenuView(menu_cog) if menu_cog else None,
+                        file=menu_module.build_menu_file(),
+                        mention_author=False,
+                    )
+                    return
+                except Exception:
+                    log.exception("Failed to send mention menu fallback")
+
+        await self.process_commands(message)
+
 
 # ---------- Token loader（支援多種變數名與 config） ----------
 def _get_token() -> str:
