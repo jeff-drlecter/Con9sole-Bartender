@@ -10,6 +10,10 @@ CATEGORY_NAME_PATTERN = "{game}"   # 新分區命名
 ROLE_NAME_PATTERN = "{game}"       # 新角色命名
 ADMIN_ROLE_IDS: List[int] = []      # 額外管理角色（可留空）
 
+# Helper 權限：可以使用 /admin_stats
+HELPER_ROLE_NAMES: List[str] = ["helpers"]
+HELPER_ROLE_IDS: List[int] = [1279071042249162856]
+
 # 後備頻道
 FALLBACK_CHANNELS = {}
 
