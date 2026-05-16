@@ -39,7 +39,7 @@ HELP_URL = getattr(config, "HELP_URL", None)
 # HELPER_ROLE_IDS = [123456789012345678]
 # HELPER_ROLE_NAMES = ["Helper", "helper", "社群助手"]
 HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
-HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper"]))
+HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper", "helpers"]))
 
 # 全局 user cooldown：同一個 user 撳任何 menu / submenu 按鈕都會共用 CD
 USER_MENU_COOLDOWNS: dict[int, float] = {}
