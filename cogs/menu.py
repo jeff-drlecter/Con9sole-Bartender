@@ -5,7 +5,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Any
 
 import discord
 from discord import app_commands
@@ -59,6 +59,10 @@ FEATURE_LABELS: dict[str, str] = {
     "help": "幫助",
     "admin_tool": "Admin Tool",
     "admin_stats": "Admin Stats",
+    "admin_reload": "Reload",
+    "admin_role": "Role Tools",
+    "admin_ping": "Ping",
+    "admin_vc_teardown": "VC Teardown",
     "mention_menu": "Mention Menu",
 }
 
@@ -76,6 +80,10 @@ FEATURE_EMOJIS: dict[str, str] = {
     "help": "ℹ️",
     "admin_tool": "🛠️",
     "admin_stats": "📊",
+    "admin_reload": "🔄",
+    "admin_role": "🎭",
+    "admin_ping": "🏓",
+    "admin_vc_teardown": "🧹",
     "mention_menu": "💬",
 }
 
@@ -237,6 +245,12 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
+# Backward compatibility：drink.py / cheers.py 仍然會 import 呢個舊 helper。
+# 新 Layer UI 入面，舊 main menu 等同 Layer 1 Quick Bar。
+def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
+    return build_quick_bar_embed(user)
+
+
 def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Bartender Home",
@@ -284,12 +298,34 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             "管理用工具集中於此。\n\n"
             "📊 **Stats** — 查看 Community Bot 使用數據\n"
+            "🔄 **Reload** — 重載所有 / 指定 cogs\n"
+            "🎭 **Role Tools** — 查看角色管理指令入口\n"
+            "🏓 **Ping** — 測試 bot 延遲\n"
+            "🧹 **VC Teardown** — 刪除由 Bot 建立的臨時語音房\n"
             "⬅️ **Menu** — 返回吧枱主頁"
         ),
         color=MENU_COLOR,
     )
     embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
     embed.set_footer(text=f"{user.display_name}，Admin 工具只限授權成員使用。")
+    return embed
+
+
+def build_role_tools_embed(user: discord.abc.User) -> discord.Embed:
+    embed = discord.Embed(
+        title="🎭 Role Tools",
+        description=(
+            "以下係目前可用嘅角色管理指令入口。\n\n"
+            "`/role_grant` — 對單一用戶或指定角色的所有成員加上某個角色\n"
+            "`/role_revoke` — 對單一用戶或指定角色的所有成員移除某個角色\n"
+            "`/role_list` — 查看某位成員擁有哪些角色\n"
+            "`/role_channel_new` — Clone versioned channel 並建立新版本 role\n\n"
+            "如果你想將呢啲指令再做成 submenu 表單式操作，需要我再對 `role.py` 入面 function 名。"
+        ),
+        color=MENU_COLOR,
+    )
+    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+    embed.set_footer(text=f"{user.display_name}，角色工具只限授權成員使用。")
     return embed
 
 
@@ -337,6 +373,28 @@ def touch_cooldown(user_id: int) -> None:
     USER_MENU_COOLDOWNS[user_id] = time.time()
 
 
+async def maybe_call_method(
+    target: Any,
+    method_names: list[str],
+    *args: Any,
+    **kwargs: Any,
+) -> bool:
+    """嘗試用多個 method 名呼叫 target。成功執行回傳 True。"""
+    for method_name in method_names:
+        method = getattr(target, method_name, None)
+        if method is None:
+            continue
+
+        try:
+            result = method(*args, **kwargs)
+            if inspect.isawaitable(result):
+                await result
+            return True
+        except TypeError:
+            continue
+    return False
+
+
 class BaseMenuView(discord.ui.View):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(timeout=None)
@@ -357,6 +415,17 @@ class BaseMenuView(discord.ui.View):
 
     async def _record(self, interaction: discord.Interaction, feature: str) -> None:
         record_usage_sync(feature, interaction.user.id, interaction.guild_id)
+
+    async def _require_admin(self, interaction: discord.Interaction) -> bool:
+        if can_use_admin(interaction.user):
+            return True
+
+        await send_or_followup(
+            interaction,
+            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Admin Tool。",
+            ephemeral=True,
+        )
+        return False
 
     async def _call_cog_method(
         self,
@@ -543,7 +612,7 @@ class QuickBarView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label=None,
+        label="",
         emoji="🎉",
         style=discord.ButtonStyle.success,
         custom_id="bartender:quick:cheers",
@@ -559,7 +628,7 @@ class QuickBarView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label=None,
+        label="",
         emoji="🍹",
         style=discord.ButtonStyle.success,
         custom_id="bartender:quick:drink",
@@ -753,12 +822,7 @@ class HomeMenuView(BaseMenuView):
 
         await self._record(interaction, "admin_tool")
 
-        if not can_use_admin(interaction.user):
-            await send_or_followup(
-                interaction,
-                content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Admin Tool。",
-                ephemeral=True,
-            )
+        if not await self._require_admin(interaction):
             return
 
         await send_or_followup(
@@ -787,6 +851,43 @@ class HelpMenuView(BaseMenuView):
         await self._send_home_menu(interaction)
 
 
+class RoleToolsView(BaseMenuView):
+    def __init__(self, cog: "Menu") -> None:
+        super().__init__(cog)
+
+    @discord.ui.button(
+        label="Admin Tool",
+        emoji="🛠️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:role_tools:admin",
+        row=0,
+    )
+    async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        if not await self._require_admin(interaction):
+            return
+        await send_or_followup(
+            interaction,
+            embed=build_admin_tool_embed(interaction.user),
+            view=AdminToolView(self.cog),
+            ephemeral=True,
+            file=build_menu_file(),
+        )
+
+    @discord.ui.button(
+        label="Menu",
+        emoji="⬅️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:role_tools:home",
+        row=0,
+    )
+    async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        await self._send_home_menu(interaction)
+
+
 class AdminToolView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
@@ -802,12 +903,7 @@ class AdminToolView(BaseMenuView):
         if not await self._enforce_cooldown(interaction):
             return
 
-        if not can_use_admin(interaction.user):
-            await send_or_followup(
-                interaction,
-                content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以查看統計。",
-                ephemeral=True,
-            )
+        if not await self._require_admin(interaction):
             return
 
         await self._record(interaction, "admin_stats")
@@ -844,11 +940,132 @@ class AdminToolView(BaseMenuView):
         )
 
     @discord.ui.button(
+        label="Reload",
+        emoji="🔄",
+        style=discord.ButtonStyle.primary,
+        custom_id="bartender:admin:reload",
+        row=0,
+    )
+    async def reload_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        if not await self._require_admin(interaction):
+            return
+
+        await self._record(interaction, "admin_reload")
+        reload_cog = interaction.client.get_cog("Reload") or interaction.client.get_cog("Reloader")
+
+        if reload_cog is not None:
+            called = await maybe_call_method(
+                reload_cog,
+                ["reload_all", "reload_cogs", "do_reload", "reload", "reload_cmd"],
+                interaction,
+            )
+            if called:
+                return
+
+        await send_or_followup(
+            interaction,
+            content=(
+                "🔄 Reload 指令入口：\n"
+                "請使用 `/reload` 重載所有或指定 cogs。\n\n"
+                "我未能直接接駁 `reload.py` 入面嘅 function；如果你想 Admin Tool 直接執行 reload，貼 `reload.py` 我可以對準 method。"
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Role Tools",
+        emoji="🎭",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:admin:role_tools",
+        row=1,
+    )
+    async def role_tools_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        if not await self._require_admin(interaction):
+            return
+
+        await self._record(interaction, "admin_role")
+        await send_or_followup(
+            interaction,
+            embed=build_role_tools_embed(interaction.user),
+            view=RoleToolsView(self.cog),
+            ephemeral=True,
+            file=build_menu_file(),
+        )
+
+    @discord.ui.button(
+        label="Ping",
+        emoji="🏓",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:admin:ping",
+        row=1,
+    )
+    async def ping_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        if not await self._require_admin(interaction):
+            return
+
+        await self._record(interaction, "admin_ping")
+        latency_ms = round(interaction.client.latency * 1000)
+        await send_or_followup(
+            interaction,
+            content=f"🏓 Pong! `{latency_ms} ms`",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="VC Teardown",
+        emoji="🧹",
+        style=discord.ButtonStyle.danger,
+        custom_id="bartender:admin:vc_teardown",
+        row=1,
+    )
+    async def vc_teardown_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        if not await self._require_admin(interaction):
+            return
+
+        await self._record(interaction, "admin_vc_teardown")
+        tempvc_cog = interaction.client.get_cog("TempVC")
+
+        if tempvc_cog is not None:
+            called = await maybe_call_method(
+                tempvc_cog,
+                [
+                    "teardown_from_menu",
+                    "vc_teardown_from_menu",
+                    "admin_teardown",
+                    "teardown_all",
+                    "cleanup_all",
+                    "sweep_temp_vcs",
+                    "sweep",
+                ],
+                interaction,
+            )
+            if called:
+                return
+
+        await send_or_followup(
+            interaction,
+            content=(
+                "🧹 VC Teardown 指令入口：\n"
+                "請使用 `/vc_teardown` 刪除由 Bot 建立的臨時語音房。\n\n"
+                "我未能直接接駁 `tempvc.py` 入面嘅 teardown function；如果你想 Admin Tool 直接執行，貼 `tempvc.py` 我可以對準 method。"
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
         label="Menu",
         emoji="⬅️",
         style=discord.ButtonStyle.secondary,
         custom_id="bartender:admin:home",
-        row=0,
+        row=2,
     )
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
@@ -943,6 +1160,7 @@ class Menu(commands.Cog):
         self.bot.add_view(HomeMenuView(self))
         self.bot.add_view(HelpMenuView(self))
         self.bot.add_view(AdminToolView(self))
+        self.bot.add_view(RoleToolsView(self))
         self._views_registered = True
 
     @app_commands.command(name="menu", description="顯示 Con9sole Bartender 快捷吧枱")
