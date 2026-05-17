@@ -214,19 +214,32 @@ def can_use_admin(member: discord.Member | discord.User) -> bool:
 can_use_admin_stats = can_use_admin
 
 
+def build_menu_file() -> discord.File | None:
+    if not BARTENDER_IMAGE.exists():
+        return None
+    return discord.File(BARTENDER_IMAGE, filename=BARTENDER_ATTACHMENT_NAME)
+
+
+def _apply_bartender_thumbnail(embed: discord.Embed) -> None:
+    if BARTENDER_IMAGE.exists():
+        embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+
+
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
         description=(
             "**「歡迎光臨，要點什麼？」**\n\n"
-            "吧枱已經準備好。\n"
-            "你可以直接召集隊友、開小隊 call、來一點打氣，或者讓酒保為你調一杯。\n\n"
-            "⬅️ **Menu**｜進入吧枱主頁查看更多功能"
+            "👥 **組隊**｜召集隊友\n"
+            "🎧 **小隊 call**｜建立臨時語音房\n"
+            "🎉 **打氣**｜為大家補充能量\n"
+            "🍹 **調酒**｜酒保特選\n\n"
+            "⬅️ **Menu**｜進入吧枱主頁"
         ),
         color=MENU_COLOR,
     )
-    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"{user.display_name}，今晚由我為你服務。")
+    _apply_bartender_thumbnail(embed)
+    embed.set_footer(text=f"Con9sole Bartender｜{user.display_name}，今晚由我為你服務。")
     return embed
 
 
@@ -238,43 +251,41 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Bartender Home",
         description=(
-            f"**這裡是 {COMMUNITY_NAME} 的吧枱主頁。**\n\n"
+            f"**{COMMUNITY_NAME} 吧枱主頁**\n\n"
             "👥 **組隊** — 召集隊友\n"
             "🎧 **小隊 call** — 建立臨時語音房\n"
             "🎉 **打氣** — 為大家補充能量\n"
             "🍹 **調酒** — 酒保特選\n"
             "📸 **IG Page** — 官方 Instagram\n"
             "🧵 **Threads Page** — 官方 Threads\n"
-            "🔗 **生成邀請碼** — 產生 7 日 / 10 次使用嘅公開邀請連結\n"
-            "ℹ️ **幫助** — 查看使用說明\n"
+            "🔗 **生成邀請碼** — 7 日 / 10 次公開邀請連結\n"
+            "ℹ️ **幫助** — 使用說明\n"
             "🛠️ **Admin Tool** — 管理工具"
         ),
         color=MENU_COLOR,
     )
-    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"{user.display_name}，慢慢揀，我喺度等你。")
+    _apply_bartender_thumbnail(embed)
+    embed.set_footer(text="Con9sole Bartender｜選好服務後，直接撳下面按鈕。")
     return embed
 
 
 def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="ℹ️ 幫助",
-        description="酒保已經準備好，以下是你可以使用的服務。",
+        description=(
+            "**Bartender 使用說明**\n\n"
+            "👥 **組隊**｜發起組隊 / 招募隊友\n"
+            "🎧 **小隊 call**｜建立臨時語音房\n"
+            "🎉 **打氣**｜送出隨機打氣內容\n"
+            "🍹 **調酒**｜抽一杯酒保特選飲品\n"
+            "📸 **IG Page / Threads Page**｜查看官方社交平台\n"
+            "🔗 **生成邀請碼**｜7 日有效、最多 10 次使用，每人 10 分鐘一次\n"
+            "🛠️ **Admin Tool**｜Admin / helpers 專用管理工具"
+        ),
         color=MENU_COLOR,
     )
-    embed.add_field(name="👥 組隊", value="發起組隊 / 招募隊友。", inline=False)
-    embed.add_field(name="🎧 小隊 call", value="建立臨時語音房。", inline=False)
-    embed.add_field(name="🎉 打氣", value="送出隨機打氣內容。", inline=False)
-    embed.add_field(name="🍹 調酒", value="抽一杯酒保特選飲品。", inline=False)
-    embed.add_field(name="📸 IG Page / 🧵 Threads Page", value="查看 Con9sole 官方社交平台。", inline=False)
-    embed.add_field(
-        name="🔗 生成邀請碼",
-        value="產生一條 7 日有效、最多 10 次使用嘅公開邀請連結。每人 10 分鐘一次。",
-        inline=False,
-    )
-    embed.add_field(name="🛠️ Admin Tool", value="Admin / helpers 專用管理工具。", inline=False)
-    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"{user.display_name}，需要咩就撳相應按鈕。")
+    _apply_bartender_thumbnail(embed)
+    embed.set_footer(text="Con9sole Bartender｜⬅️ Menu 返回吧枱主頁")
     return embed
 
 
@@ -282,18 +293,17 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🛠️ Admin Tool",
         description=(
-            "管理用工具集中於此。\n\n"
-            "📊 **Stats** — 查看 Community Bot 使用數據\n"
-            "🔄 **Reload** — 重載所有 / 指定 cogs\n"
-            "🎭 **Role Tools** — 查看角色管理指令入口\n"
-            "🏓 **Ping** — 測試 bot 延遲\n"
-            "🧹 **VC Teardown** — 刪除由 Bot 建立的臨時語音房\n"
+            "**管理工具**\n\n"
+            "📊 **Stats** — Community Bot 使用數據\n"
+            "🔄 **Reload** — 指令入口 `/reload`\n"
+            "🎭 **Role Tools** — 角色管理指令入口\n"
+            "🏓 **Ping** — Bot latency\n"
+            "🧹 **VC Teardown** — 指令入口 `/vc_teardown`\n\n"
             "⬅️ **Menu** — 返回吧枱主頁"
         ),
         color=MENU_COLOR,
     )
-    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"{user.display_name}，Admin 工具只限授權成員使用。")
+    embed.set_footer(text="Con9sole Bartender｜Admin 工具只限授權成員使用。")
     return embed
 
 
@@ -301,24 +311,16 @@ def build_role_tools_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🎭 Role Tools",
         description=(
-            "以下係目前可用嘅角色管理指令入口。\n\n"
-            "`/role_grant` — 對單一用戶或指定角色的所有成員加上某個角色\n"
-            "`/role_revoke` — 對單一用戶或指定角色的所有成員移除某個角色\n"
-            "`/role_list` — 查看某位成員擁有哪些角色\n"
-            "`/role_channel_new` — Clone versioned channel 並建立新版本 role\n\n"
-            "如果你想將呢啲指令再做成 submenu 表單式操作，需要我再對 `role.py` 入面 function 名。"
+            "**目前可用角色管理指令**\n\n"
+            "`/role_grant` — 加上某個角色\n"
+            "`/role_revoke` — 移除某個角色\n"
+            "`/role_list` — 查看成員角色\n"
+            "`/role_channel_new` — Clone versioned channel 並建立新版本 role"
         ),
         color=MENU_COLOR,
     )
-    embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-    embed.set_footer(text=f"{user.display_name}，角色工具只限授權成員使用。")
+    embed.set_footer(text="Con9sole Bartender｜Role Tools 只限授權成員使用。")
     return embed
-
-
-def build_menu_file() -> discord.File | None:
-    if not BARTENDER_IMAGE.exists():
-        return None
-    return discord.File(BARTENDER_IMAGE, filename=BARTENDER_ATTACHMENT_NAME)
 
 
 def _safe_message_kwargs(
@@ -330,10 +332,6 @@ def _safe_message_kwargs(
     file: discord.File | None = None,
     ephemeral: bool | None = None,
 ) -> dict[str, object]:
-    """Only include non-None values.
-
-    This prevents the old NoneType.to_dict / NoneType.is_finished bugs from returning.
-    """
     kwargs: dict[str, object] = {}
     if content is not None:
         kwargs["content"] = content
@@ -772,7 +770,6 @@ class HomeMenuView(BaseMenuView):
             embed=build_admin_tool_embed(interaction.user),
             view=AdminToolView(self.cog),
             ephemeral=True,
-            file=build_menu_file(),
         )
 
 
@@ -802,7 +799,6 @@ class RoleToolsView(BaseMenuView):
             embed=build_admin_tool_embed(interaction.user),
             view=AdminToolView(self.cog),
             ephemeral=True,
-            file=build_menu_file(),
         )
 
     @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:home", row=0)
@@ -886,7 +882,6 @@ class AdminToolView(BaseMenuView):
             embed=build_role_tools_embed(interaction.user),
             view=RoleToolsView(self.cog),
             ephemeral=True,
-            file=build_menu_file(),
         )
 
     @discord.ui.button(label="Ping", emoji="🏓", style=discord.ButtonStyle.secondary, custom_id="bartender:admin:ping", row=1)
