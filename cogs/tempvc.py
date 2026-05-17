@@ -216,7 +216,7 @@ class TempVCLimitSelect(discord.ui.Select):
             discord.SelectOption(label="4 人", value="4", emoji="4️⃣"),
             discord.SelectOption(label="5 人", value="5", emoji="5️⃣"),
             discord.SelectOption(label="8 人", value="8", emoji="8️⃣"),
-            discord.SelectOption(label="10 人", value="10", emoji="🔟"),
+            discord.SelectOption(label="11 人", value="11", emoji="👥"),
             discord.SelectOption(label="12 人", value="12", emoji="👥"),
             discord.SelectOption(label="16 人", value="16", emoji="👥"),
             discord.SelectOption(label="24 人", value="24", emoji="👥"),
