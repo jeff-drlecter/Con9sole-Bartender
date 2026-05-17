@@ -25,24 +25,9 @@ ICON_MAP = {
 }
 
 RARITY_STYLE = {
-    "Common": {
-        "label": "House Pour",
-        "emoji": "⚪",
-        "weight": 78,
-        "color": 0x95A5A6,
-    },
-    "Rare": {
-        "label": "Signature Serve",
-        "emoji": "🟣",
-        "weight": 18,
-        "color": 0x9B59B6,
-    },
-    "SSR": {
-        "label": "Top Shelf",
-        "emoji": "🟡",
-        "weight": 4,
-        "color": 0xF1C40F,
-    },
+    "Common": {"label": "House Pour", "emoji": "⚪", "weight": 78, "color": 0x95A5A6},
+    "Rare": {"label": "Signature Serve", "emoji": "🟣", "weight": 18, "color": 0x9B59B6},
+    "SSR": {"label": "Top Shelf", "emoji": "🟡", "weight": 4, "color": 0xF1C40F},
 }
 
 RECENT_HISTORY_LIMIT = 8
@@ -307,22 +292,38 @@ async def send_or_followup(
     content: str | None = None,
     ephemeral: bool = False,
 ) -> None:
+    kwargs: dict[str, object] = {
+        "content": content,
+        "embed": embed,
+        "view": view,
+        "ephemeral": ephemeral,
+    }
+    if file is not None:
+        kwargs["file"] = file
+
     if interaction.response.is_done():
-        await interaction.followup.send(
-            content=content,
-            embed=embed,
-            view=view,
-            file=file,
-            ephemeral=ephemeral,
-        )
+        await interaction.followup.send(**kwargs)
     else:
-        await interaction.response.send_message(
-            content=content,
-            embed=embed,
-            view=view,
-            file=file,
-            ephemeral=ephemeral,
-        )
+        await interaction.response.send_message(**kwargs)
+
+
+async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
+    menu_embed = build_main_menu_embed(interaction.user)
+
+    kwargs: dict[str, object] = {
+        "embed": menu_embed,
+        "ephemeral": False,
+    }
+
+    menu_view = build_full_menu_view(interaction)
+    if menu_view is not None:
+        kwargs["view"] = menu_view
+
+    menu_file = build_menu_file()
+    if menu_file is not None:
+        kwargs["file"] = menu_file
+
+    await interaction.followup.send(**kwargs)
 
 
 class Drink(commands.Cog):
@@ -407,7 +408,6 @@ class Drink(commands.Cog):
         limited_text = f"\n🌟 **限定供應：** {drink.limited_tag}" if drink.limited_tag else ""
         tasting_note = build_tasting_note(drink)
 
-        # Message 1：Drink result。這格不放 bartender 圖、不放 buttons。
         result_embed = discord.Embed(
             title="Bartender’s Pick",
             color=rarity_meta["color"],
@@ -436,15 +436,7 @@ class Drink(commands.Cog):
         result_embed.set_footer(text="House Pour 78% · Signature Serve 18% · Top Shelf 4%")
 
         await send_or_followup(interaction, embed=result_embed, ephemeral=False)
-
-        # Message 2：Quick Bar。Bartender 圖放在這一格，下面跟 Layer 1 buttons。
-        menu_embed = build_main_menu_embed(interaction.user)
-        await interaction.followup.send(
-            embed=menu_embed,
-            view=build_full_menu_view(interaction),
-            file=build_menu_file(),
-            ephemeral=False,
-        )
+        await send_quick_bar_after_result(interaction)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
