@@ -212,7 +212,6 @@ SEASONAL_DRINKS: Dict[Tuple[int, ...], List[DrinkEntry]] = {
     ],
 }
 
-
 TASTING_LINES = [
     "酒體平衡，香氣由前段慢慢展開，適合慢慢品嚐。",
     "入口乾淨，尾韻有層次，屬於容易入口但不單調的一杯。",
@@ -299,6 +298,33 @@ def current_seasonal_pool() -> List[DrinkEntry]:
     return []
 
 
+async def send_or_followup(
+    interaction: discord.Interaction,
+    *,
+    embed: discord.Embed | None = None,
+    view: discord.ui.View | None = None,
+    file: discord.File | None = None,
+    content: str | None = None,
+    ephemeral: bool = False,
+) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            content=content,
+            embed=embed,
+            view=view,
+            file=file,
+            ephemeral=ephemeral,
+        )
+    else:
+        await interaction.response.send_message(
+            content=content,
+            embed=embed,
+            view=view,
+            file=file,
+            ephemeral=ephemeral,
+        )
+
+
 class Drink(commands.Cog):
     """/drink：以 bartender 風格隨機為指定對象點一款酒。"""
 
@@ -318,10 +344,7 @@ class Drink(commands.Cog):
         retry_after = get_drink_retry_after(interaction.user.id)
         if retry_after > 0:
             message = f"⏳ 酒保正在整理吧枱，請等 {retry_after:.1f} 秒後再點下一杯。"
-            if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
-            else:
-                await interaction.response.send_message(message, ephemeral=True)
+            await send_or_followup(interaction, content=message, ephemeral=True)
             return False
 
         touch_drink_cooldown(interaction.user.id)
@@ -384,44 +407,44 @@ class Drink(commands.Cog):
         limited_text = f"\n🌟 **限定供應：** {drink.limited_tag}" if drink.limited_tag else ""
         tasting_note = build_tasting_note(drink)
 
-        embed = build_main_menu_embed(interaction.user)
-        embed.color = rarity_meta["color"]
-        embed.add_field(
-            name="Bartender’s Pick",
+        # Message 1：Drink result。這格不放 bartender 圖、不放 buttons。
+        result_embed = discord.Embed(
+            title="Bartender’s Pick",
+            color=rarity_meta["color"],
+            timestamp=discord.utils.utcnow(),
+        )
+        result_embed.add_field(
+            name="　",
             value=f"{header}\n\n➡️ **品飲筆記：** {tasting_note}{limited_text}",
             inline=False,
         )
-        embed.add_field(
+        result_embed.add_field(
             name="吧枱級別",
             value=f"{rarity_meta['emoji']} **{rarity_meta['label']}**",
             inline=True,
         )
-        embed.add_field(
+        result_embed.add_field(
             name="風格分類",
             value=f"{ICON_MAP.get(drink.typ, ICON_MAP['default'])} `{drink.typ}`",
             inline=True,
         )
-        embed.add_field(
+        result_embed.add_field(
             name="酒單輪替",
             value=f"已避開你最近品嚐過的 {RECENT_HISTORY_LIMIT} 杯",
             inline=True,
         )
-        embed.set_footer(text="House Pour 78% · Signature Serve 18% · Top Shelf 4%")
+        result_embed.set_footer(text="House Pour 78% · Signature Serve 18% · Top Shelf 4%")
 
-        if interaction.response.is_done():
-            await interaction.followup.send(
-                embed=embed,
-                view=build_full_menu_view(interaction),
-                file=build_menu_file(),
-                ephemeral=False,
-            )
-        else:
-            await interaction.response.send_message(
-                embed=embed,
-                view=build_full_menu_view(interaction),
-                file=build_menu_file(),
-                ephemeral=False,
-            )
+        await send_or_followup(interaction, embed=result_embed, ephemeral=False)
+
+        # Message 2：Quick Bar。Bartender 圖放在這一格，下面跟 Layer 1 buttons。
+        menu_embed = build_main_menu_embed(interaction.user)
+        await interaction.followup.send(
+            embed=menu_embed,
+            view=build_full_menu_view(interaction),
+            file=build_menu_file(),
+            ephemeral=False,
+        )
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
