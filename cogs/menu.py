@@ -29,18 +29,16 @@ INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.c
 THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://threads.net/con9sole")
 
 INVITE_CHANNEL_ID = getattr(config, "INVITE_CHANNEL_ID", None)
-INVITE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 日
+INVITE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 INVITE_MAX_USES = 10
-INVITE_COOLDOWN_SECONDS = 10 * 60  # 每人 10 分鐘一次
+INVITE_COOLDOWN_SECONDS = 10 * 60
 
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
-# Admin Tool / admin_stats 權限：Manage Server 或 helper role 都可以使用
 HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
 HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper", "helpers"]))
 
-# 全局 user cooldown：同一個 user 撳任何 menu / submenu 按鈕都會共用 CD
 USER_MENU_COOLDOWNS: dict[int, float] = {}
 USER_INVITE_COOLDOWNS: dict[int, float] = {}
 
@@ -126,13 +124,11 @@ def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | 
                 (feature.lower().strip(), user_id, guild_id, now),
             )
     except Exception:
-        # 統計失敗唔應該影響主功能
         pass
 
 
 def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, int]]:
     init_stats_db()
-
     params: list[object] = []
     where: list[str] = []
 
@@ -145,9 +141,7 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
         where.append("used_at >= ?")
         params.append(since.isoformat())
 
-    where_sql = ""
-    if where:
-        where_sql = "WHERE " + " AND ".join(where)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
 
     with sqlite3.connect(STATS_DB) as conn:
         rows = conn.execute(
@@ -166,7 +160,6 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
 
 def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
     init_stats_db()
-
     params: list[object] = []
     where: list[str] = []
 
@@ -179,9 +172,7 @@ def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
         where.append("used_at >= ?")
         params.append(since.isoformat())
 
-    where_sql = ""
-    if where:
-        where_sql = "WHERE " + " AND ".join(where)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
 
     with sqlite3.connect(STATS_DB) as conn:
         row = conn.execute(
@@ -220,7 +211,6 @@ def can_use_admin(member: discord.Member | discord.User) -> bool:
     return False
 
 
-# Backward-compatible alias
 can_use_admin_stats = can_use_admin
 
 
@@ -240,8 +230,6 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
-# Backward compatibility：drink.py / cheers.py 仍然會 import 呢個舊 helper。
-# 新 Layer UI 入面，舊 main menu 等同 Layer 1 Quick Bar。
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     return build_quick_bar_embed(user)
 
@@ -333,26 +321,53 @@ def build_menu_file() -> discord.File | None:
     return discord.File(BARTENDER_IMAGE, filename=BARTENDER_ATTACHMENT_NAME)
 
 
+def _safe_message_kwargs(
+    *,
+    content: str | None = None,
+    embed: discord.Embed | None = None,
+    embeds: list[discord.Embed] | None = None,
+    view: discord.ui.View | None = None,
+    file: discord.File | None = None,
+    ephemeral: bool | None = None,
+) -> dict[str, object]:
+    """Only include non-None values.
+
+    This prevents the old NoneType.to_dict / NoneType.is_finished bugs from returning.
+    """
+    kwargs: dict[str, object] = {}
+    if content is not None:
+        kwargs["content"] = content
+    if embed is not None:
+        kwargs["embed"] = embed
+    if embeds is not None:
+        kwargs["embeds"] = embeds
+    if view is not None:
+        kwargs["view"] = view
+    if file is not None:
+        kwargs["file"] = file
+    if ephemeral is not None:
+        kwargs["ephemeral"] = ephemeral
+    return kwargs
+
+
 async def send_or_followup(
     interaction: discord.Interaction,
     *,
     content: str | None = None,
     embed: discord.Embed | None = None,
+    embeds: list[discord.Embed] | None = None,
     view: discord.ui.View | None = None,
     ephemeral: bool = False,
     file: discord.File | None = None,
 ) -> None:
-    kwargs: dict[str, object] = {
-        "content": content,
-        "embed": embed,
-        "view": view,
-        "ephemeral": ephemeral,
-    }
-
-    # 重要：file=None 時唔可以傳入 Discord send API，
-    # 否則可能觸發 AttributeError: 'NoneType' object has no attribute 'to_dict'
-    if file is not None:
-        kwargs["file"] = file
+    kwargs = _safe_message_kwargs(
+        content=content,
+        embed=embed,
+        embeds=embeds,
+        view=view,
+        ephemeral=ephemeral,
+        file=file,
+    )
 
     if interaction.response.is_done():
         await interaction.followup.send(**kwargs)
@@ -361,7 +376,6 @@ async def send_or_followup(
 
 
 async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
-    """先 acknowledge button interaction，避免較慢操作出現 This interaction failed。"""
     if interaction.response.is_done():
         return
     try:
@@ -406,7 +420,6 @@ async def maybe_call_method(
     *args: Any,
     **kwargs: Any,
 ) -> bool:
-    """嘗試用多個 method 名呼叫 target。成功執行回傳 True。"""
     for method_name in method_names:
         method = getattr(target, method_name, None)
         if method is None:
@@ -428,6 +441,9 @@ class BaseMenuView(discord.ui.View):
         self.cog = cog
 
     async def _enforce_cooldown(self, interaction: discord.Interaction) -> bool:
+        if can_use_admin(interaction.user):
+            return True
+
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
             await send_or_followup(
@@ -526,14 +542,15 @@ class BaseMenuView(discord.ui.View):
 
         await safe_defer(interaction, ephemeral=True)
 
-        retry_after = get_invite_retry_after(interaction.user.id)
-        if retry_after > 0:
-            await send_or_followup(
-                interaction,
-                content=f"⏳ 你啱啱已經產生過邀請碼，請等 {format_retry_seconds(retry_after)} 後再試。",
-                ephemeral=True,
-            )
-            return
+        if not can_use_admin(interaction.user):
+            retry_after = get_invite_retry_after(interaction.user.id)
+            if retry_after > 0:
+                await send_or_followup(
+                    interaction,
+                    content=f"⏳ 你啱啱已經產生過邀請碼，請等 {format_retry_seconds(retry_after)} 後再試。",
+                    ephemeral=True,
+                )
+                return
 
         await self._record(interaction, "invite")
 
@@ -587,7 +604,8 @@ class BaseMenuView(discord.ui.View):
             )
             return
 
-        touch_invite_cooldown(interaction.user.id)
+        if not can_use_admin(interaction.user):
+            touch_invite_cooldown(interaction.user.id)
 
         public_message = (
             "🔗 **邀請碼已生成：**\n"
@@ -618,30 +636,16 @@ class BaseMenuView(discord.ui.View):
 
 
 class QuickBarView(BaseMenuView):
-    """Layer 1：公開 Quick Bar。"""
-
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
-    @discord.ui.button(
-        label="Menu",
-        emoji="⬅️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:quick:home",
-        row=0,
-    )
+    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:quick:home", row=0)
     async def home_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
         await self._send_home_menu(interaction)
 
-    @discord.ui.button(
-        label="組隊",
-        emoji="👥",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:quick:team",
-        row=0,
-    )
+    @discord.ui.button(label="組隊", emoji="👥", style=discord.ButtonStyle.primary, custom_id="bartender:quick:team", row=0)
     async def team_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
@@ -651,35 +655,17 @@ class QuickBarView(BaseMenuView):
             missing_message="❌ 組隊功能未載入。",
         )
 
-    @discord.ui.button(
-        label="小隊 call",
-        emoji="🎧",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:quick:tempvc",
-        row=0,
-    )
+    @discord.ui.button(label="小隊 call", emoji="🎧", style=discord.ButtonStyle.primary, custom_id="bartender:quick:tempvc", row=0)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
             feature="tempvc",
             cog_name="TempVC",
-            method_names=[
-                "create_temp_vc_from_menu",
-                "send_control_panel",
-                "tempvc_panel",
-                "tempvc",
-                "panel",
-            ],
+            method_names=["create_temp_vc_from_menu", "send_control_panel", "tempvc_panel", "tempvc", "panel"],
             missing_message="❌ 搵唔到小隊房控制面板入口。",
         )
 
-    @discord.ui.button(
-        label="",
-        emoji="🎉",
-        style=discord.ButtonStyle.success,
-        custom_id="bartender:quick:cheers",
-        row=0,
-    )
+    @discord.ui.button(label="", emoji="🎉", style=discord.ButtonStyle.success, custom_id="bartender:quick:cheers", row=0)
     async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
@@ -689,13 +675,7 @@ class QuickBarView(BaseMenuView):
             missing_message="❌ 打氣功能未載入。",
         )
 
-    @discord.ui.button(
-        label="",
-        emoji="🍹",
-        style=discord.ButtonStyle.success,
-        custom_id="bartender:quick:drink",
-        row=0,
-    )
+    @discord.ui.button(label="", emoji="🍹", style=discord.ButtonStyle.success, custom_id="bartender:quick:drink", row=0)
     async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
@@ -707,59 +687,19 @@ class QuickBarView(BaseMenuView):
 
 
 class HomeMenuView(BaseMenuView):
-    """Layer 2：私人完整主頁。"""
-
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
-        self.add_item(
-            discord.ui.Button(
-                label="IG Page",
-                emoji="📸",
-                style=discord.ButtonStyle.link,
-                url=INSTAGRAM_URL,
-                row=2,
-            )
-        )
-        self.add_item(
-            discord.ui.Button(
-                label="Threads Page",
-                emoji="🧵",
-                style=discord.ButtonStyle.link,
-                url=THREADS_URL,
-                row=2,
-            )
-        )
+        self.add_item(discord.ui.Button(label="IG Page", emoji="📸", style=discord.ButtonStyle.link, url=INSTAGRAM_URL, row=2))
+        self.add_item(discord.ui.Button(label="Threads Page", emoji="🧵", style=discord.ButtonStyle.link, url=THREADS_URL, row=2))
 
         if RULES_URL:
-            self.add_item(
-                discord.ui.Button(
-                    label="Rules",
-                    emoji="🛡️",
-                    style=discord.ButtonStyle.link,
-                    url=RULES_URL,
-                    row=4,
-                )
-            )
+            self.add_item(discord.ui.Button(label="Rules", emoji="🛡️", style=discord.ButtonStyle.link, url=RULES_URL, row=4))
 
         if HELP_URL:
-            self.add_item(
-                discord.ui.Button(
-                    label="Help Channel",
-                    emoji="❓",
-                    style=discord.ButtonStyle.link,
-                    url=HELP_URL,
-                    row=4,
-                )
-            )
+            self.add_item(discord.ui.Button(label="Help Channel", emoji="❓", style=discord.ButtonStyle.link, url=HELP_URL, row=4))
 
-    @discord.ui.button(
-        label="組隊",
-        emoji="👥",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:home:team",
-        row=0,
-    )
+    @discord.ui.button(label="組隊", emoji="👥", style=discord.ButtonStyle.primary, custom_id="bartender:home:team", row=0)
     async def team_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
@@ -769,35 +709,17 @@ class HomeMenuView(BaseMenuView):
             missing_message="❌ 組隊功能未載入。",
         )
 
-    @discord.ui.button(
-        label="小隊 call",
-        emoji="🎧",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:home:tempvc",
-        row=0,
-    )
+    @discord.ui.button(label="小隊 call", emoji="🎧", style=discord.ButtonStyle.primary, custom_id="bartender:home:tempvc", row=0)
     async def tempvc_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
             feature="tempvc",
             cog_name="TempVC",
-            method_names=[
-                "create_temp_vc_from_menu",
-                "send_control_panel",
-                "tempvc_panel",
-                "tempvc",
-                "panel",
-            ],
+            method_names=["create_temp_vc_from_menu", "send_control_panel", "tempvc_panel", "tempvc", "panel"],
             missing_message="❌ 搵唔到小隊房控制面板入口。",
         )
 
-    @discord.ui.button(
-        label="打氣",
-        emoji="🎉",
-        style=discord.ButtonStyle.success,
-        custom_id="bartender:home:cheers",
-        row=1,
-    )
+    @discord.ui.button(label="打氣", emoji="🎉", style=discord.ButtonStyle.success, custom_id="bartender:home:cheers", row=1)
     async def cheers_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
@@ -807,13 +729,7 @@ class HomeMenuView(BaseMenuView):
             missing_message="❌ 打氣功能未載入。",
         )
 
-    @discord.ui.button(
-        label="調酒",
-        emoji="🍹",
-        style=discord.ButtonStyle.success,
-        custom_id="bartender:home:drink",
-        row=1,
-    )
+    @discord.ui.button(label="調酒", emoji="🍹", style=discord.ButtonStyle.success, custom_id="bartender:home:drink", row=1)
     async def drink_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._call_cog_method(
             interaction,
@@ -823,23 +739,11 @@ class HomeMenuView(BaseMenuView):
             missing_message="❌ 調酒功能未載入。",
         )
 
-    @discord.ui.button(
-        label="生成邀請碼",
-        emoji="🔗",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:home:invite",
-        row=3,
-    )
+    @discord.ui.button(label="生成邀請碼", emoji="🔗", style=discord.ButtonStyle.secondary, custom_id="bartender:home:invite", row=3)
     async def invite_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._create_invite_link(interaction)
 
-    @discord.ui.button(
-        label="幫助",
-        emoji="ℹ️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:home:help",
-        row=3,
-    )
+    @discord.ui.button(label="幫助", emoji="ℹ️", style=discord.ButtonStyle.secondary, custom_id="bartender:home:help", row=3)
     async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -853,13 +757,7 @@ class HomeMenuView(BaseMenuView):
             file=build_menu_file(),
         )
 
-    @discord.ui.button(
-        label="Admin Tool",
-        emoji="🛠️",
-        style=discord.ButtonStyle.danger,
-        custom_id="bartender:home:admin_tool",
-        row=3,
-    )
+    @discord.ui.button(label="Admin Tool", emoji="🛠️", style=discord.ButtonStyle.danger, custom_id="bartender:home:admin_tool", row=3)
     async def admin_tool_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -882,13 +780,7 @@ class HelpMenuView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
-    @discord.ui.button(
-        label="Menu",
-        emoji="⬅️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:help:home",
-        row=0,
-    )
+    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:help:home", row=0)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -899,13 +791,7 @@ class RoleToolsView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
-    @discord.ui.button(
-        label="Admin Tool",
-        emoji="🛠️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:role_tools:admin",
-        row=0,
-    )
+    @discord.ui.button(label="Admin Tool", emoji="🛠️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:admin", row=0)
     async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -919,13 +805,7 @@ class RoleToolsView(BaseMenuView):
             file=build_menu_file(),
         )
 
-    @discord.ui.button(
-        label="Menu",
-        emoji="⬅️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:role_tools:home",
-        row=0,
-    )
+    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:home", row=0)
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -936,13 +816,7 @@ class AdminToolView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
-    @discord.ui.button(
-        label="Stats",
-        emoji="📊",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:admin:stats",
-        row=0,
-    )
+    @discord.ui.button(label="Stats", emoji="📊", style=discord.ButtonStyle.primary, custom_id="bartender:admin:stats", row=0)
     async def stats_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -971,71 +845,35 @@ class AdminToolView(BaseMenuView):
             ),
             color=MENU_COLOR,
         )
-        embed.add_field(
-            name="功能使用分佈",
-            value=format_stats_block(stats),
-            inline=False,
-        )
+        embed.add_field(name="功能使用分佈", value=format_stats_block(stats), inline=False)
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
-        await send_or_followup(
-            interaction,
-            embed=embed,
-            view=AdminToolView(self.cog),
-            ephemeral=True,
-        )
+        await send_or_followup(interaction, embed=embed, view=AdminToolView(self.cog), ephemeral=True)
 
-    @discord.ui.button(
-        label="Reload",
-        emoji="🔄",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:admin:reload",
-        row=0,
-    )
+    @discord.ui.button(label="Reload", emoji="🔄", style=discord.ButtonStyle.primary, custom_id="bartender:admin:reload", row=0)
     async def reload_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+
         await safe_defer(interaction, ephemeral=True)
+
         if not await self._require_admin(interaction):
             return
 
         await self._record(interaction, "admin_reload")
-        reload_cog = interaction.client.get_cog("Reload") or interaction.client.get_cog("Reloader")
-
-        if reload_cog is not None:
-            try:
-                called = await maybe_call_method(
-                    reload_cog,
-                    ["reload_all", "reload_cogs", "do_reload", "reload", "reload_cmd"],
-                    interaction,
-                )
-                if called:
-                    return
-            except Exception as exc:
-                await send_or_followup(
-                    interaction,
-                    content=f"❌ Reload 執行失敗：{type(exc).__name__}\n請改用 `/reload` 查看詳細錯誤。",
-                    ephemeral=True,
-                )
-                return
 
         await send_or_followup(
             interaction,
             content=(
-                "🔄 Reload 指令入口：\n"
-                "請使用 `/reload` 重載所有或指定 cogs。\n\n"
-                "我未能直接接駁 `reload.py` 入面嘅 function；如果你想 Admin Tool 直接執行 reload，貼 `reload.py` 我可以對準 method。"
+                "🔄 **Reload 指令入口**\n\n"
+                "為避免 Admin Tool button 因不同 reload.py method signature 而再出現 interaction failed，"
+                "請使用 slash command：`/reload`。\n\n"
+                "呢個入口會保持穩定提示，不會直接觸發舊有 reload callback。"
             ),
             ephemeral=True,
         )
 
-    @discord.ui.button(
-        label="Role Tools",
-        emoji="🎭",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:admin:role_tools",
-        row=1,
-    )
+    @discord.ui.button(label="Role Tools", emoji="🎭", style=discord.ButtonStyle.secondary, custom_id="bartender:admin:role_tools", row=1)
     async def role_tools_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
@@ -1051,94 +889,49 @@ class AdminToolView(BaseMenuView):
             file=build_menu_file(),
         )
 
-    @discord.ui.button(
-        label="Ping",
-        emoji="🏓",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:admin:ping",
-        row=1,
-    )
+    @discord.ui.button(label="Ping", emoji="🏓", style=discord.ButtonStyle.secondary, custom_id="bartender:admin:ping", row=1)
     async def ping_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+
         await safe_defer(interaction, ephemeral=True)
+
         if not await self._require_admin(interaction):
             return
 
         await self._record(interaction, "admin_ping")
         latency_ms = round(interaction.client.latency * 1000)
-        await send_or_followup(
-            interaction,
-            content=f"🏓 Pong! `{latency_ms} ms`",
-            ephemeral=True,
-        )
+        await send_or_followup(interaction, content=f"🏓 Pong! `{latency_ms} ms`", ephemeral=True)
 
-    @discord.ui.button(
-        label="VC Teardown",
-        emoji="🧹",
-        style=discord.ButtonStyle.danger,
-        custom_id="bartender:admin:vc_teardown",
-        row=1,
-    )
+    @discord.ui.button(label="VC Teardown", emoji="🧹", style=discord.ButtonStyle.danger, custom_id="bartender:admin:vc_teardown", row=1)
     async def vc_teardown_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+
         await safe_defer(interaction, ephemeral=True)
+
         if not await self._require_admin(interaction):
             return
 
         await self._record(interaction, "admin_vc_teardown")
-        tempvc_cog = interaction.client.get_cog("TempVC")
-
-        if tempvc_cog is not None:
-            try:
-                called = await maybe_call_method(
-                    tempvc_cog,
-                    [
-                        "teardown_from_menu",
-                        "vc_teardown_from_menu",
-                        "admin_teardown",
-                        "teardown_all",
-                        "cleanup_all",
-                        "sweep_temp_vcs",
-                        "sweep",
-                    ],
-                    interaction,
-                )
-                if called:
-                    return
-            except Exception as exc:
-                await send_or_followup(
-                    interaction,
-                    content=f"❌ VC Teardown 執行失敗：{type(exc).__name__}\n請改用 `/vc_teardown` 查看詳細錯誤。",
-                    ephemeral=True,
-                )
-                return
 
         await send_or_followup(
             interaction,
             content=(
-                "🧹 VC Teardown 指令入口：\n"
-                "請使用 `/vc_teardown` 刪除由 Bot 建立的臨時語音房。\n\n"
-                "我未能直接接駁 `tempvc.py` 入面嘅 teardown function；如果你想 Admin Tool 直接執行，貼 `tempvc.py` 我可以對準 method。"
+                "🧹 **VC Teardown 指令入口**\n\n"
+                "為避免錯誤清理或接駁錯 method，請使用 slash command：`/vc_teardown`。\n\n"
+                "如果你想我將呢粒 button 直接接駁清理 function，之後貼最新版 `tempvc.py` 我再對準 method。"
             ),
             ephemeral=True,
         )
 
-    @discord.ui.button(
-        label="Menu",
-        emoji="⬅️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:admin:home",
-        row=2,
-    )
+    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:admin:home", row=2)
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
         await self._send_home_menu(interaction)
 
 
-# Backward-compatible aliases / helpers for other cogs
 MainMenuView = QuickBarView
 CommunityHubView = HomeMenuView
 MenuEntryView = QuickBarView
@@ -1152,7 +945,6 @@ def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View |
 
 
 def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | None:
-    """畀 drink.py / cheers.py 用：抽完後回到 Layer 1 Quick Bar。"""
     menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
@@ -1166,6 +958,9 @@ class Menu(commands.Cog):
         init_stats_db()
 
     async def _enforce_command_cooldown(self, interaction: discord.Interaction) -> bool:
+        if can_use_admin(interaction.user):
+            return True
+
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
             await send_or_followup(
@@ -1179,7 +974,6 @@ class Menu(commands.Cog):
         return True
 
     async def record_usage(self, feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
-        """畀其他 cogs 呼叫：await bot.get_cog("Menu").record_usage("drink", user_id, guild_id)"""
         record_usage_sync(feature, user_id, guild_id)
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
@@ -1196,25 +990,22 @@ class Menu(commands.Cog):
         )
 
     async def send_mention_menu(self, message: discord.Message) -> None:
-        """畀 bot.py 全局 on_message fallback 呼叫：純 tag bot 時出公開 Quick Bar。"""
-        retry_after = get_retry_after(message.author.id)
-        if retry_after > 0:
-            return
+        if not can_use_admin(message.author):
+            retry_after = get_retry_after(message.author.id)
+            if retry_after > 0:
+                return
+            touch_cooldown(message.author.id)
 
-        touch_cooldown(message.author.id)
-        record_usage_sync(
-            "mention_menu",
-            message.author.id,
-            message.guild.id if message.guild else None,
-        )
+        record_usage_sync("mention_menu", message.author.id, message.guild.id if message.guild else None)
 
         try:
-            await message.reply(
+            kwargs = _safe_message_kwargs(
                 embed=build_quick_bar_embed(message.author),
                 view=QuickBarView(self),
                 file=build_menu_file(),
-                mention_author=False,
             )
+            kwargs["mention_author"] = False
+            await message.reply(**kwargs)
         except discord.HTTPException:
             pass
 
@@ -1235,7 +1026,8 @@ class Menu(commands.Cog):
             return
 
         record_usage_sync("menu", interaction.user.id, interaction.guild_id)
-        await interaction.response.send_message(
+        await send_or_followup(
+            interaction,
             embed=build_quick_bar_embed(interaction.user),
             view=QuickBarView(self),
             ephemeral=False,
@@ -1246,7 +1038,8 @@ class Menu(commands.Cog):
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def community_hub(self, interaction: discord.Interaction) -> None:
         record_usage_sync("home_menu", interaction.user.id, interaction.guild_id)
-        await interaction.response.send_message(
+        await send_or_followup(
+            interaction,
             embed=build_home_menu_embed(interaction.user),
             view=HomeMenuView(self),
             ephemeral=True,
@@ -1265,8 +1058,9 @@ class Menu(commands.Cog):
     )
     async def admin_stats(self, interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
         if not can_use_admin(interaction.user):
-            await interaction.response.send_message(
-                "❌ 你需要 `Manage Server` 權限或 helpers role 先可以查看統計。",
+            await send_or_followup(
+                interaction,
+                content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以查看統計。",
                 ephemeral=True,
             )
             return
@@ -1301,15 +1095,10 @@ class Menu(commands.Cog):
             ),
             color=MENU_COLOR,
         )
-        embed.add_field(
-            name="功能使用分佈",
-            value=format_stats_block(stats),
-            inline=False,
-        )
+        embed.add_field(name="功能使用分佈", value=format_stats_block(stats), inline=False)
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
-        # Slash command 保持公開，方便 Admin / helpers 一齊睇。
-        await interaction.response.send_message(embed=embed, ephemeral=False)
+        await send_or_followup(interaction, embed=embed, ephemeral=False)
 
 
 async def setup(bot: commands.Bot) -> None:
