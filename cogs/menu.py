@@ -27,7 +27,6 @@ HK_TZ = timezone(timedelta(hours=8))
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
 THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://threads.net/con9sole")
-LEVEL_CHECK_CHANNEL_ID = getattr(config, "LEVEL_CHECK_CHANNEL_ID", None)
 
 # 可選：如果你有 rules/help channel link，可以喺 config.py 加：
 # RULES_URL = "https://discord.com/channels/.../..."
@@ -54,8 +53,6 @@ FEATURE_LABELS: dict[str, str] = {
     "drink": "調酒",
     "ig": "IG Page",
     "threads": "Threads Page",
-    "level": "Level",
-    "leaderboard": "Leaderboard",
     "help": "幫助",
     "admin_tool": "Admin Tool",
     "admin_stats": "Admin Stats",
@@ -75,8 +72,6 @@ FEATURE_EMOJIS: dict[str, str] = {
     "drink": "🍹",
     "ig": "📸",
     "threads": "🧵",
-    "level": "🏅",
-    "leaderboard": "🏆",
     "help": "ℹ️",
     "admin_tool": "🛠️",
     "admin_stats": "📊",
@@ -262,8 +257,6 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
             "🍹 **調酒** — 酒保特選\n"
             "📸 **IG Page** — 官方 Instagram\n"
             "🧵 **Threads Page** — 官方 Threads\n"
-            "🏅 **Level** — 嘗試透過 AmariBot 查詢等級\n"
-            "🏆 **Leaderboard** — 嘗試透過 AmariBot 查看排行榜\n"
             "ℹ️ **幫助** — 查看使用說明\n"
             "🛠️ **Admin Tool** — 管理工具"
         ),
@@ -285,7 +278,6 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed.add_field(name="🎉 打氣", value="送出隨機打氣內容。", inline=False)
     embed.add_field(name="🍹 調酒", value="抽一杯酒保特選飲品。", inline=False)
     embed.add_field(name="📸 IG Page / 🧵 Threads Page", value="查看 Con9sole 官方社交平台。", inline=False)
-    embed.add_field(name="🏅 Level / 🏆 Leaderboard", value="嘗試喺指定頻道發出 AmariBot 查詢指令。", inline=False)
     embed.add_field(name="🛠️ Admin Tool", value="Admin / helpers 專用管理工具。", inline=False)
     embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
     embed.set_footer(text=f"{user.display_name}，需要咩就撳相應按鈕。")
@@ -492,68 +484,6 @@ class BaseMenuView(discord.ui.View):
             ephemeral=True,
             file=build_menu_file(),
         )
-
-    async def _send_amari_command(self, interaction: discord.Interaction, *, command_text: str, feature: str) -> None:
-        if not await self._enforce_cooldown(interaction):
-            return
-
-        await self._record(interaction, feature)
-
-        if LEVEL_CHECK_CHANNEL_ID is None:
-            await send_or_followup(
-                interaction,
-                content=(
-                    "⚠️ 未設定等級查詢頻道。\n"
-                    "請先喺 `config.py` 加：\n"
-                    "`LEVEL_CHECK_CHANNEL_ID: int = 你的channel_id`"
-                ),
-                ephemeral=True,
-            )
-            return
-
-        channel = interaction.client.get_channel(int(LEVEL_CHECK_CHANNEL_ID))
-        if channel is None:
-            try:
-                channel = await interaction.client.fetch_channel(int(LEVEL_CHECK_CHANNEL_ID))
-            except discord.HTTPException:
-                channel = None
-
-        if not isinstance(channel, discord.TextChannel):
-            await send_or_followup(
-                interaction,
-                content="⚠️ 搵唔到指定等級查詢文字頻道，請檢查 `LEVEL_CHECK_CHANNEL_ID`。",
-                ephemeral=True,
-            )
-            return
-
-        try:
-            await channel.send(command_text)
-        except discord.Forbidden:
-            await send_or_followup(
-                interaction,
-                content=f"❌ Bartender 無權喺 {channel.mention} 發訊息，請檢查頻道權限。",
-                ephemeral=True,
-            )
-            return
-        except discord.HTTPException as exc:
-            await send_or_followup(
-                interaction,
-                content=f"❌ 發送 AmariBot 指令失敗：{type(exc).__name__}",
-                ephemeral=True,
-            )
-            return
-
-        await send_or_followup(
-            interaction,
-            content=(
-                f"✅ 已嘗試喺 {channel.mention} 發出查詢指令：\n"
-                f"`{command_text}`\n\n"
-                "如果 AmariBot 支援 bot-to-bot 指令，結果會出現在該頻道。\n"
-                "如果無反應，即代表 AmariBot 忽略其他 bot 發出嘅訊息。"
-            ),
-            ephemeral=True,
-        )
-
 
 class QuickBarView(BaseMenuView):
     """Layer 1：公開 Quick Bar。"""
@@ -762,39 +692,11 @@ class HomeMenuView(BaseMenuView):
         )
 
     @discord.ui.button(
-        label="Level",
-        emoji="🏅",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:home:level",
-        row=3,
-    )
-    async def level_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._send_amari_command(
-            interaction,
-            command_text=f":?rank {interaction.user.mention}",
-            feature="level",
-        )
-
-    @discord.ui.button(
-        label="Leaderboard",
-        emoji="🏆",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:home:leaderboard",
-        row=3,
-    )
-    async def leaderboard_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._send_amari_command(
-            interaction,
-            command_text=":?leaderboard",
-            feature="leaderboard",
-        )
-
-    @discord.ui.button(
         label="幫助",
         emoji="ℹ️",
         style=discord.ButtonStyle.secondary,
         custom_id="bartender:home:help",
-        row=4,
+        row=3,
     )
     async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
@@ -814,7 +716,7 @@ class HomeMenuView(BaseMenuView):
         emoji="🛠️",
         style=discord.ButtonStyle.danger,
         custom_id="bartender:home:admin_tool",
-        row=4,
+        row=3,
     )
     async def admin_tool_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
