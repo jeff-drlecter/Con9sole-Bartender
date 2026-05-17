@@ -33,20 +33,12 @@ INVITE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 日
 INVITE_MAX_USES = 10
 INVITE_COOLDOWN_SECONDS = 10 * 60  # 每人 10 分鐘一次
 
-# 可選：如果你有 rules/help channel link，可以喺 config.py 加：
-# RULES_URL = "https://discord.com/channels/.../..."
-# HELP_URL = "https://discord.com/channels/.../..."
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
-# /admin_stats / Admin Tool 權限：Manage Server 或 Helper role 都可以使用
-# 可選 config.py：
-# HELPER_ROLE_IDS = [123456789012345678]
-# HELPER_ROLE_NAMES = ["helpers"]
 HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
 HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper", "helpers"]))
 
-# 全局 user cooldown：同一個 user 撳任何 menu / submenu 按鈕都會共用 CD
 USER_MENU_COOLDOWNS: dict[int, float] = {}
 USER_INVITE_COOLDOWNS: dict[int, float] = {}
 
@@ -120,7 +112,6 @@ def init_stats_db() -> None:
 
 
 def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
-    """輕量記錄功能使用次數。SQLite 寫入量好低，對 CPU/RAM 影響極細。"""
     try:
         init_stats_db()
         now = datetime.now(timezone.utc).isoformat()
@@ -133,13 +124,11 @@ def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | 
                 (feature.lower().strip(), user_id, guild_id, now),
             )
     except Exception:
-        # 統計失敗唔應該影響主功能
         pass
 
 
 def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, int]]:
     init_stats_db()
-
     params: list[object] = []
     where: list[str] = []
 
@@ -173,7 +162,6 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
 
 def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
     init_stats_db()
-
     params: list[object] = []
     where: list[str] = []
 
@@ -212,7 +200,6 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
 
 
 def can_use_admin(member: discord.Member | discord.User) -> bool:
-    """Manage Server 或 Helper role 都可以使用 Admin Tool / Admin Stats。"""
     if not isinstance(member, discord.Member):
         return False
 
@@ -228,7 +215,6 @@ def can_use_admin(member: discord.Member | discord.User) -> bool:
     return False
 
 
-# Backward-compatible alias
 can_use_admin_stats = can_use_admin
 
 
@@ -248,8 +234,6 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
-# Backward compatibility：drink.py / cheers.py 仍然會 import 呢個舊 helper。
-# 新 Layer UI 入面，舊 main menu 等同 Layer 1 Quick Bar。
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     return build_quick_bar_embed(user)
 
@@ -369,7 +353,6 @@ async def send_or_followup(
 
 
 async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
-    """先 acknowledge button interaction，避免較慢操作出現 This interaction failed。"""
     if interaction.response.is_done():
         return
     try:
@@ -414,7 +397,6 @@ async def maybe_call_method(
     *args: Any,
     **kwargs: Any,
 ) -> bool:
-    """嘗試用多個 method 名呼叫 target。成功執行回傳 True。"""
     for method_name in method_names:
         method = getattr(target, method_name, None)
         if method is None:
@@ -598,33 +580,22 @@ class BaseMenuView(discord.ui.View):
         touch_invite_cooldown(interaction.user.id)
 
         public_message = (
-            "🔗 **邀請碼已生成：**
-"
-            f"{invite.url}
-
-"
-            "有效期：`7 日`
-"
-            "使用次數：`最多 10 次`
-"
-            "成員類型：`非 temporary member`
-
-"
+            "🔗 **邀請碼已生成：**\n"
+            f"{invite.url}\n\n"
+            "有效期：`7 日`\n"
+            "使用次數：`最多 10 次`\n"
+            "成員類型：`非 temporary member`\n\n"
             "大家可以 copy 呢條 link share 畀朋友加入社群。"
         )
 
-        # Layer 2 menu 係 ephemeral message。Discord 對 ephemeral component interaction
-        # 直接回覆公開訊息有機會失敗，所以公開邀請碼改用 channel.send()。
         try:
-            if interaction.channel is not None:
-                await interaction.channel.send(public_message)
-            else:
-                raise discord.HTTPException(response=None, message="No interaction channel")
-        except discord.HTTPException as exc:
+            if interaction.channel is None:
+                raise RuntimeError("No interaction channel")
+            await interaction.channel.send(public_message)
+        except Exception as exc:
             await send_or_followup(
                 interaction,
-                content=f"❌ 邀請碼已建立，但公開發送失敗：{type(exc).__name__}
-{invite.url}",
+                content=f"❌ 邀請碼已建立，但公開發送失敗：{type(exc).__name__}\n{invite.url}",
                 ephemeral=True,
             )
             return
@@ -637,8 +608,6 @@ class BaseMenuView(discord.ui.View):
 
 
 class QuickBarView(BaseMenuView):
-    """Layer 1：公開 Quick Bar。"""
-
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
@@ -726,8 +695,6 @@ class QuickBarView(BaseMenuView):
 
 
 class HomeMenuView(BaseMenuView):
-    """Layer 2：私人完整主頁。"""
-
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
@@ -997,19 +964,12 @@ class AdminToolView(BaseMenuView):
         )
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
-        try:
-            await send_or_followup(
-                interaction,
-                embed=embed,
-                view=AdminToolView(self.cog),
-                ephemeral=True,
-            )
-        except discord.HTTPException as exc:
-            await send_or_followup(
-                interaction,
-                content=f"❌ Stats 顯示失敗：{type(exc).__name__}",
-                ephemeral=True,
-            )
+        await send_or_followup(
+            interaction,
+            embed=embed,
+            view=AdminToolView(self.cog),
+            ephemeral=True,
+        )
 
     @discord.ui.button(
         label="Reload",
@@ -1031,17 +991,16 @@ class AdminToolView(BaseMenuView):
         if reload_cog is not None:
             try:
                 called = await maybe_call_method(
-                reload_cog,
-                ["reload_all", "reload_cogs", "do_reload", "reload", "reload_cmd"],
-                interaction,
+                    reload_cog,
+                    ["reload_all", "reload_cogs", "do_reload", "reload", "reload_cmd"],
+                    interaction,
                 )
                 if called:
                     return
             except Exception as exc:
                 await send_or_followup(
                     interaction,
-                    content=f"❌ Reload 執行失敗：{type(exc).__name__}
-請改用 `/reload` 查看詳細錯誤。",
+                    content=f"❌ Reload 執行失敗：{type(exc).__name__}\n請改用 `/reload` 查看詳細錯誤。",
                     ephemeral=True,
                 )
                 return
@@ -1120,25 +1079,24 @@ class AdminToolView(BaseMenuView):
         if tempvc_cog is not None:
             try:
                 called = await maybe_call_method(
-                tempvc_cog,
-                [
-                    "teardown_from_menu",
-                    "vc_teardown_from_menu",
-                    "admin_teardown",
-                    "teardown_all",
-                    "cleanup_all",
-                    "sweep_temp_vcs",
-                    "sweep",
-                ],
-                interaction,
+                    tempvc_cog,
+                    [
+                        "teardown_from_menu",
+                        "vc_teardown_from_menu",
+                        "admin_teardown",
+                        "teardown_all",
+                        "cleanup_all",
+                        "sweep_temp_vcs",
+                        "sweep",
+                    ],
+                    interaction,
                 )
                 if called:
                     return
             except Exception as exc:
                 await send_or_followup(
                     interaction,
-                    content=f"❌ VC Teardown 執行失敗：{type(exc).__name__}
-請改用 `/vc_teardown` 查看詳細錯誤。",
+                    content=f"❌ VC Teardown 執行失敗：{type(exc).__name__}\n請改用 `/vc_teardown` 查看詳細錯誤。",
                     ephemeral=True,
                 )
                 return
@@ -1166,7 +1124,6 @@ class AdminToolView(BaseMenuView):
         await self._send_home_menu(interaction)
 
 
-# Backward-compatible aliases / helpers for other cogs
 MainMenuView = QuickBarView
 CommunityHubView = HomeMenuView
 MenuEntryView = QuickBarView
@@ -1180,7 +1137,6 @@ def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View |
 
 
 def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | None:
-    """畀 drink.py / cheers.py 用：抽完後回到 Layer 1 Quick Bar。"""
     menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
@@ -1207,7 +1163,6 @@ class Menu(commands.Cog):
         return True
 
     async def record_usage(self, feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
-        """畀其他 cogs 呼叫：await bot.get_cog("Menu").record_usage("drink", user_id, guild_id)"""
         record_usage_sync(feature, user_id, guild_id)
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
@@ -1224,7 +1179,6 @@ class Menu(commands.Cog):
         )
 
     async def send_mention_menu(self, message: discord.Message) -> None:
-        """畀 bot.py 全局 on_message fallback 呼叫：純 tag bot 時出公開 Quick Bar。"""
         retry_after = get_retry_after(message.author.id)
         if retry_after > 0:
             return
@@ -1336,7 +1290,6 @@ class Menu(commands.Cog):
         )
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
-        # Slash command 保持公開，方便 Admin / helpers 一齊睇。
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
