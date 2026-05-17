@@ -292,12 +292,20 @@ async def send_or_followup(
     content: str | None = None,
     ephemeral: bool = False,
 ) -> None:
-    kwargs: dict[str, object] = {
-        "content": content,
-        "embed": embed,
-        "view": view,
-        "ephemeral": ephemeral,
-    }
+    """Safely send interaction response / followup.
+
+    discord.py 對 file=None / view=None 會有機會當成實物處理，
+    導致 NoneType.to_dict / NoneType.is_finished。
+    所以所有 optional arg 都只喺非 None 時先放入 kwargs。
+    """
+    kwargs: dict[str, object] = {"ephemeral": ephemeral}
+
+    if content is not None:
+        kwargs["content"] = content
+    if embed is not None:
+        kwargs["embed"] = embed
+    if view is not None:
+        kwargs["view"] = view
     if file is not None:
         kwargs["file"] = file
 
