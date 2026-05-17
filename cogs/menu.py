@@ -36,9 +36,11 @@ INVITE_COOLDOWN_SECONDS = 10 * 60  # 每人 10 分鐘一次
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
+# Admin Tool / admin_stats 權限：Manage Server 或 helper role 都可以使用
 HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
 HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper", "helpers"]))
 
+# 全局 user cooldown：同一個 user 撳任何 menu / submenu 按鈕都會共用 CD
 USER_MENU_COOLDOWNS: dict[int, float] = {}
 USER_INVITE_COOLDOWNS: dict[int, float] = {}
 
@@ -124,11 +126,13 @@ def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | 
                 (feature.lower().strip(), user_id, guild_id, now),
             )
     except Exception:
+        # 統計失敗唔應該影響主功能
         pass
 
 
 def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, int]]:
     init_stats_db()
+
     params: list[object] = []
     where: list[str] = []
 
@@ -162,6 +166,7 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
 
 def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
     init_stats_db()
+
     params: list[object] = []
     where: list[str] = []
 
@@ -215,6 +220,7 @@ def can_use_admin(member: discord.Member | discord.User) -> bool:
     return False
 
 
+# Backward-compatible alias
 can_use_admin_stats = can_use_admin
 
 
@@ -234,6 +240,8 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
+# Backward compatibility：drink.py / cheers.py 仍然會 import 呢個舊 helper。
+# 新 Layer UI 入面，舊 main menu 等同 Layer 1 Quick Bar。
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     return build_quick_bar_embed(user)
 
@@ -334,29 +342,30 @@ async def send_or_followup(
     ephemeral: bool = False,
     file: discord.File | None = None,
 ) -> None:
+    kwargs: dict[str, object] = {
+        "content": content,
+        "embed": embed,
+        "view": view,
+        "ephemeral": ephemeral,
+    }
+
+    # 重要：file=None 時唔可以傳入 Discord send API，
+    # 否則可能觸發 AttributeError: 'NoneType' object has no attribute 'to_dict'
+    if file is not None:
+        kwargs["file"] = file
+
     if interaction.response.is_done():
-        await interaction.followup.send(
-            content=content,
-            embed=embed,
-            view=view,
-            ephemeral=ephemeral,
-            file=file,
-        )
+        await interaction.followup.send(**kwargs)
     else:
-        await interaction.response.send_message(
-            content=content,
-            embed=embed,
-            view=view,
-            ephemeral=ephemeral,
-            file=file,
-        )
+        await interaction.response.send_message(**kwargs)
 
 
 async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
+    """先 acknowledge button interaction，避免較慢操作出現 This interaction failed。"""
     if interaction.response.is_done():
         return
     try:
-        await interaction.response.defer(ephemeral=ephemeral, thinking=False)
+        await interaction.response.defer(ephemeral=ephemeral, thinking=True)
     except discord.HTTPException:
         pass
 
@@ -397,6 +406,7 @@ async def maybe_call_method(
     *args: Any,
     **kwargs: Any,
 ) -> bool:
+    """嘗試用多個 method 名呼叫 target。成功執行回傳 True。"""
     for method_name in method_names:
         method = getattr(target, method_name, None)
         if method is None:
@@ -608,6 +618,8 @@ class BaseMenuView(discord.ui.View):
 
 
 class QuickBarView(BaseMenuView):
+    """Layer 1：公開 Quick Bar。"""
+
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
@@ -695,6 +707,8 @@ class QuickBarView(BaseMenuView):
 
 
 class HomeMenuView(BaseMenuView):
+    """Layer 2：私人完整主頁。"""
+
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog)
 
@@ -1124,6 +1138,7 @@ class AdminToolView(BaseMenuView):
         await self._send_home_menu(interaction)
 
 
+# Backward-compatible aliases / helpers for other cogs
 MainMenuView = QuickBarView
 CommunityHubView = HomeMenuView
 MenuEntryView = QuickBarView
@@ -1137,6 +1152,7 @@ def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View |
 
 
 def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | None:
+    """畀 drink.py / cheers.py 用：抽完後回到 Layer 1 Quick Bar。"""
     menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
@@ -1163,6 +1179,7 @@ class Menu(commands.Cog):
         return True
 
     async def record_usage(self, feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
+        """畀其他 cogs 呼叫：await bot.get_cog("Menu").record_usage("drink", user_id, guild_id)"""
         record_usage_sync(feature, user_id, guild_id)
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
@@ -1179,6 +1196,7 @@ class Menu(commands.Cog):
         )
 
     async def send_mention_menu(self, message: discord.Message) -> None:
+        """畀 bot.py 全局 on_message fallback 呼叫：純 tag bot 時出公開 Quick Bar。"""
         retry_after = get_retry_after(message.author.id)
         if retry_after > 0:
             return
@@ -1290,6 +1308,7 @@ class Menu(commands.Cog):
         )
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
+        # Slash command 保持公開，方便 Admin / helpers 一齊睇。
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
