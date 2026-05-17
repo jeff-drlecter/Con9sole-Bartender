@@ -232,4 +232,8 @@ class Cheers(commands.Cog):
         inter: discord.Interaction,
         to: discord.Member | None = None,
     ) -> None:
-        await self.do_cheers(
+        await self.do_cheers(inter, to, enforce_cooldown=True)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Cheers(bot))
