@@ -12,7 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
-from cogs.menu import build_full_menu_view, build_main_menu_embed, build_menu_file, can_use_admin
+from cogs.menu import build_full_menu_view, build_menu_file, can_use_admin
 
 ICON_MAP = {
     "short": "🍸",
@@ -33,6 +33,8 @@ RARITY_STYLE = {
 RECENT_HISTORY_LIMIT = 8
 DRINK_COOLDOWN_SECONDS = 1800.0
 DRINK_USER_COOLDOWNS: dict[int, float] = {}
+
+BARTENDER_ATTACHMENT_NAME = "bartender.png"
 
 
 @dataclass(frozen=True)
@@ -294,9 +296,9 @@ async def send_or_followup(
 ) -> None:
     """Safely send interaction response / followup.
 
-    discord.py 對 file=None / view=None 會有機會當成實物處理，
-    導致 NoneType.to_dict / NoneType.is_finished。
-    所以所有 optional arg 都只喺非 None 時先放入 kwargs。
+    optional args 只喺非 None 時先傳入 discord.py，避免：
+    - NoneType.to_dict
+    - NoneType.is_finished
     """
     kwargs: dict[str, object] = {"ephemeral": ephemeral}
 
@@ -315,29 +317,23 @@ async def send_or_followup(
         await interaction.response.send_message(**kwargs)
 
 
-def build_quick_bar_kwargs(interaction: discord.Interaction) -> dict[str, object]:
-    """Build Quick Bar payload for the same Discord message.
+def build_result_payload(interaction: discord.Interaction, result_embed: discord.Embed) -> dict[str, object]:
+    """方案 B：一個 compact result embed + bartender thumbnail + Quick Bar buttons.
 
-    用同一個 message 出兩個 embeds：
-    1) Bartender’s Pick result
-    2) Con9sole Bartender Quick Bar
-
-    注意：唔傳 view=None / file=None，避免 discord.py NoneType error。
+    不再附加第二個大圖 Quick Bar embed，減少 mobile 洗版感。
     """
-    menu_embed = build_main_menu_embed(interaction.user)
-
-    kwargs: dict[str, object] = {}
+    payload: dict[str, object] = {"embed": result_embed}
 
     menu_view = build_full_menu_view(interaction)
     if menu_view is not None:
-        kwargs["view"] = menu_view
+        payload["view"] = menu_view
 
     menu_file = build_menu_file()
     if menu_file is not None:
-        kwargs["file"] = menu_file
+        result_embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+        payload["file"] = menu_file
 
-    kwargs["menu_embed"] = menu_embed
-    return kwargs
+    return payload
 
 
 class Drink(commands.Cog):
@@ -425,43 +421,23 @@ class Drink(commands.Cog):
         header = self._build_header_line(interaction, to, drink)
         limited_text = f"\n🌟 **限定供應：** {drink.limited_tag}" if drink.limited_tag else ""
         tasting_note = build_tasting_note(drink)
+        style_icon = ICON_MAP.get(drink.typ, ICON_MAP["default"])
 
         result_embed = discord.Embed(
-            title="Bartender’s Pick",
+            title="🍹 Bartender’s Pick",
+            description=(
+                f"{header}\n\n"
+                f"➡️ **品飲筆記：** {tasting_note}{limited_text}\n\n"
+                f"{rarity_meta['emoji']} **{rarity_meta['label']}** ｜ "
+                f"{style_icon} `{drink.typ}` ｜ "
+                f"已避開最近 {RECENT_HISTORY_LIMIT} 杯"
+            ),
             color=rarity_meta["color"],
             timestamp=discord.utils.utcnow(),
         )
-        result_embed.add_field(
-            name="　",
-            value=f"{header}\n\n➡️ **品飲筆記：** {tasting_note}{limited_text}",
-            inline=False,
-        )
-        result_embed.add_field(
-            name="吧枱級別",
-            value=f"{rarity_meta['emoji']} **{rarity_meta['label']}**",
-            inline=True,
-        )
-        result_embed.add_field(
-            name="風格分類",
-            value=f"{ICON_MAP.get(drink.typ, ICON_MAP['default'])} `{drink.typ}`",
-            inline=True,
-        )
-        result_embed.add_field(
-            name="酒單輪替",
-            value=f"已避開你最近品嚐過的 {RECENT_HISTORY_LIMIT} 杯",
-            inline=True,
-        )
-        result_embed.set_footer(text="House Pour 78% · Signature Serve 18% · Top Shelf 4%")
+        result_embed.set_footer(text="Con9sole Bartender｜⬅️ Menu 返回吧枱主頁")
 
-        quick_bar_kwargs = build_quick_bar_kwargs(interaction)
-        menu_embed = quick_bar_kwargs.pop("menu_embed")
-
-        # Same Discord message, two embeds, one button row.
-        # 呢個 layout 會似 RPG bot：同一個 bot message 入面，上方結果卡，下方 Quick Bar 卡。
-        send_kwargs: dict[str, object] = {
-            "embeds": [result_embed, menu_embed],
-        }
-        send_kwargs.update(quick_bar_kwargs)
+        send_kwargs = build_result_payload(interaction, result_embed)
 
         if interaction.response.is_done():
             await interaction.followup.send(**send_kwargs)
