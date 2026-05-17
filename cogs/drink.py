@@ -315,21 +315,18 @@ async def send_or_followup(
         await interaction.response.send_message(**kwargs)
 
 
-async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
-    """Drink result 之後公開補一個 Quick Bar。
+def build_quick_bar_kwargs(interaction: discord.Interaction) -> dict[str, object]:
+    """Build Quick Bar payload for the same Discord message.
 
-    防 fail 設計：
-    - 不傳入 file=None
-    - 不傳入 view=None
-    - 加 content，避免 Discord mobile 將 attachment-only message 收埋
-    - channel.send 失敗時會回覆使用者，並 print traceback 到 Fly logs
+    用同一個 message 出兩個 embeds：
+    1) Bartender’s Pick result
+    2) Con9sole Bartender Quick Bar
+
+    注意：唔傳 view=None / file=None，避免 discord.py NoneType error。
     """
     menu_embed = build_main_menu_embed(interaction.user)
 
-    kwargs: dict[str, object] = {
-        "content": "🍸 **Con9sole Bartender**",
-        "embed": menu_embed,
-    }
+    kwargs: dict[str, object] = {}
 
     menu_view = build_full_menu_view(interaction)
     if menu_view is not None:
@@ -339,27 +336,8 @@ async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
     if menu_file is not None:
         kwargs["file"] = menu_file
 
-    try:
-        if interaction.channel is None:
-            await interaction.followup.send(
-                content="⚠️ Drink result 已送出，但無法取得目前頻道，未能送出 Quick Bar。",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.channel.send(**kwargs)
-
-    except Exception as exc:
-        import traceback
-
-        traceback.print_exc()
-        try:
-            await interaction.followup.send(
-                content=f"⚠️ Drink result 已送出，但 Quick Bar 發送失敗：`{type(exc).__name__}`",
-                ephemeral=True,
-            )
-        except Exception:
-            traceback.print_exc()
+    kwargs["menu_embed"] = menu_embed
+    return kwargs
 
 
 class Drink(commands.Cog):
@@ -475,8 +453,20 @@ class Drink(commands.Cog):
         )
         result_embed.set_footer(text="House Pour 78% · Signature Serve 18% · Top Shelf 4%")
 
-        await send_or_followup(interaction, embed=result_embed, ephemeral=False)
-        await send_quick_bar_after_result(interaction)
+        quick_bar_kwargs = build_quick_bar_kwargs(interaction)
+        menu_embed = quick_bar_kwargs.pop("menu_embed")
+
+        # Same Discord message, two embeds, one button row.
+        # 呢個 layout 會似 RPG bot：同一個 bot message 入面，上方結果卡，下方 Quick Bar 卡。
+        send_kwargs: dict[str, object] = {
+            "embeds": [result_embed, menu_embed],
+        }
+        send_kwargs.update(quick_bar_kwargs)
+
+        if interaction.response.is_done():
+            await interaction.followup.send(**send_kwargs)
+        else:
+            await interaction.response.send_message(**send_kwargs)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
