@@ -204,11 +204,9 @@ class TempVCLimitSelect(discord.ui.Select):
         options = [
             discord.SelectOption(label="2 人", value="2"),
             discord.SelectOption(label="4 人", value="4"),
-            discord.SelectOption(label="8 人", value="8"),
+            discord.SelectOption(label="5 人", value="5"),
+            discord.SelectOption(label="11 人", value="11"),
             discord.SelectOption(label="12 人", value="12"),
-            discord.SelectOption(label="16 人", value="16"),
-            discord.SelectOption(label="24 人", value="24"),
-            discord.SelectOption(label="32 人（預設）", value="32"),
         ]
         super().__init__(
             placeholder="選擇房間人數上限（可留空，預設 32）",
