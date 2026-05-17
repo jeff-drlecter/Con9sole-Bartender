@@ -308,10 +308,18 @@ async def send_or_followup(
 
 
 async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
-    """Drink result 之後公開補一個 Quick Bar。用 channel.send() 最穩。"""
+    """Drink result 之後公開補一個 Quick Bar。
+
+    防 fail 設計：
+    - 不傳入 file=None
+    - 不傳入 view=None
+    - 加 content，避免 Discord mobile 將 attachment-only message 收埋
+    - channel.send 失敗時會回覆使用者，並 print traceback 到 Fly logs
+    """
     menu_embed = build_main_menu_embed(interaction.user)
 
     kwargs: dict[str, object] = {
+        "content": "🍸 **Con9sole Bartender**",
         "embed": menu_embed,
     }
 
@@ -323,11 +331,27 @@ async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
     if menu_file is not None:
         kwargs["file"] = menu_file
 
-    if interaction.channel is None:
-        await interaction.followup.send(embed=menu_embed, ephemeral=True)
-        return
+    try:
+        if interaction.channel is None:
+            await interaction.followup.send(
+                content="⚠️ Drink result 已送出，但無法取得目前頻道，未能送出 Quick Bar。",
+                ephemeral=True,
+            )
+            return
 
-    await interaction.channel.send(**kwargs)
+        await interaction.channel.send(**kwargs)
+
+    except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(
+                content=f"⚠️ Drink result 已送出，但 Quick Bar 發送失敗：`{type(exc).__name__}`",
+                ephemeral=True,
+            )
+        except Exception:
+            traceback.print_exc()
 
 
 class Drink(commands.Cog):
