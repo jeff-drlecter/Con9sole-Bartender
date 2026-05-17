@@ -8,8 +8,9 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs.menu import build_full_menu_view, build_main_menu_embed, build_menu_file, can_use_admin
+from cogs.menu import build_full_menu_view, build_menu_file, can_use_admin
 
+BARTENDER_ATTACHMENT_NAME = "bartender.png"
 
 CHEERS_QUOTES: list[tuple[str, str, str]] = [
     (
@@ -503,7 +504,6 @@ async def send_or_followup(
     inter: discord.Interaction,
     *,
     embed: discord.Embed | None = None,
-    embeds: list[discord.Embed] | None = None,
     view: discord.ui.View | None = None,
     file: discord.File | None = None,
     content: str | None = None,
@@ -521,8 +521,6 @@ async def send_or_followup(
         kwargs["content"] = content
     if embed is not None:
         kwargs["embed"] = embed
-    if embeds is not None:
-        kwargs["embeds"] = embeds
     if view is not None:
         kwargs["view"] = view
     if file is not None:
@@ -534,17 +532,12 @@ async def send_or_followup(
         await inter.response.send_message(**kwargs)
 
 
-def build_quick_bar_payload(inter: discord.Interaction) -> dict[str, object]:
-    """Build Quick Bar payload for the same Discord message.
+def build_result_payload(inter: discord.Interaction, result_embed: discord.Embed) -> dict[str, object]:
+    """方案 B：一個 compact result embed + bartender thumbnail + Quick Bar buttons.
 
-    Layout:
-    [Embed 1: Cheers result]
-    [Embed 2: Con9sole Bartender Quick Bar]
-    [Buttons]
+    不再附加第二個大圖 Quick Bar embed，減少 mobile 洗版感。
     """
-    menu_embed = build_main_menu_embed(inter.user)
-
-    payload: dict[str, object] = {"menu_embed": menu_embed}
+    payload: dict[str, object] = {"embed": result_embed}
 
     menu_view = build_full_menu_view(inter)
     if menu_view is not None:
@@ -552,6 +545,7 @@ def build_quick_bar_payload(inter: discord.Interaction) -> dict[str, object]:
 
     menu_file = build_menu_file()
     if menu_file is not None:
+        result_embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
         payload["file"] = menu_file
 
     return payload
@@ -600,28 +594,24 @@ class Cheers(commands.Cog):
         eng, zh, author = random.choice(CHEERS_QUOTES)
 
         if to:
-            result_desc = f"🎉 {inter.user.mention} 為 {to.mention} 安排了打氣時間！\n\n**{author} 講過：**"
+            intro = f"🎉 {inter.user.mention} 為 {to.mention} 安排了打氣時間！"
         else:
-            result_desc = f"{inter.user.mention} 的打氣時間！ 🎉\n\n**{author} 講過：**"
+            intro = f"{inter.user.mention} 的打氣時間！ 🎉"
 
         result_embed = discord.Embed(
             title="🎉 打氣時間",
-            description=result_desc,
+            description=(
+                f"{intro}\n\n"
+                f"**{author}**\n"
+                f"💬 {eng}\n"
+                f"➡️ {zh}"
+            ),
             color=0x57F287,
             timestamp=discord.utils.utcnow(),
         )
-        result_embed.add_field(name="English", value=f"💬 {eng}", inline=False)
-        result_embed.add_field(name="中文", value=f"➡️ {zh}", inline=False)
-        result_embed.set_footer(text="Con9sole-Bartender Cheers")
+        result_embed.set_footer(text="Con9sole Bartender｜⬅️ Menu 返回吧枱主頁")
 
-        quick_bar_payload = build_quick_bar_payload(inter)
-        menu_embed = quick_bar_payload.pop("menu_embed")
-
-        send_kwargs: dict[str, object] = {
-            "embeds": [result_embed, menu_embed],
-            "ephemeral": False,
-        }
-        send_kwargs.update(quick_bar_payload)
+        send_kwargs = build_result_payload(inter, result_embed)
 
         if inter.response.is_done():
             await inter.followup.send(**send_kwargs)
