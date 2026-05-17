@@ -142,6 +142,33 @@ def touch_cheers_cooldown(user_id: int) -> None:
     CHEERS_USER_COOLDOWNS[user_id] = time.time()
 
 
+async def send_or_followup(
+    inter: discord.Interaction,
+    *,
+    embed: discord.Embed | None = None,
+    view: discord.ui.View | None = None,
+    file: discord.File | None = None,
+    content: str | None = None,
+    ephemeral: bool = False,
+) -> None:
+    if inter.response.is_done():
+        await inter.followup.send(
+            content=content,
+            embed=embed,
+            view=view,
+            file=file,
+            ephemeral=ephemeral,
+        )
+    else:
+        await inter.response.send_message(
+            content=content,
+            embed=embed,
+            view=view,
+            file=file,
+            ephemeral=ephemeral,
+        )
+
+
 class Cheers(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -150,10 +177,7 @@ class Cheers(commands.Cog):
         retry_after = get_cheers_retry_after(inter.user.id)
         if retry_after > 0:
             message = f"⏳ 請等 {retry_after:.1f} 秒後再使用打氣時間。"
-            if inter.response.is_done():
-                await inter.followup.send(message, ephemeral=True)
-            else:
-                await inter.response.send_message(message, ephemeral=True)
+            await send_or_followup(inter, content=message, ephemeral=True)
             return False
 
         touch_cheers_cooldown(inter.user.id)
@@ -178,28 +202,27 @@ class Cheers(commands.Cog):
         else:
             result_desc = f"{inter.user.mention} 的打氣時間！ 🎉\n\n**{author} 講過：**"
 
-        embed = build_main_menu_embed(inter.user)
-        embed.color = 0x57F287
-        embed.add_field(name="　", value=result_desc, inline=False)
-        embed.add_field(name="English", value=f"💬 {eng}", inline=False)
-        embed.add_field(name="中文", value=f"➡️ {zh}", inline=False)
-        embed.set_footer(text="Con9sole-Bartender Cheers")
-        embed.timestamp = discord.utils.utcnow()
+        # Message 1：打氣結果。這格不放 bartender 圖、不放 menu buttons。
+        result_embed = discord.Embed(
+            title="🎉 打氣時間",
+            description=result_desc,
+            color=0x57F287,
+            timestamp=discord.utils.utcnow(),
+        )
+        result_embed.add_field(name="English", value=f"💬 {eng}", inline=False)
+        result_embed.add_field(name="中文", value=f"➡️ {zh}", inline=False)
+        result_embed.set_footer(text="Con9sole-Bartender Cheers")
 
-        if inter.response.is_done():
-            await inter.followup.send(
-                embed=embed,
-                view=build_full_menu_view(inter),
-                file=build_menu_file(),
-                ephemeral=False,   # 🔥 改呢度
-            )
-        else:
-            await inter.response.send_message(
-                embed=embed,
-                view=build_full_menu_view(inter),
-                file=build_menu_file(),
-                ephemeral=False,   # 🔥 改呢度
-            )
+        await send_or_followup(inter, embed=result_embed, ephemeral=False)
+
+        # Message 2：Quick Bar。Bartender 圖放在這一格，下面跟 Layer 1 buttons。
+        menu_embed = build_main_menu_embed(inter.user)
+        await inter.followup.send(
+            embed=menu_embed,
+            view=build_full_menu_view(inter),
+            file=build_menu_file(),
+            ephemeral=False,
+        )
 
     @app_commands.command(name="cheers", description="隨機派一句名人鼓勵語錄（中英對照，Embed）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
@@ -209,8 +232,4 @@ class Cheers(commands.Cog):
         inter: discord.Interaction,
         to: discord.Member | None = None,
     ) -> None:
-        await self.do_cheers(inter, to, enforce_cooldown=True)
-
-
-async def setup(bot: commands.Bot):
-    await bot.add_cog(Cheers(bot))
+        await self.do_cheers(
