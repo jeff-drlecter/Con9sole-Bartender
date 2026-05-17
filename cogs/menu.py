@@ -5,7 +5,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable, Any
+from typing import Any, Awaitable, Callable
 
 import discord
 from discord import app_commands
@@ -28,6 +28,11 @@ COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
 THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://threads.net/con9sole")
 
+INVITE_CHANNEL_ID = getattr(config, "INVITE_CHANNEL_ID", None)
+INVITE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 日
+INVITE_MAX_USES = 10
+INVITE_COOLDOWN_SECONDS = 10 * 60  # 每人 10 分鐘一次
+
 # 可選：如果你有 rules/help channel link，可以喺 config.py 加：
 # RULES_URL = "https://discord.com/channels/.../..."
 # HELP_URL = "https://discord.com/channels/.../..."
@@ -43,6 +48,7 @@ HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper"
 
 # 全局 user cooldown：同一個 user 撳任何 menu / submenu 按鈕都會共用 CD
 USER_MENU_COOLDOWNS: dict[int, float] = {}
+USER_INVITE_COOLDOWNS: dict[int, float] = {}
 
 FEATURE_LABELS: dict[str, str] = {
     "menu": "Menu",
@@ -53,6 +59,7 @@ FEATURE_LABELS: dict[str, str] = {
     "drink": "調酒",
     "ig": "IG Page",
     "threads": "Threads Page",
+    "invite": "生成邀請碼",
     "help": "幫助",
     "admin_tool": "Admin Tool",
     "admin_stats": "Admin Stats",
@@ -72,6 +79,7 @@ FEATURE_EMOJIS: dict[str, str] = {
     "drink": "🍹",
     "ig": "📸",
     "threads": "🧵",
+    "invite": "🔗",
     "help": "ℹ️",
     "admin_tool": "🛠️",
     "admin_stats": "📊",
@@ -257,6 +265,7 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
             "🍹 **調酒** — 酒保特選\n"
             "📸 **IG Page** — 官方 Instagram\n"
             "🧵 **Threads Page** — 官方 Threads\n"
+            "🔗 **生成邀請碼** — 產生 7 日 / 10 次使用嘅公開邀請連結\n"
             "ℹ️ **幫助** — 查看使用說明\n"
             "🛠️ **Admin Tool** — 管理工具"
         ),
@@ -278,6 +287,11 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed.add_field(name="🎉 打氣", value="送出隨機打氣內容。", inline=False)
     embed.add_field(name="🍹 調酒", value="抽一杯酒保特選飲品。", inline=False)
     embed.add_field(name="📸 IG Page / 🧵 Threads Page", value="查看 Con9sole 官方社交平台。", inline=False)
+    embed.add_field(
+        name="🔗 生成邀請碼",
+        value="產生一條 7 日有效、最多 10 次使用嘅公開邀請連結。每人 10 分鐘一次。",
+        inline=False,
+    )
     embed.add_field(name="🛠️ Admin Tool", value="Admin / helpers 專用管理工具。", inline=False)
     embed.set_image(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
     embed.set_footer(text=f"{user.display_name}，需要咩就撳相應按鈕。")
@@ -363,6 +377,25 @@ def get_retry_after(user_id: int) -> float:
 
 def touch_cooldown(user_id: int) -> None:
     USER_MENU_COOLDOWNS[user_id] = time.time()
+
+
+def get_invite_retry_after(user_id: int) -> float:
+    last_used = USER_INVITE_COOLDOWNS.get(user_id, 0.0)
+    elapsed = time.time() - last_used
+    retry_after = INVITE_COOLDOWN_SECONDS - elapsed
+    return retry_after if retry_after > 0 else 0.0
+
+
+def touch_invite_cooldown(user_id: int) -> None:
+    USER_INVITE_COOLDOWNS[user_id] = time.time()
+
+
+def format_retry_seconds(seconds: float) -> str:
+    seconds_int = max(0, int(seconds + 0.999))
+    minutes, sec = divmod(seconds_int, 60)
+    if minutes <= 0:
+        return f"{sec} 秒"
+    return f"{minutes} 分 {sec} 秒"
 
 
 async def maybe_call_method(
@@ -484,6 +517,86 @@ class BaseMenuView(discord.ui.View):
             ephemeral=True,
             file=build_menu_file(),
         )
+
+    async def _create_invite_link(self, interaction: discord.Interaction) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+
+        retry_after = get_invite_retry_after(interaction.user.id)
+        if retry_after > 0:
+            await send_or_followup(
+                interaction,
+                content=f"⏳ 你啱啱已經產生過邀請碼，請等 {format_retry_seconds(retry_after)} 後再試。",
+                ephemeral=True,
+            )
+            return
+
+        await self._record(interaction, "invite")
+
+        if INVITE_CHANNEL_ID is None:
+            await send_or_followup(
+                interaction,
+                content=(
+                    "⚠️ 未設定邀請入口頻道。\n"
+                    "請先喺 `config.py` 加：\n"
+                    "`INVITE_CHANNEL_ID: int = 你的channel_id`"
+                ),
+                ephemeral=True,
+            )
+            return
+
+        channel = interaction.client.get_channel(int(INVITE_CHANNEL_ID))
+        if channel is None:
+            try:
+                channel = await interaction.client.fetch_channel(int(INVITE_CHANNEL_ID))
+            except discord.HTTPException:
+                channel = None
+
+        if not isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel)):
+            await send_or_followup(
+                interaction,
+                content="⚠️ 搵唔到指定邀請入口頻道，請檢查 `INVITE_CHANNEL_ID`。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            invite = await channel.create_invite(
+                max_age=INVITE_MAX_AGE_SECONDS,
+                max_uses=INVITE_MAX_USES,
+                unique=True,
+                temporary=False,
+                reason=f"Invite generated by {interaction.user} ({interaction.user.id}) via Bartender menu",
+            )
+        except discord.Forbidden:
+            await send_or_followup(
+                interaction,
+                content=f"❌ Bartender 無權喺 {channel.mention} 建立 invite，請開啟 `Create Instant Invite` 權限。",
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException as exc:
+            await send_or_followup(
+                interaction,
+                content=f"❌ 建立邀請碼失敗：{type(exc).__name__}",
+                ephemeral=True,
+            )
+            return
+
+        touch_invite_cooldown(interaction.user.id)
+        await send_or_followup(
+            interaction,
+            content=(
+                "🔗 **邀請碼已生成：**\n"
+                f"{invite.url}\n\n"
+                "有效期：`7 日`\n"
+                "使用次數：`最多 10 次`\n"
+                "成員類型：`非 temporary member`\n\n"
+                "大家可以 copy 呢條 link share 畀朋友加入社群。"
+            ),
+            ephemeral=False,
+        )
+
 
 class QuickBarView(BaseMenuView):
     """Layer 1：公開 Quick Bar。"""
@@ -690,6 +803,16 @@ class HomeMenuView(BaseMenuView):
             method_names=["do_drink", "drink"],
             missing_message="❌ 調酒功能未載入。",
         )
+
+    @discord.ui.button(
+        label="生成邀請碼",
+        emoji="🔗",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:home:invite",
+        row=3,
+    )
+    async def invite_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._create_invite_link(interaction)
 
     @discord.ui.button(
         label="幫助",
