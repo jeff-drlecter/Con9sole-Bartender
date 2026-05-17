@@ -1,73 +1,144 @@
-# Replace ONLY the reload_button() inside cogs/menu.py -> class AdminToolView
-# This calls your existing cogs.reload.Reload._reload_one() safely.
-# It keeps the previous protections against NoneType.to_dict / NoneType.is_finished.
+from __future__ import annotations
 
-    @discord.ui.button(
-        label="Reload",
-        emoji="🔄",
-        style=discord.ButtonStyle.primary,
-        custom_id="bartender:admin:reload",
-        row=0,
-    )
-    async def reload_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._enforce_cooldown(interaction):
-            return
+from pathlib import Path
+from typing import Optional
 
-        await safe_defer(interaction, ephemeral=True)
+import discord
+from discord import app_commands
+from discord.ext import commands
 
-        if not await self._require_admin(interaction):
-            return
+import config
 
-        await self._record(interaction, "admin_reload")
+COGS_DIR = Path(__file__).resolve().parent
 
-        reload_cog = interaction.client.get_cog("Reload")
-        if reload_cog is None or not hasattr(reload_cog, "_reload_one"):
-            await send_or_followup(
-                interaction,
-                content="❌ Reload cog 未載入，請先用 `/reload reload` 或重啟 Bot。",
-                ephemeral=True,
-            )
-            return
+HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
+HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper", "helpers"]))
 
+
+def can_use_reload(member: discord.Member | discord.User) -> bool:
+    """Allow server managers/admins/helpers to use reload."""
+    if not isinstance(member, discord.Member):
+        return False
+
+    perms = member.guild_permissions
+    if perms.administrator or perms.manage_guild:
+        return True
+
+    for role in member.roles:
+        if role.id in HELPER_ROLE_IDS:
+            return True
+        if role.name in HELPER_ROLE_NAMES:
+            return True
+
+    return False
+
+
+def _list_cogs_package() -> list[str]:
+    """Return reloadable cog module names under cogs/.
+
+    Example output: ["menu", "drink", "cheers", "reload"]
+    """
+    names: list[str] = []
+
+    for path in sorted(COGS_DIR.glob("*.py")):
+        name = path.stem
+        if name.startswith("_") or name == "__init__":
+            continue
+        names.append(name)
+
+    return names
+
+
+def _normalize_cog_name(cog: str | None) -> str | None:
+    if cog is None:
+        return None
+
+    value = cog.strip()
+    if not value:
+        return None
+
+    if value.lower() in {"all", "*", "全部", "所有"}:
+        return None
+
+    if value.startswith("cogs."):
+        value = value.removeprefix("cogs.")
+
+    if value.endswith(".py"):
+        value = value[:-3]
+
+    return value
+
+
+class Reload(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    async def _reload_one(self, ext: str) -> tuple[bool, str]:
+        """Reload one extension.
+
+        Returns:
+            (True, "") when success
+            (False, "error text") when failed
+
+        This method is intentionally public-ish because menu.py Admin Tool calls it.
+        """
         try:
-            from cogs.reload import _list_cogs_package  # type: ignore
-
-            ok_list: list[str] = []
-            fail_list: list[str] = []
-
-            for name in _list_cogs_package():
-                ext = f"cogs.{name}"
-
-                try:
-                    result = reload_cog._reload_one(ext)  # type: ignore[attr-defined]
-                    if inspect.isawaitable(result):
-                        ok, fail = await result
-                    else:
-                        ok, fail = result
-                except Exception as exc:
-                    ok = False
-                    fail = f"`{type(exc).__name__}`: {exc}"
-
-                if ok:
-                    ok_list.append(name)
-                else:
-                    fail_list.append(f"{name} -> {fail}")
-
-            msg: list[str] = []
-            if ok_list:
-                msg.append("✅ 已重載： " + ", ".join(ok_list))
-            if fail_list:
-                msg.append("❌ 失敗：\n- " + "\n- ".join(fail_list))
-
-            await send_or_followup(
-                interaction,
-                content="\n".join(msg) if msg else "⚠️ 無可重載的 cogs。",
-                ephemeral=True,
-            )
-
+            if ext not in self.bot.extensions:
+                await self.bot.load_extension(ext)
+            else:
+                await self.bot.reload_extension(ext)
+            return True, ""
         except Exception as exc:
-            await send_or_followup(
-                interaction,
-                content=f"❌ Reload button 執行失敗：`{type(exc).__name__}`：{exc}",
+            return False, f"{type(exc).__name__}: {exc}"
+
+    async def _reload_many(self, cog: str | None = None) -> tuple[list[str], list[str]]:
+        target = _normalize_cog_name(cog)
+
+        if target is None:
+            names = _list_cogs_package()
+        else:
+            names = [target]
+
+        ok_list: list[str] = []
+        fail_list: list[str] = []
+
+        for name in names:
+            ext = f"cogs.{name}"
+            ok, fail = await self._reload_one(ext)
+            if ok:
+                ok_list.append(name)
+            else:
+                fail_list.append(f"{name} -> {fail}")
+
+        return ok_list, fail_list
+
+    def _format_result(self, ok_list: list[str], fail_list: list[str]) -> str:
+        parts: list[str] = []
+
+        if ok_list:
+            parts.append("✅ 已重載： " + ", ".join(ok_list))
+
+        if fail_list:
+            parts.append("❌ 失敗：\n- " + "\n- ".join(fail_list))
+
+        return "\n".join(parts) if parts else "⚠️ 無可重載的 cogs。"
+
+    @app_commands.command(name="reload", description="重載所有 / 指定的 cogs（Admin/Helper）")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.describe(cog="可選：指定 cog 名稱，例如 menu / drink / cheers；留空＝全部")
+    async def reload_cmd(self, inter: discord.Interaction, cog: Optional[str] = None):
+        if not can_use_reload(inter.user):
+            await inter.response.send_message(
+                "❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 `/reload`。",
                 ephemeral=True,
             )
+            return
+
+        await inter.response.defer(ephemeral=True, thinking=True)
+
+        ok_list, fail_list = await self._reload_many(cog)
+        await inter.followup.send(self._format_result(ok_list, fail_list), ephemeral=True)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Reload(bot))
