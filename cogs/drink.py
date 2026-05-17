@@ -308,11 +308,16 @@ async def send_or_followup(
 
 
 async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
+    """Drink result 之後公開補一個 Quick Bar。
+
+    用 channel.send()，唔用 interaction.followup.send()。
+    因為 menu button call 入嚟時，第一個 result 已經用咗 interaction response；
+    第二格 Quick Bar 用普通 channel message 最穩，亦最似 RPG bot 兩格訊息 layout。
+    """
     menu_embed = build_main_menu_embed(interaction.user)
 
     kwargs: dict[str, object] = {
         "embed": menu_embed,
-        "ephemeral": False,
     }
 
     menu_view = build_full_menu_view(interaction)
@@ -323,7 +328,12 @@ async def send_quick_bar_after_result(interaction: discord.Interaction) -> None:
     if menu_file is not None:
         kwargs["file"] = menu_file
 
-    await interaction.followup.send(**kwargs)
+    if interaction.channel is None:
+        # 理論上 guild button / slash command 都應該有 channel；保底避免完全爆死。
+        await interaction.followup.send(embed=menu_embed, ephemeral=True)
+        return
+
+    await interaction.channel.send(**kwargs)
 
 
 class Drink(commands.Cog):
