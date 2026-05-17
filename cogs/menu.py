@@ -368,6 +368,16 @@ async def send_or_followup(
         )
 
 
+async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
+    """先 acknowledge button interaction，避免較慢操作出現 This interaction failed。"""
+    if interaction.response.is_done():
+        return
+    try:
+        await interaction.response.defer(ephemeral=ephemeral, thinking=False)
+    except discord.HTTPException:
+        pass
+
+
 def get_retry_after(user_id: int) -> float:
     last_used = USER_MENU_COOLDOWNS.get(user_id, 0.0)
     elapsed = time.time() - last_used
@@ -522,6 +532,8 @@ class BaseMenuView(discord.ui.View):
         if not await self._enforce_cooldown(interaction):
             return
 
+        await safe_defer(interaction, ephemeral=True)
+
         retry_after = get_invite_retry_after(interaction.user.id)
         if retry_after > 0:
             await send_or_followup(
@@ -584,17 +596,43 @@ class BaseMenuView(discord.ui.View):
             return
 
         touch_invite_cooldown(interaction.user.id)
+
+        public_message = (
+            "🔗 **邀請碼已生成：**
+"
+            f"{invite.url}
+
+"
+            "有效期：`7 日`
+"
+            "使用次數：`最多 10 次`
+"
+            "成員類型：`非 temporary member`
+
+"
+            "大家可以 copy 呢條 link share 畀朋友加入社群。"
+        )
+
+        # Layer 2 menu 係 ephemeral message。Discord 對 ephemeral component interaction
+        # 直接回覆公開訊息有機會失敗，所以公開邀請碼改用 channel.send()。
+        try:
+            if interaction.channel is not None:
+                await interaction.channel.send(public_message)
+            else:
+                raise discord.HTTPException(response=None, message="No interaction channel")
+        except discord.HTTPException as exc:
+            await send_or_followup(
+                interaction,
+                content=f"❌ 邀請碼已建立，但公開發送失敗：{type(exc).__name__}
+{invite.url}",
+                ephemeral=True,
+            )
+            return
+
         await send_or_followup(
             interaction,
-            content=(
-                "🔗 **邀請碼已生成：**\n"
-                f"{invite.url}\n\n"
-                "有效期：`7 日`\n"
-                "使用次數：`最多 10 次`\n"
-                "成員類型：`非 temporary member`\n\n"
-                "大家可以 copy 呢條 link share 畀朋友加入社群。"
-            ),
-            ephemeral=False,
+            content="✅ 邀請碼已公開發送到此頻道。",
+            ephemeral=True,
         )
 
 
@@ -928,6 +966,8 @@ class AdminToolView(BaseMenuView):
         if not await self._enforce_cooldown(interaction):
             return
 
+        await safe_defer(interaction, ephemeral=True)
+
         if not await self._require_admin(interaction):
             return
 
@@ -957,12 +997,19 @@ class AdminToolView(BaseMenuView):
         )
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
 
-        await send_or_followup(
-            interaction,
-            embed=embed,
-            view=AdminToolView(self.cog),
-            ephemeral=True,
-        )
+        try:
+            await send_or_followup(
+                interaction,
+                embed=embed,
+                view=AdminToolView(self.cog),
+                ephemeral=True,
+            )
+        except discord.HTTPException as exc:
+            await send_or_followup(
+                interaction,
+                content=f"❌ Stats 顯示失敗：{type(exc).__name__}",
+                ephemeral=True,
+            )
 
     @discord.ui.button(
         label="Reload",
@@ -974,6 +1021,7 @@ class AdminToolView(BaseMenuView):
     async def reload_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+        await safe_defer(interaction, ephemeral=True)
         if not await self._require_admin(interaction):
             return
 
@@ -981,12 +1029,21 @@ class AdminToolView(BaseMenuView):
         reload_cog = interaction.client.get_cog("Reload") or interaction.client.get_cog("Reloader")
 
         if reload_cog is not None:
-            called = await maybe_call_method(
+            try:
+                called = await maybe_call_method(
                 reload_cog,
                 ["reload_all", "reload_cogs", "do_reload", "reload", "reload_cmd"],
                 interaction,
-            )
-            if called:
+                )
+                if called:
+                    return
+            except Exception as exc:
+                await send_or_followup(
+                    interaction,
+                    content=f"❌ Reload 執行失敗：{type(exc).__name__}
+請改用 `/reload` 查看詳細錯誤。",
+                    ephemeral=True,
+                )
                 return
 
         await send_or_followup(
@@ -1031,6 +1088,7 @@ class AdminToolView(BaseMenuView):
     async def ping_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+        await safe_defer(interaction, ephemeral=True)
         if not await self._require_admin(interaction):
             return
 
@@ -1052,6 +1110,7 @@ class AdminToolView(BaseMenuView):
     async def vc_teardown_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+        await safe_defer(interaction, ephemeral=True)
         if not await self._require_admin(interaction):
             return
 
@@ -1059,7 +1118,8 @@ class AdminToolView(BaseMenuView):
         tempvc_cog = interaction.client.get_cog("TempVC")
 
         if tempvc_cog is not None:
-            called = await maybe_call_method(
+            try:
+                called = await maybe_call_method(
                 tempvc_cog,
                 [
                     "teardown_from_menu",
@@ -1071,8 +1131,16 @@ class AdminToolView(BaseMenuView):
                     "sweep",
                 ],
                 interaction,
-            )
-            if called:
+                )
+                if called:
+                    return
+            except Exception as exc:
+                await send_or_followup(
+                    interaction,
+                    content=f"❌ VC Teardown 執行失敗：{type(exc).__name__}
+請改用 `/vc_teardown` 查看詳細錯誤。",
+                    ephemeral=True,
+                )
                 return
 
         await send_or_followup(
