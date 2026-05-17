@@ -402,8 +402,8 @@ class Drink(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name="最近去重",
-            value=f"已避開你最近 {RECENT_HISTORY_LIMIT} 杯酒",
+            name="酒單輪替",
+            value=f"已避開你最近品嚐過的 {RECENT_HISTORY_LIMIT} 杯",
             inline=True,
         )
         embed.set_footer(text="House Pour 78% · Signature Serve 18% · Top Shelf 4%")
