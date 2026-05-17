@@ -295,7 +295,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             "**管理工具**\n\n"
             "📊 **Stats** — Community Bot 使用數據\n"
-            "🔄 **Reload** — 指令入口 `/reload`\n"
+            "🔄 **Reload** — 直接重載所有 cogs\n"
             "🎭 **Role Tools** — 角色管理指令入口\n"
             "🏓 **Ping** — Bot latency\n"
             "🧹 **VC Teardown** — 指令入口 `/vc_teardown`\n\n"
@@ -410,27 +410,6 @@ def format_retry_seconds(seconds: float) -> str:
     if minutes <= 0:
         return f"{sec} 秒"
     return f"{minutes} 分 {sec} 秒"
-
-
-async def maybe_call_method(
-    target: Any,
-    method_names: list[str],
-    *args: Any,
-    **kwargs: Any,
-) -> bool:
-    for method_name in method_names:
-        method = getattr(target, method_name, None)
-        if method is None:
-            continue
-
-        try:
-            result = method(*args, **kwargs)
-            if inspect.isawaitable(result):
-                await result
-            return True
-        except TypeError:
-            continue
-    return False
 
 
 class BaseMenuView(discord.ui.View):
@@ -858,16 +837,56 @@ class AdminToolView(BaseMenuView):
 
         await self._record(interaction, "admin_reload")
 
-        await send_or_followup(
-            interaction,
-            content=(
-                "🔄 **Reload 指令入口**\n\n"
-                "為避免 Admin Tool button 因不同 reload.py method signature 而再出現 interaction failed，"
-                "請使用 slash command：`/reload`。\n\n"
-                "呢個入口會保持穩定提示，不會直接觸發舊有 reload callback。"
-            ),
-            ephemeral=True,
-        )
+        reload_cog = interaction.client.get_cog("Reload")
+        if reload_cog is None or not hasattr(reload_cog, "_reload_one"):
+            await send_or_followup(
+                interaction,
+                content="❌ Reload cog 未載入，請先用 `/reload reload` 或重啟 Bot。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            from cogs.reload import _list_cogs_package  # type: ignore
+
+            ok_list: list[str] = []
+            fail_list: list[str] = []
+
+            for name in _list_cogs_package():
+                ext = f"cogs.{name}"
+                try:
+                    result = reload_cog._reload_one(ext)  # type: ignore[attr-defined]
+                    if inspect.isawaitable(result):
+                        ok, fail = await result
+                    else:
+                        ok, fail = result
+                except Exception as exc:
+                    ok = False
+                    fail = f"`{type(exc).__name__}`: {exc}"
+
+                if ok:
+                    ok_list.append(name)
+                else:
+                    fail_list.append(f"{name} -> {fail}")
+
+            msg: list[str] = []
+            if ok_list:
+                msg.append("✅ 已重載： " + ", ".join(ok_list))
+            if fail_list:
+                msg.append("❌ 失敗：\n- " + "\n- ".join(fail_list))
+
+            await send_or_followup(
+                interaction,
+                content="\n".join(msg) if msg else "⚠️ 無可重載的 cogs。",
+                ephemeral=True,
+            )
+
+        except Exception as exc:
+            await send_or_followup(
+                interaction,
+                content=f"❌ Reload button 執行失敗：`{type(exc).__name__}`：{exc}",
+                ephemeral=True,
+            )
 
     @discord.ui.button(label="Role Tools", emoji="🎭", style=discord.ButtonStyle.secondary, custom_id="bartender:admin:role_tools", row=1)
     async def role_tools_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -910,13 +929,24 @@ class AdminToolView(BaseMenuView):
 
         await self._record(interaction, "admin_vc_teardown")
 
+        tempvc_cog = interaction.client.get_cog("TempVC")
+        if tempvc_cog and hasattr(tempvc_cog, "teardown_temp_vc_from_menu"):
+            try:
+                result = tempvc_cog.teardown_temp_vc_from_menu(interaction)  # type: ignore[attr-defined]
+                if inspect.isawaitable(result):
+                    await result
+                return
+            except Exception as exc:
+                await send_or_followup(
+                    interaction,
+                    content=f"❌ VC Teardown 執行失敗：`{type(exc).__name__}`：{exc}",
+                    ephemeral=True,
+                )
+                return
+
         await send_or_followup(
             interaction,
-            content=(
-                "🧹 **VC Teardown 指令入口**\n\n"
-                "為避免錯誤清理或接駁錯 method，請使用 slash command：`/vc_teardown`。\n\n"
-                "如果你想我將呢粒 button 直接接駁清理 function，之後貼最新版 `tempvc.py` 我再對準 method。"
-            ),
+            content="🧹 **VC Teardown 指令入口**\n\n請使用 slash command：`/vc_teardown`。",
             ephemeral=True,
         )
 
