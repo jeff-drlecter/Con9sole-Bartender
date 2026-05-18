@@ -22,6 +22,14 @@ class MenuItem:
     description: str = ""
 
 
+# Button colour rule:
+# - secondary: navigation / previous page only
+# - primary: normal functional action
+# - success: positive / fun / social action
+# - danger: admin-restricted or destructive/high-impact action
+# - link: external URL, added dynamically in menu.py
+
+
 # Layer 1：公開 / 快捷吧枱
 # Quick Bar 會出喺 drink / cheers / main menu 下方。
 # 原則：第一格進入主頁，其後係主要即用功能。
@@ -63,7 +71,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         id="tempvc_control",
         label="控制",
         emoji="🎛️",
-        style="secondary",
+        style="primary",
         layer="quick",
         row=1,
         cog="TempVC",
@@ -124,7 +132,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="tempvc_control",
         label="小隊 call 控制",
         emoji="🎛️",
-        style="secondary",
+        style="primary",
         layer="home",
         row=0,
         cog="TempVC",
@@ -157,7 +165,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="confession",
         label="無名告白",
         emoji="🕯️",
-        style="secondary",
+        style="success",
         layer="home",
         row=1,
         cog="Confession",
@@ -168,7 +176,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="invite",
         label="生成邀請碼",
         emoji="🔗",
-        style="secondary",
+        style="primary",
         layer="home",
         row=3,
         cog="Menu",
@@ -179,7 +187,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="help",
         label="幫助",
         emoji="ℹ️",
-        style="secondary",
+        style="primary",
         layer="home",
         row=3,
         cog="Menu",
@@ -244,7 +252,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         id="admin_role",
         label="Role Tools",
         emoji="🎭",
-        style="secondary",
+        style="primary",
         layer="admin",
         row=1,
         cog="Menu",
@@ -256,7 +264,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         id="admin_ping",
         label="Ping",
         emoji="🏓",
-        style="secondary",
+        style="primary",
         layer="admin",
         row=1,
         cog="Menu",
