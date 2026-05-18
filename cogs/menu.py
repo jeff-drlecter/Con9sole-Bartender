@@ -12,6 +12,8 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.permissions import is_admin_or_helper
+from core.safe_send import safe_message_kwargs, send_or_followup
 
 MENU_COLOR = 0x2B2D31
 COOLDOWN_SECONDS = 3.0
@@ -35,9 +37,6 @@ INVITE_COOLDOWN_SECONDS = 10 * 60
 
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
-
-HELPER_ROLE_IDS = set(getattr(config, "HELPER_ROLE_IDS", []))
-HELPER_ROLE_NAMES = set(getattr(config, "HELPER_ROLE_NAMES", ["Helper", "helper", "helpers"]))
 
 USER_MENU_COOLDOWNS: dict[int, float] = {}
 USER_INVITE_COOLDOWNS: dict[int, float] = {}
@@ -198,19 +197,12 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
 
 
 def can_use_admin(member: discord.Member | discord.User) -> bool:
-    if not isinstance(member, discord.Member):
-        return False
+    """Backward-compatible admin/helper checker.
 
-    if member.guild_permissions.manage_guild:
-        return True
-
-    for role in member.roles:
-        if role.id in HELPER_ROLE_IDS:
-            return True
-        if role.name in HELPER_ROLE_NAMES:
-            return True
-
-    return False
+    Keep this name because drink.py / cheers.py still import it from cogs.menu.
+    Actual permission logic now lives in core.permissions.
+    """
+    return is_admin_or_helper(member)
 
 
 can_use_admin_stats = can_use_admin
@@ -325,56 +317,6 @@ def build_role_tools_embed(user: discord.abc.User) -> discord.Embed:
     )
     embed.set_footer(text="Con9sole Bartender｜Role Tools 只限授權成員使用。")
     return embed
-
-
-def _safe_message_kwargs(
-    *,
-    content: str | None = None,
-    embed: discord.Embed | None = None,
-    embeds: list[discord.Embed] | None = None,
-    view: discord.ui.View | None = None,
-    file: discord.File | None = None,
-    ephemeral: bool | None = None,
-) -> dict[str, object]:
-    kwargs: dict[str, object] = {}
-    if content is not None:
-        kwargs["content"] = content
-    if embed is not None:
-        kwargs["embed"] = embed
-    if embeds is not None:
-        kwargs["embeds"] = embeds
-    if view is not None:
-        kwargs["view"] = view
-    if file is not None:
-        kwargs["file"] = file
-    if ephemeral is not None:
-        kwargs["ephemeral"] = ephemeral
-    return kwargs
-
-
-async def send_or_followup(
-    interaction: discord.Interaction,
-    *,
-    content: str | None = None,
-    embed: discord.Embed | None = None,
-    embeds: list[discord.Embed] | None = None,
-    view: discord.ui.View | None = None,
-    ephemeral: bool = False,
-    file: discord.File | None = None,
-) -> None:
-    kwargs = _safe_message_kwargs(
-        content=content,
-        embed=embed,
-        embeds=embeds,
-        view=view,
-        ephemeral=ephemeral,
-        file=file,
-    )
-
-    if interaction.response.is_done():
-        await interaction.followup.send(**kwargs)
-    else:
-        await interaction.response.send_message(**kwargs)
 
 
 async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
@@ -726,7 +668,7 @@ class HomeMenuView(BaseMenuView):
             interaction,
             feature="confession",
             cog_name="Confession",
-            method_names=["open_confession_modal", "confession_menu", "start_confession"],
+            method_names=["open_confession_modal", "confession_menu", "start_confession", "menu_entry"],
             missing_message="❌ 無名告白功能未載入。",
         )
 
@@ -1041,7 +983,7 @@ class Menu(commands.Cog):
         record_usage_sync("mention_menu", message.author.id, message.guild.id if message.guild else None)
 
         try:
-            kwargs = _safe_message_kwargs(
+            kwargs = safe_message_kwargs(
                 embed=build_quick_bar_embed(message.author),
                 view=QuickBarView(self),
                 file=build_menu_file(),
