@@ -23,7 +23,7 @@ class MenuItem:
 
 
 # Layer 1：公開 / 快捷吧枱
-# 注意：quick layer 目前會保留同你現有設計一致：
+# 注意：quick layer 保留同現有設計一致：
 # Menu、組隊、小隊 call、🎉、🍹
 QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
@@ -107,6 +107,17 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         cog="TempVC",
         method="menu_entry",
         description="建立臨時語音房",
+    ),
+    MenuItem(
+        id="tempvc_control",
+        label="小隊 call 控制",
+        emoji="🎛️",
+        style="secondary",
+        layer="home",
+        row=0,
+        cog="TempVC",
+        method="open_control_panel_from_menu",
+        description="管理目前身處的小隊 call",
     ),
     MenuItem(
         id="cheers",
