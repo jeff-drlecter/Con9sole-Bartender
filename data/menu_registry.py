@@ -24,7 +24,7 @@ class MenuItem:
 
 # Layer 1：公開 / 快捷吧枱
 # Quick Bar 會出喺 drink / cheers / main menu 下方。
-# 依家加入「小隊 call 控制」，放喺「小隊 call」後面。
+# 原則：第一格進入主頁，其後係主要即用功能。
 QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="home_menu",
@@ -96,6 +96,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 
 
 # Layer 2：私人主頁 / 功能總覽
+# 原則：主要 community 功能優先，social link 由 menu.py 動態加入，utility / admin 放最後。
 HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="team",
@@ -201,7 +202,20 @@ HOME_MENU_ITEMS: list[MenuItem] = [
 
 
 # Admin Tool：精簡管理工具
+# 原則：第一格係返回上一層 / 主頁，其後先係管理操作。
 ADMIN_MENU_ITEMS: list[MenuItem] = [
+    MenuItem(
+        id="home_menu",
+        label="Menu",
+        emoji="⬅️",
+        style="secondary",
+        layer="admin",
+        row=0,
+        cog="Menu",
+        method="open_home_menu_from_button",
+        admin_only=True,
+        description="返回吧枱主頁",
+    ),
     MenuItem(
         id="admin_stats",
         label="Stats",
@@ -260,19 +274,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         cog="Menu",
         method="admin_vc_teardown_from_button",
         admin_only=True,
-        description="刪除目前 Temp VC",
-    ),
-    MenuItem(
-        id="home_menu",
-        label="Menu",
-        emoji="⬅️",
-        style="secondary",
-        layer="admin",
-        row=2,
-        cog="Menu",
-        method="open_home_menu_from_button",
-        admin_only=True,
-        description="返回吧枱主頁",
+        description="列出並刪除 Bot Temp VC",
     ),
 ]
 
