@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import random
@@ -30,7 +31,6 @@ from data.drink_data import (
 )
 
 DRINK_USER_COOLDOWNS: dict[int, float] = {}
-PENDING_GIFT_DRINK_REQUESTS: dict[int, float] = {}
 GIFT_DRINK_TARGET_TIMEOUT_SECONDS = 60.0
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -38,6 +38,15 @@ STATS_DB = DATA_DIR / "community_stats.sqlite3"
 
 EVENT_SELF_DRINK = "self_drink"
 EVENT_GIFT_DRINK = "gift_drink"
+
+
+@dataclass
+class GiftDrinkPending:
+    started_at: float
+    cancel_event: asyncio.Event
+
+
+PENDING_GIFT_DRINK_REQUESTS: dict[int, GiftDrinkPending] = {}
 
 
 def init_drink_events_db() -> None:
@@ -218,13 +227,15 @@ def touch_drink_cooldown(user_id: int) -> None:
 
 def cleanup_pending_gift_requests() -> None:
     now = time.time()
-    expired = [
+    expired_user_ids = [
         user_id
-        for user_id, started_at in PENDING_GIFT_DRINK_REQUESTS.items()
-        if now - started_at >= GIFT_DRINK_TARGET_TIMEOUT_SECONDS
+        for user_id, pending in PENDING_GIFT_DRINK_REQUESTS.items()
+        if now - pending.started_at >= GIFT_DRINK_TARGET_TIMEOUT_SECONDS
     ]
-    for user_id in expired:
-        PENDING_GIFT_DRINK_REQUESTS.pop(user_id, None)
+    for user_id in expired_user_ids:
+        pending = PENDING_GIFT_DRINK_REQUESTS.pop(user_id, None)
+        if pending is not None and not pending.cancel_event.is_set():
+            pending.cancel_event.set()
 
 
 def current_seasonal_pool() -> List[DrinkEntry]:
@@ -256,8 +267,8 @@ def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
         title="🥂 賜酒",
         description=(
             f"{user.mention}，請喺 **60 秒內** 喺呢個 channel tag 一位你想賜酒嘅成員。\n\n"
-            "例：`@jacky`\n\n"
-            "如果想取消，請輸入：`cancel`"
+            "例：`@jeff `\n\n"
+            "你亦可以撳下面嘅 **取消** 按鈕。"
         ),
         color=0x2B2D31,
     )
@@ -343,6 +354,33 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
     return embed
 
 
+class GiftDrinkCancelView(discord.ui.View):
+    def __init__(self, *, owner_id: int, cancel_event: asyncio.Event) -> None:
+        super().__init__(timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS)
+        self.owner_id = owner_id
+        self.cancel_event = cancel_event
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個賜酒取消按鈕只限發起者使用。", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.cancel_event.is_set():
+            await interaction.response.send_message("賜酒操作已經取消或逾時。", ephemeral=True)
+            return
+
+        self.cancel_event.set()
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+
+        await interaction.response.edit_message(content="已取消賜酒。", embed=None, view=self)
+        self.stop()
+
+
 class Drink(commands.Cog):
     """/drink：以 bartender 風格隨機為指定對象點一款酒。"""
 
@@ -418,7 +456,7 @@ class Drink(commands.Cog):
         if interaction.user.id in PENDING_GIFT_DRINK_REQUESTS:
             await send_or_followup(
                 interaction,
-                content="⏳ 你已經有一個等待 tag 對象嘅賜酒操作。請先完成，或者輸入 `cancel` 取消。",
+                content="⏳ 你已經有一個等待 tag 對象嘅賜酒操作。請先完成，或者撳該訊息嘅取消按鈕。",
                 ephemeral=True,
             )
             return None
@@ -427,11 +465,17 @@ class Drink(commands.Cog):
         if not ok:
             return None
 
-        PENDING_GIFT_DRINK_REQUESTS[interaction.user.id] = time.time()
+        cancel_event = asyncio.Event()
+        PENDING_GIFT_DRINK_REQUESTS[interaction.user.id] = GiftDrinkPending(
+            started_at=time.time(),
+            cancel_event=cancel_event,
+        )
 
+        view = GiftDrinkCancelView(owner_id=interaction.user.id, cancel_event=cancel_event)
         await send_or_followup(
             interaction,
             embed=build_gift_prompt_embed(interaction.user),
+            view=view,
             ephemeral=True,
         )
 
@@ -444,17 +488,40 @@ class Drink(commands.Cog):
                 return False
             return True
 
-        try:
-            message = await self.bot.wait_for(
+        message_task = asyncio.create_task(
+            self.bot.wait_for(
                 "message",
                 check=check,
                 timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS,
             )
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⏳ 已逾時，賜酒已取消。", ephemeral=True)
-            return None
+        )
+        cancel_task = asyncio.create_task(cancel_event.wait())
+
+        try:
+            done, pending_tasks = await asyncio.wait(
+                {message_task, cancel_task},
+                timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending_tasks:
+                task.cancel()
+
+            if cancel_task in done and cancel_event.is_set():
+                return None
+
+            if message_task not in done:
+                await interaction.followup.send("⏳ 已逾時，賜酒已取消。", ephemeral=True)
+                return None
+
+            try:
+                message = message_task.result()
+            except asyncio.TimeoutError:
+                await interaction.followup.send("⏳ 已逾時，賜酒已取消。", ephemeral=True)
+                return None
         finally:
             PENDING_GIFT_DRINK_REQUESTS.pop(interaction.user.id, None)
+            view.stop()
 
         if message.content.strip().casefold() in {"cancel", "取消", "stop"}:
             await interaction.followup.send("已取消賜酒。", ephemeral=True)
