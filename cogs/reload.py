@@ -34,16 +34,15 @@ def can_use_reload(member: discord.Member | discord.User) -> bool:
 
 
 def _list_cogs_package() -> list[str]:
-    """Return reloadable cog module names under cogs/.
-
-    Example output: ["menu", "drink", "cheers", "reload"]
-    """
+    """Return reloadable cog module names under cogs/."""
     names: list[str] = []
 
     for path in sorted(COGS_DIR.glob("*.py")):
         name = path.stem
+
         if name.startswith("_") or name == "__init__":
             continue
+
         names.append(name)
 
     return names
@@ -79,15 +78,15 @@ class Reload(commands.Cog):
         Returns:
             (True, "") when success
             (False, "error text") when failed
-
-        This method is intentionally public-ish because menu.py Admin Tool calls it.
         """
         try:
             if ext not in self.bot.extensions:
                 await self.bot.load_extension(ext)
             else:
                 await self.bot.reload_extension(ext)
+
             return True, ""
+
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
 
@@ -105,6 +104,7 @@ class Reload(commands.Cog):
         for name in names:
             ext = f"cogs.{name}"
             ok, fail = await self._reload_one(ext)
+
             if ok:
                 ok_list.append(name)
             else:
