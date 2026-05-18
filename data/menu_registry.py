@@ -104,7 +104,13 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 
 
 # Layer 2：私人主頁 / 功能總覽
-# 原則：主要 community 功能優先，social link 由 menu.py 動態加入，utility / admin 放最後。
+# Social link buttons are added dynamically in menu.py.
+# Desired Home layout:
+# row 0: core community tools
+# row 1: cheers + drink quick actions
+# row 2: drink social/stats + confession
+# row 3: invite + IG Page + Threads Page
+# row 4: help + admin
 HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="team",
@@ -151,12 +157,34 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         description="送出一句打氣說話",
     ),
     MenuItem(
+        id="cheers_target",
+        label="幫人打氣",
+        emoji="🙌",
+        style="success",
+        layer="home",
+        row=1,
+        cog="Cheers",
+        method="cheer_for_member_entry",
+        description="送一句打氣給其他成員",
+    ),
+    MenuItem(
+        id="confession",
+        label="無名告白",
+        emoji="🕯️",
+        style="success",
+        layer="home",
+        row=1,
+        cog="Confession",
+        method="menu_entry",
+        description="匿名投稿",
+    ),    
+    MenuItem(
         id="drink",
         label="調酒",
         emoji="🍹",
         style="success",
         layer="home",
-        row=1,
+        row=2,
         cog="Drink",
         method="menu_entry",
         description="酒保特選飲品",
@@ -167,7 +195,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         emoji="🥂",
         style="success",
         layer="home",
-        row=1,
+        row=2,
         cog="Drink",
         method="gift_drink_entry",
         description="賜一杯酒給其他成員",
@@ -183,17 +211,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         method="stats_entry",
         description="查看自己的酒保紀錄",
     ),
-    MenuItem(
-        id="confession",
-        label="無名告白",
-        emoji="🕯️",
-        style="success",
-        layer="home",
-        row=2,
-        cog="Confession",
-        method="menu_entry",
-        description="匿名投稿",
-    ),
+
     MenuItem(
         id="invite",
         label="生成邀請碼",
@@ -211,7 +229,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         emoji="ℹ️",
         style="primary",
         layer="home",
-        row=3,
+        row=4,
         cog="Menu",
         method="open_help_from_button",
         description="使用說明",
@@ -222,7 +240,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         emoji="🛠️",
         style="danger",
         layer="home",
-        row=3,
+        row=4,
         cog="Menu",
         method="open_admin_tool_from_button",
         admin_only=True,
