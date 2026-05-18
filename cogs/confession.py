@@ -53,6 +53,10 @@ class Confession(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def menu_entry(self, interaction: discord.Interaction) -> None:
+        """Unified entrypoint for data/menu_registry.py."""
+        await self.open_confession_modal(interaction)
+
     def _target_channel(self, interaction: discord.Interaction) -> discord.abc.Messageable | None:
         if CONFESSION_CHANNEL_ID:
             channel = interaction.client.get_channel(CONFESSION_CHANNEL_ID)
@@ -113,6 +117,7 @@ class Confession(commands.Cog):
         )
 
     @app_commands.command(name="confess", description="匿名投稿一段無名告白")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def confess(self, interaction: discord.Interaction) -> None:
         await self.open_confession_modal(interaction)
 
