@@ -27,8 +27,8 @@ from utils import (
 VC_LIMIT_USER_COOLDOWNS: dict[int, float] = {}
 VC_LIMIT_CHANNEL_COOLDOWNS: dict[int, float] = {}
 
-
 TEMP_VC_LIMIT_CHOICES: tuple[int, ...] = (2, 5, 8, 11, 12, 16, 24, 32)
+MAX_ADMIN_SELECT_OPTIONS = 25
 
 
 async def mention_or_id(
@@ -58,6 +58,26 @@ async def mention_or_id(
     return member.mention if member else f"User ID: {uid}"
 
 
+def _interaction_response_done(interaction: discord.Interaction) -> bool:
+    try:
+        return interaction.response.is_done()
+    except Exception:
+        return False
+
+
+async def _send_interaction_message(
+    interaction: discord.Interaction,
+    content: str,
+    *,
+    ephemeral: bool = True,
+    view: discord.ui.View | None = None,
+) -> None:
+    if _interaction_response_done(interaction):
+        await interaction.followup.send(content, ephemeral=ephemeral, view=view)
+    else:
+        await interaction.response.send_message(content, ephemeral=ephemeral, view=view)
+
+
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
     if not inter.user or not isinstance(inter.user, discord.Member):
         return False
@@ -73,6 +93,14 @@ def user_can_run_tempvc(inter: discord.Interaction) -> bool:
         return False
 
     return any(role.id == verified_role_id for role in member.roles)
+
+
+def user_can_admin_teardown(member: discord.Member | discord.User) -> bool:
+    if not isinstance(member, discord.Member):
+        return False
+
+    perms = member.guild_permissions
+    return bool(perms.administrator or perms.manage_channels or is_admin_or_helper(member))
 
 
 def user_can_change_vc_limit(member: discord.Member) -> bool:
@@ -319,6 +347,38 @@ def _build_control_panel_message(ch: discord.VoiceChannel) -> str:
     )
 
 
+def _build_admin_teardown_panel_message(channels: list[discord.VoiceChannel]) -> str:
+    if not channels:
+        return "🧹 **Admin VC Teardown**\n\n目前無可刪除嘅 Bot Temp VC。"
+
+    shown = min(len(channels), MAX_ADMIN_SELECT_OPTIONS)
+    extra = len(channels) - shown
+    extra_text = f"\n\n⚠️ 目前共有 `{len(channels)}` 間 Temp VC，Discord dropdown 最多顯示 `{shown}` 間。" if extra > 0 else ""
+    return (
+        "🧹 **Admin VC Teardown**\n\n"
+        "請先喺 dropdown 選擇要刪除嘅小隊 call。\n"
+        "選完之後，系統會再要求你按 **確認刪除**。"
+        f"{extra_text}"
+    )
+
+
+def _build_admin_confirm_message(ch: discord.VoiceChannel) -> str:
+    limit = ch.user_limit or "無限制"
+    return (
+        "🧹 **確認刪除小隊 call？**\n\n"
+        f"房間：{ch.mention}\n"
+        f"📝 名稱：`{ch.name}`\n"
+        f"👥 目前人數：`{len(ch.members)}`\n"
+        f"🔢 人數上限：`{limit}`\n\n"
+        "⚠️ 此操作會即時刪除語音房，不能復原。"
+    )
+
+
+def _channel_sort_key(ch: discord.VoiceChannel) -> tuple[str, str, int]:
+    category_name = ch.category.name if ch.category else ""
+    return (category_name.lower(), ch.name.lower(), ch.id)
+
+
 class TempVCLimitSelect(discord.ui.Select):
     def __init__(self) -> None:
         options = [
@@ -476,6 +536,175 @@ class TempVCControlView(discord.ui.View):
         await interaction.response.send_message("❌ Menu 功能未載入。", ephemeral=True)
 
 
+class AdminTempVCSelect(discord.ui.Select):
+    def __init__(self, cog: "TempVC", channels: list[discord.VoiceChannel]):
+        self.cog = cog
+        self.channel_ids = [ch.id for ch in channels[:MAX_ADMIN_SELECT_OPTIONS]]
+
+        options: list[discord.SelectOption] = []
+        for ch in channels[:MAX_ADMIN_SELECT_OPTIONS]:
+            limit = ch.user_limit or "∞"
+            category = ch.category.name if ch.category else "無分類"
+            label = ch.name[:100]
+            description = f"{len(ch.members)}人｜limit {limit}｜{category}"
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    value=str(ch.id),
+                    description=description[:100],
+                    emoji="🎧",
+                )
+            )
+
+        super().__init__(
+            placeholder="選擇要刪除嘅 Temp VC",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, AdminTempVCSelectView):
+            await interaction.response.send_message("❌ Admin teardown view 狀態異常，請重新開啟。", ephemeral=True)
+            return
+
+        await self.view.select_channel(interaction, int(self.values[0]))
+
+
+class AdminTempVCSelectView(discord.ui.View):
+    def __init__(self, cog: "TempVC", *, owner_id: int, channels: list[discord.VoiceChannel]):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.add_item(AdminTempVCSelect(cog, channels))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個 Admin Teardown 面板只限發起者使用。", ephemeral=True)
+            return False
+
+        if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
+            await interaction.response.send_message("❌ 你需要 Admin / Helper / Manage Channels 權限先可以使用。", ephemeral=True)
+            return False
+
+        return True
+
+    async def select_channel(self, interaction: discord.Interaction, channel_id: int) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
+            return
+
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            try:
+                fetched = await interaction.guild.fetch_channel(channel_id)
+                channel = fetched if isinstance(fetched, discord.VoiceChannel) else None
+            except discord.NotFound:
+                channel = None
+            except discord.HTTPException:
+                channel = None
+
+        if not isinstance(channel, discord.VoiceChannel) or not is_temp_vc_id(channel.id):
+            await interaction.response.edit_message(
+                content="❌ 呢間 Temp VC 已不存在，或者已不再係 Bot 建立嘅 Temp VC。",
+                view=None,
+            )
+            self.stop()
+            return
+
+        await interaction.response.edit_message(
+            content=_build_admin_confirm_message(channel),
+            view=AdminTempVCConfirmView(self.cog, owner_id=interaction.user.id, channel_id=channel.id),
+        )
+        self.stop()
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Admin VC Teardown。", view=None)
+        self.stop()
+
+
+class AdminTempVCConfirmView(discord.ui.View):
+    def __init__(self, cog: "TempVC", *, owner_id: int, channel_id: int):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.channel_id = channel_id
+        self.done = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個確認面板只限發起者使用。", ephemeral=True)
+            return False
+
+        if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
+            await interaction.response.send_message("❌ 你需要 Admin / Helper / Manage Channels 權限先可以使用。", ephemeral=True)
+            return False
+
+        return True
+
+    @discord.ui.button(label="確認刪除", emoji="✅", style=discord.ButtonStyle.danger, row=0)
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.done:
+            await interaction.response.send_message("呢個操作已經完成。", ephemeral=True)
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
+            return
+
+        channel = interaction.guild.get_channel(self.channel_id)
+        if channel is None:
+            try:
+                fetched = await interaction.guild.fetch_channel(self.channel_id)
+                channel = fetched if isinstance(fetched, discord.VoiceChannel) else None
+            except discord.NotFound:
+                channel = None
+            except discord.HTTPException:
+                channel = None
+
+        if not isinstance(channel, discord.VoiceChannel) or not is_temp_vc_id(channel.id):
+            await interaction.response.edit_message(
+                content="❌ 呢間 Temp VC 已不存在，或者已不再係 Bot 建立嘅 Temp VC。",
+                view=None,
+            )
+            self.stop()
+            return
+
+        channel_name = channel.name
+        member_count = len(channel.members)
+
+        try:
+            await self.cog._teardown_temp_vc(channel)
+        except discord.Forbidden:
+            await interaction.response.edit_message(
+                content="❌ 刪除失敗：Bot 缺少 `Manage Channels` 權限。",
+                view=None,
+            )
+            self.stop()
+            return
+        except discord.HTTPException as exc:
+            await interaction.response.edit_message(
+                content=f"❌ 刪除失敗：Discord API 錯誤 `{type(exc).__name__}`。",
+                view=None,
+            )
+            self.stop()
+            return
+
+        self.done = True
+        await interaction.response.edit_message(
+            content=f"✅ Admin Teardown 已刪除：`{channel_name}`（刪除前 `{member_count}` 人）",
+            view=None,
+        )
+        self.stop()
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=0)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Admin VC Teardown。", view=None)
+        self.stop()
+
+
 class TempVCNameModal(discord.ui.Modal, title="建立小隊房"):
     room_name = discord.ui.TextInput(
         label="房間名稱",
@@ -593,6 +822,19 @@ class TempVC(commands.Cog):
         print(f"手動刪除 Temp VC：#{target.name}（id={target.id}）")
         await target.delete(reason="Manual teardown temp VC")
 
+    async def get_all_temp_vcs(self, guild: discord.Guild) -> list[discord.VoiceChannel]:
+        try:
+            await bootstrap_track_temp_vcs(guild, name_prefixes=_get_name_prefixes())
+        except Exception as exc:
+            print(f"[TempVC admin list] bootstrap failed: {exc!r}")
+
+        channels = [
+            ch
+            for ch in guild.voice_channels
+            if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id)
+        ]
+        return sorted(channels, key=_channel_sort_key)
+
     async def create_temp_vc_from_menu(self, interaction: discord.Interaction) -> None:
         if not user_can_run_tempvc(interaction):
             await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
@@ -607,10 +849,11 @@ class TempVC(commands.Cog):
     async def open_control_panel_from_menu(self, interaction: discord.Interaction) -> None:
         member, channel, error = self._get_current_member_temp_vc(interaction)
         if error or channel is None:
-            await interaction.response.send_message(f"❌ {error}", ephemeral=True)
+            await _send_interaction_message(interaction, f"❌ {error}", ephemeral=True)
             return
 
-        await interaction.response.send_message(
+        await _send_interaction_message(
+            interaction,
             _build_control_panel_message(channel),
             view=TempVCControlView(self, channel_id=channel.id),
             ephemeral=True,
@@ -714,27 +957,34 @@ class TempVC(commands.Cog):
         await self._teardown_temp_vc(channel)
         await interaction.response.send_message("✅ 已刪除你目前嘅小隊 call。", ephemeral=True)
 
-    async def teardown_temp_vc_from_menu(self, interaction: discord.Interaction) -> None:
-        if not user_can_run_tempvc(interaction):
-            await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
+    async def open_admin_teardown_panel(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await _send_interaction_message(interaction, "❌ 只可在伺服器使用。", ephemeral=True)
             return
 
-        member, target, error = self._get_current_member_temp_vc(interaction)
-        if error or target is None:
-            await interaction.response.send_message(f"❌ {error}", ephemeral=True)
-            return
-
-        if len(target.members) != 1 or target.members[0].id != interaction.user.id:
-            await interaction.response.send_message(
-                "❌ 呢間小隊 call 仲有其他成員。\n\n"
-                "請等到房內只剩你一個人，或者先叫其他成員離開後再刪除。\n"
-                f"目前房內人數：`{len(target.members)}`",
+        if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
+            await _send_interaction_message(
+                interaction,
+                "❌ 你需要 Admin / Helper / Manage Channels 權限先可以使用 VC Teardown。",
                 ephemeral=True,
             )
             return
 
-        await self._teardown_temp_vc(target)
-        await interaction.response.send_message("✅ 已刪除你目前嘅 Temp VC。", ephemeral=True)
+        channels = await self.get_all_temp_vcs(interaction.guild)
+        if not channels:
+            await _send_interaction_message(interaction, _build_admin_teardown_panel_message(channels), ephemeral=True)
+            return
+
+        await _send_interaction_message(
+            interaction,
+            _build_admin_teardown_panel_message(channels),
+            view=AdminTempVCSelectView(self, owner_id=interaction.user.id, channels=channels),
+            ephemeral=True,
+        )
+
+    async def teardown_temp_vc_from_menu(self, interaction: discord.Interaction) -> None:
+        """Admin Tool entrypoint. Opens dropdown + confirm flow instead of direct deletion."""
+        await self.open_admin_teardown_panel(interaction)
 
     async def _create_temp_vc_for_member(
         self,
@@ -903,43 +1153,10 @@ class TempVC(commands.Cog):
         ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=final_limit)
         await inter.followup.send(_build_created_message(ch, final_limit), view=TempVCControlView(self, channel_id=ch.id))
 
-    @app_commands.command(name="vc_teardown", description="刪除由 Bot 建立的臨時語音房")
+    @app_commands.command(name="vc_teardown", description="Admin/Helper：選擇並刪除由 Bot 建立的臨時語音房")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
-    @app_commands.describe(channel="要刪嘅語音房（可選；唔填就刪你而家身處的 VC）")
-    async def vc_teardown(self, inter: discord.Interaction, channel: Optional[discord.VoiceChannel] = None) -> None:
-        if not user_can_run_tempvc(inter):
-            await inter.response.send_message("你未有使用權限。", ephemeral=True)
-            return
-
-        if not inter.guild:
-            await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
-            return
-
-        await inter.response.defer(ephemeral=True)
-
-        target = channel
-        if target is None and isinstance(inter.user, discord.Member) and inter.user.voice and inter.user.voice.channel:
-            target = inter.user.voice.channel
-
-        if not isinstance(target, discord.VoiceChannel):
-            await inter.followup.send("請指定或身處一個語音房。", ephemeral=True)
-            return
-
-        if not is_temp_vc_id(target.id):
-            await inter.followup.send("呢個唔係由 Bot 建立的臨時語音房。", ephemeral=True)
-            return
-
-        if len(target.members) != 1 or not isinstance(inter.user, discord.Member) or target.members[0].id != inter.user.id:
-            await inter.followup.send(
-                "❌ 呢間小隊 call 仲有其他成員。\n\n"
-                "請等到房內只剩你一個人，或者先叫其他成員離開後再刪除。\n"
-                f"目前房內人數：`{len(target.members)}`",
-                ephemeral=True,
-            )
-            return
-
-        await self._teardown_temp_vc(target)
-        await inter.followup.send("✅ 已刪除。", ephemeral=True)
+    async def vc_teardown(self, inter: discord.Interaction) -> None:
+        await self.open_admin_teardown_panel(inter)
 
 
 async def setup(bot: commands.Bot) -> None:
