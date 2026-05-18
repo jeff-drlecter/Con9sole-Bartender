@@ -814,8 +814,8 @@ class QuickBarView(RegistryMenuView):
 class HomeMenuView(RegistryMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog, "home")
-        self.add_item(discord.ui.Button(label="IG Page", emoji="📸", style=discord.ButtonStyle.link, url=INSTAGRAM_URL, row=2))
-        self.add_item(discord.ui.Button(label="Threads Page", emoji="🧵", style=discord.ButtonStyle.link, url=THREADS_URL, row=2))
+        self.add_item(discord.ui.Button(label="IG Page", emoji="📸", style=discord.ButtonStyle.link, url=INSTAGRAM_URL, row=3))
+        self.add_item(discord.ui.Button(label="Threads Page", emoji="🧵", style=discord.ButtonStyle.link, url=THREADS_URL, row=3))
 
         if RULES_URL:
             self.add_item(discord.ui.Button(label="Rules", emoji="🛡️", style=discord.ButtonStyle.link, url=RULES_URL, row=4))
