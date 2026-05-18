@@ -12,7 +12,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
-from cogs.menu import build_full_menu_view, build_menu_file, can_use_admin
+from cogs.menu import build_full_menu_view, build_menu_file
+from core.permissions import is_admin_or_helper
+from core.safe_send import send_or_followup
 
 ICON_MAP = {
     "short": "🍸",
@@ -285,38 +287,6 @@ def current_seasonal_pool() -> List[DrinkEntry]:
     return []
 
 
-async def send_or_followup(
-    interaction: discord.Interaction,
-    *,
-    embed: discord.Embed | None = None,
-    view: discord.ui.View | None = None,
-    file: discord.File | None = None,
-    content: str | None = None,
-    ephemeral: bool = False,
-) -> None:
-    """Safely send interaction response / followup.
-
-    optional args 只喺非 None 時先傳入 discord.py，避免：
-    - NoneType.to_dict
-    - NoneType.is_finished
-    """
-    kwargs: dict[str, object] = {"ephemeral": ephemeral}
-
-    if content is not None:
-        kwargs["content"] = content
-    if embed is not None:
-        kwargs["embed"] = embed
-    if view is not None:
-        kwargs["view"] = view
-    if file is not None:
-        kwargs["file"] = file
-
-    if interaction.response.is_done():
-        await interaction.followup.send(**kwargs)
-    else:
-        await interaction.response.send_message(**kwargs)
-
-
 def build_result_payload(interaction: discord.Interaction, result_embed: discord.Embed) -> dict[str, object]:
     """方案 B：一個 compact result embed + bartender thumbnail + Quick Bar buttons.
 
@@ -353,7 +323,7 @@ class Drink(commands.Cog):
 
     async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         # Admin / helpers 無視調酒 cooldown
-        if can_use_admin(interaction.user):
+        if is_admin_or_helper(interaction.user):
             return True
 
         retry_after = get_drink_retry_after(interaction.user.id)
@@ -452,4 +422,4 @@ class Drink(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Drink(bot))
+    await bot.add_cog(Drink(b
