@@ -23,9 +23,9 @@ class MenuItem:
 
 
 # Button colour rule:
-# - secondary: navigation / previous page only
-# - primary: normal functional action
-# - success: positive / fun / social action
+# - secondary: navigation / info / quiet utility
+# - primary: normal functional action / targeted action / records
+# - success: light positive instant action
 # - danger: admin-restricted or destructive/high-impact action
 # - link: external URL, added dynamically in menu.py
 
@@ -107,8 +107,8 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 # Social link buttons are added dynamically in menu.py.
 # Desired Home layout:
 # row 0: core community tools
-# row 1: cheers + drink quick actions
-# row 2: drink social/stats + confession
+# row 1: cheers / social-emotion / confession
+# row 2: bartender drink series
 # row 3: invite + IG Page + Threads Page
 # row 4: help + admin
 HOME_MENU_ITEMS: list[MenuItem] = [
@@ -160,7 +160,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="cheers_target",
         label="幫人打氣",
         emoji="🙌",
-        style="success",
+        style="primary",
         layer="home",
         row=1,
         cog="Cheers",
@@ -171,13 +171,13 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="confession",
         label="無名告白",
         emoji="🕯️",
-        style="success",
+        style="secondary",
         layer="home",
         row=1,
         cog="Confession",
         method="menu_entry",
         description="匿名投稿",
-    ),    
+    ),
     MenuItem(
         id="drink",
         label="調酒",
@@ -193,7 +193,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="drink_gift",
         label="賜酒",
         emoji="🥂",
-        style="success",
+        style="primary",
         layer="home",
         row=2,
         cog="Drink",
@@ -204,14 +204,13 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="drink_stats",
         label="酒保紀錄",
         emoji="📊",
-        style="primary",
+        style="secondary",
         layer="home",
         row=2,
         cog="Drink",
         method="stats_entry",
         description="查看自己的酒保紀錄",
     ),
-
     MenuItem(
         id="invite",
         label="生成邀請碼",
@@ -227,7 +226,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         id="help",
         label="幫助",
         emoji="ℹ️",
-        style="primary",
+        style="secondary",
         layer="home",
         row=4,
         cog="Menu",
