@@ -49,6 +49,7 @@ FEATURE_LABELS: dict[str, str] = {
     "tempvc": "小隊 call",
     "cheers": "打氣",
     "drink": "調酒",
+    "confession": "匿名告白",
     "ig": "IG Page",
     "threads": "Threads Page",
     "invite": "生成邀請碼",
@@ -715,7 +716,16 @@ class HomeMenuView(BaseMenuView):
             method_names=["do_drink", "drink"],
             missing_message="❌ 調酒功能未載入。",
         )
-
+    @discord.ui.button(label="無名告白", emoji="🕯️", style=discord.ButtonStyle.secondary, custom_id="bartender:home:confession", row=1)
+    async def confession_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    await self._call_cog_method(
+            interaction,
+            feature="confession",
+            cog_name="Confession",
+            method_names=["open_confession_modal"],
+            missing_message="❌ 無名告白功能未載入。",
+        )
+    
     @discord.ui.button(label="生成邀請碼", emoji="🔗", style=discord.ButtonStyle.secondary, custom_id="bartender:home:invite", row=3)
     async def invite_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._create_invite_link(interaction)
