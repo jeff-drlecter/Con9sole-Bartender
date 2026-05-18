@@ -935,7 +935,15 @@ class RoleListUserIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 查�
 class RoleToolsView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog, timeout=None)
-
+        
+    @discord.ui.button(label="返回", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:admin", row=0)
+    async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._enforce_cooldown(interaction):
+            return
+        if not await self._require_admin(interaction):
+            return
+        await self.cog.open_admin_tool_from_button(interaction)
+        
     @discord.ui.button(label="加角色", emoji="➕", style=discord.ButtonStyle.primary, custom_id="bartender:role_tools:grant", row=0)
     async def grant_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
@@ -985,15 +993,9 @@ class RoleToolsView(BaseMenuView):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Admin Tool", emoji="🛠️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:admin", row=2)
-    async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._enforce_cooldown(interaction):
-            return
-        if not await self._require_admin(interaction):
-            return
-        await self.cog.open_admin_tool_from_button(interaction)
 
-    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:home", row=2)
+
+    @discord.ui.button(label="Menu", emoji="🏠", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:home", row=2)
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
