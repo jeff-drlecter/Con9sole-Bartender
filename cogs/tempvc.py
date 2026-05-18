@@ -212,16 +212,15 @@ def _build_created_message(ch: discord.VoiceChannel, limit: int) -> str:
 class TempVCLimitSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="2 人", value="2", emoji="2️⃣"),
-            discord.SelectOption(label="4 人", value="4", emoji="4️⃣"),
-            discord.SelectOption(label="5 人", value="5", emoji="5️⃣"),
-            discord.SelectOption(label="8 人", value="8", emoji="8️⃣"),
-            discord.SelectOption(label="11 人", value="11", emoji="👥"),
-            discord.SelectOption(label="12 人", value="12", emoji="👥"),
-            discord.SelectOption(label="16 人", value="16", emoji="👥"),
-            discord.SelectOption(label="24 人", value="24", emoji="👥"),
-            discord.SelectOption(label="32 人（預設）", value="32", emoji="⚡"),
-        ]
+    		discord.SelectOption(label="2 人", value="2", emoji="2️⃣"),
+    		discord.SelectOption(label="5 人", value="5", emoji="5️⃣"),
+    		discord.SelectOption(label="8 人", value="8", emoji="8️⃣"),
+    		discord.SelectOption(label="11 人", value="11", emoji="👥"),
+    		discord.SelectOption(label="12 人", value="12", emoji="👥"),
+    		discord.SelectOption(label="16 人", value="16", emoji="👥"),
+    		discord.SelectOption(label="24 人", value="24", emoji="👥"),
+    		discord.SelectOption(label="32 人（預設）", value="32", emoji="⚡"),
+		]
         super().__init__(
             placeholder="選擇人數上限；選完會即時建立房間",
             min_values=1,
@@ -393,6 +392,10 @@ class TempVC(commands.Cog):
     def cog_unload(self):
         if self._sweeper_task and not self._sweeper_task.done():
             self._sweeper_task.cancel()
+
+    async def menu_entry(self, interaction: discord.Interaction) -> None:
+        """Unified entrypoint for data/menu_registry.py."""
+        await self.create_temp_vc_from_menu(interaction)
 
     async def _create_manual_temp_vc(
         self,
