@@ -544,7 +544,9 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
             "🎧 **小隊 call**｜建立臨時語音房\n"
             "🎛️ **控制**｜管理目前小隊 call\n"
             "🎉 **打氣**｜為大家補充能量\n"
-            "🍹 **調酒**｜酒保特選\n\n"
+            "🙌 **幫人打氣**｜送一句打氣給其他成員\n"
+            "🍹 **調酒**｜酒保特選\n"
+            "🥂 **賜酒**｜賜一杯酒給其他成員\n\n"
             "⬅️ **Menu**｜進入吧枱主頁"
         ),
         color=MENU_COLOR,
