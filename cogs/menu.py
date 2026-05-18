@@ -18,6 +18,7 @@ from data.menu_registry import MenuItem, get_menu_items
 
 MENU_COLOR = 0x2B2D31
 COOLDOWN_SECONDS = 3.0
+MENTION_DEDUPE_TTL_SECONDS = 300.0
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BARTENDER_IMAGE = ASSETS_DIR / "bartender.png"
@@ -41,12 +42,14 @@ HELP_URL = getattr(config, "HELP_URL", None)
 
 USER_MENU_COOLDOWNS: dict[int, float] = {}
 USER_INVITE_COOLDOWNS: dict[int, float] = {}
+MENTION_MESSAGE_DEDUPE: dict[int, float] = {}
 
 FEATURE_LABELS: dict[str, str] = {
     "menu": "Menu",
     "home_menu": "Bartender Home",
     "team": "組隊",
     "tempvc": "小隊 call",
+    "tempvc_control": "小隊 call 控制",
     "cheers": "打氣",
     "drink": "調酒",
     "confession": "無名告白",
@@ -68,6 +71,7 @@ FEATURE_EMOJIS: dict[str, str] = {
     "home_menu": "🍸",
     "team": "👥",
     "tempvc": "🎧",
+    "tempvc_control": "🎛️",
     "cheers": "🎉",
     "drink": "🍹",
     "confession": "🕯️",
@@ -95,6 +99,7 @@ STYLE_MAP: dict[str, discord.ButtonStyle] = {
 COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "team": ["menu_entry", "open_team_menu", "start_team_menu", "team_menu"],
     "tempvc": ["menu_entry", "create_temp_vc_from_menu", "send_control_panel", "tempvc_panel", "tempvc", "panel"],
+    "tempvc_control": ["open_control_panel_from_menu", "control_panel", "open_control_panel", "send_control_panel"],
     "cheers": ["menu_entry", "do_cheers", "cheers_cmd", "cheers"],
     "drink": ["menu_entry", "do_drink", "drink"],
     "confession": ["menu_entry", "open_confession_modal", "confession_menu", "start_confession"],
@@ -243,6 +248,7 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
             "**「歡迎光臨，要點什麼？」**\n\n"
             "👥 **組隊**｜召集隊友\n"
             "🎧 **小隊 call**｜建立臨時語音房\n"
+            "🎛️ **控制**｜管理目前小隊 call\n"
             "🎉 **打氣**｜為大家補充能量\n"
             "🍹 **調酒**｜酒保特選\n\n"
             "⬅️ **Menu**｜進入吧枱主頁"
@@ -265,6 +271,7 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
             f"**{COMMUNITY_NAME} 吧枱主頁**\n\n"
             "👥 **組隊** — 召集隊友\n"
             "🎧 **小隊 call** — 建立臨時語音房\n"
+            "🎛️ **小隊 call 控制** — 管理目前身處的小隊 call\n"
             "🎉 **打氣** — 為大家補充能量\n"
             "🍹 **調酒** — 酒保特選\n"
             "🕯️ **無名告白** — 匿名投稿\n"
@@ -288,6 +295,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "**Bartender 使用說明**\n\n"
             "👥 **組隊**｜發起組隊 / 招募隊友\n"
             "🎧 **小隊 call**｜建立臨時語音房\n"
+            "🎛️ **小隊 call 控制**｜改人數上限 / 刪除自己的小隊 call\n"
             "🎉 **打氣**｜送出隨機打氣內容\n"
             "🍹 **調酒**｜抽一杯酒保特選飲品\n"
             "🕯️ **無名告白**｜匿名投稿\n"
@@ -373,6 +381,38 @@ def format_retry_seconds(seconds: float) -> str:
     if minutes <= 0:
         return f"{sec} 秒"
     return f"{minutes} 分 {sec} 秒"
+
+
+def _cleanup_mention_dedupe(now: float | None = None) -> None:
+    now = now if now is not None else time.time()
+    expired_ids = [
+        message_id
+        for message_id, seen_at in MENTION_MESSAGE_DEDUPE.items()
+        if now - seen_at >= MENTION_DEDUPE_TTL_SECONDS
+    ]
+    for message_id in expired_ids:
+        MENTION_MESSAGE_DEDUPE.pop(message_id, None)
+
+    if len(MENTION_MESSAGE_DEDUPE) > 1000:
+        newest = sorted(MENTION_MESSAGE_DEDUPE.items(), key=lambda item: item[1], reverse=True)[:300]
+        MENTION_MESSAGE_DEDUPE.clear()
+        MENTION_MESSAGE_DEDUPE.update(dict(newest))
+
+
+def claim_mention_message(message_id: int) -> bool:
+    """Return True only once per Discord message id within this process.
+
+    This prevents duplicate mention replies caused by duplicated event dispatches or
+    accidental duplicate listener registration in a single running bot process.
+    """
+    now = time.time()
+    _cleanup_mention_dedupe(now)
+
+    if message_id in MENTION_MESSAGE_DEDUPE:
+        return False
+
+    MENTION_MESSAGE_DEDUPE[message_id] = now
+    return True
 
 
 def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]] | None:
@@ -860,6 +900,9 @@ class Menu(commands.Cog):
 
     async def send_mention_menu(self, message: discord.Message) -> None:
         if message.author.bot:
+            return
+
+        if not claim_mention_message(message.id):
             return
 
         if not can_use_admin(message.author):
