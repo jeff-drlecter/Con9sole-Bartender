@@ -5,7 +5,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import discord
 from discord import app_commands
@@ -49,7 +49,7 @@ FEATURE_LABELS: dict[str, str] = {
     "tempvc": "小隊 call",
     "cheers": "打氣",
     "drink": "調酒",
-    "confession": "匿名告白",
+    "confession": "無名告白",
     "ig": "IG Page",
     "threads": "Threads Page",
     "invite": "生成邀請碼",
@@ -70,6 +70,7 @@ FEATURE_EMOJIS: dict[str, str] = {
     "tempvc": "🎧",
     "cheers": "🎉",
     "drink": "🍹",
+    "confession": "🕯️",
     "ig": "📸",
     "threads": "🧵",
     "invite": "🔗",
@@ -257,6 +258,7 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
             "🎧 **小隊 call** — 建立臨時語音房\n"
             "🎉 **打氣** — 為大家補充能量\n"
             "🍹 **調酒** — 酒保特選\n"
+            "🕯️ **無名告白** — 匿名投稿\n"
             "📸 **IG Page** — 官方 Instagram\n"
             "🧵 **Threads Page** — 官方 Threads\n"
             "🔗 **生成邀請碼** — 7 日 / 10 次公開邀請連結\n"
@@ -279,6 +281,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "🎧 **小隊 call**｜建立臨時語音房\n"
             "🎉 **打氣**｜送出隨機打氣內容\n"
             "🍹 **調酒**｜抽一杯酒保特選飲品\n"
+            "🕯️ **無名告白**｜匿名投稿\n"
             "📸 **IG Page / Threads Page**｜查看官方社交平台\n"
             "🔗 **生成邀請碼**｜7 日有效、最多 10 次使用，每人 10 分鐘一次\n"
             "🛠️ **Admin Tool**｜Admin / helpers 專用管理工具"
@@ -716,16 +719,17 @@ class HomeMenuView(BaseMenuView):
             method_names=["do_drink", "drink"],
             missing_message="❌ 調酒功能未載入。",
         )
+
     @discord.ui.button(label="無名告白", emoji="🕯️", style=discord.ButtonStyle.secondary, custom_id="bartender:home:confession", row=1)
     async def confession_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-    await self._call_cog_method(
+        await self._call_cog_method(
             interaction,
             feature="confession",
             cog_name="Confession",
-            method_names=["open_confession_modal"],
+            method_names=["open_confession_modal", "confession_menu", "start_confession"],
             missing_message="❌ 無名告白功能未載入。",
         )
-    
+
     @discord.ui.button(label="生成邀請碼", emoji="🔗", style=discord.ButtonStyle.secondary, custom_id="bartender:home:invite", row=3)
     async def invite_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._create_invite_link(interaction)
@@ -1025,6 +1029,9 @@ class Menu(commands.Cog):
         )
 
     async def send_mention_menu(self, message: discord.Message) -> None:
+        if message.author.bot:
+            return
+
         if not can_use_admin(message.author):
             retry_after = get_retry_after(message.author.id)
             if retry_after > 0:
@@ -1053,6 +1060,25 @@ class Menu(commands.Cog):
         self.bot.add_view(AdminToolView(self))
         self.bot.add_view(RoleToolsView(self))
         self._views_registered = True
+
+    @commands.Cog.listener("on_message")
+    async def on_message_mention_menu(self, message: discord.Message) -> None:
+        if message.author.bot:
+            return
+        if message.guild is None:
+            return
+        if self.bot.user is None:
+            return
+
+        direct_mention = f"<@{self.bot.user.id}>" in message.content or f"<@!{self.bot.user.id}>" in message.content
+        if not direct_mention:
+            return
+
+        cleaned = message.content.replace(f"<@{self.bot.user.id}>", "").replace(f"<@!{self.bot.user.id}>", "").strip()
+        if cleaned:
+            return
+
+        await self.send_mention_menu(message)
 
     @app_commands.command(name="menu", description="顯示 Con9sole Bartender 快捷吧枱")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
