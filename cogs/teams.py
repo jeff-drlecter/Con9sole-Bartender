@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import discord
 from discord.ext import commands
 
-
 STATE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 SWEEP_INTERVAL_SECONDS = 10 * 60  # 10 minutes
 
@@ -45,6 +44,10 @@ class Teams(commands.Cog):
         if self._sweeper_task and not self._sweeper_task.done():
             self._sweeper_task.cancel()
 
+    async def menu_entry(self, interaction: discord.Interaction) -> None:
+        """Unified entrypoint for data/menu_registry.py."""
+        await self.open_team_menu(interaction)
+
     def touch_state(self, state: TeamState) -> None:
         state.last_touched = time.time()
 
@@ -63,11 +66,14 @@ class Teams(commands.Cog):
 
     async def _sweeper_loop(self) -> None:
         await self.bot.wait_until_ready()
+
         while not self.bot.is_closed():
             try:
                 await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
                 expired_ids = [
-                    mid for mid, state in list(self.states.items()) if self.is_state_expired(state)
+                    mid
+                    for mid, state in list(self.states.items())
+                    if self.is_state_expired(state)
                 ]
                 for mid in expired_ids:
                     self.states.pop(mid, None)
@@ -92,7 +98,6 @@ class Teams(commands.Cog):
 
     async def create_team(self, interaction: discord.Interaction, count: int, mode: str) -> None:
         mode = mode.strip() or "未知"
-
         state = TeamState(
             leader_id=interaction.user.id,
             required=count,
@@ -104,7 +109,6 @@ class Teams(commands.Cog):
             content=self.build_message(state),
             view=TeamView(self, state),
         )
-
         state.message_id = message.id
         self.touch_state(state)
         self.states[message.id] = state
@@ -120,24 +124,24 @@ class Teams(commands.Cog):
 
         if state.cancelled:
             return (
-                "❌ 組隊行動已取消。\n"
+                "❌ **組隊行動已取消。**\n"
                 f"召集人：<@{state.leader_id}>"
             )
 
         if remaining == 0:
-            status = "✅ 已齊人，可以開始！\n請按「建立小隊 call」開始對話。"
+            status = "✅ **已齊人，可以開始！**\n請按「建立小隊 call」開始對話。"
             remaining_text = "0（已滿）"
         else:
             status = "如果加入請按「立即加入」或「稍後加入」。"
             remaining_text = str(remaining)
 
         return (
-            f"<@{state.leader_id}> 正在召集隊友，需要 {state.required} 位！\n"
-            f"遊玩模式：{state.mode}\n\n"
+            f"👥 <@{state.leader_id}> 正在召集隊友，需要 **{state.required}** 位！\n"
+            f"🎮 **遊玩模式**：{state.mode}\n\n"
             f"{status}\n"
-            f"目前尚欠人數：{remaining_text}\n\n"
-            f"可以立即加入：{fmt(state.join_now)}\n"
-            f"可以稍後加入：{fmt(state.join_later)}"
+            f"目前尚欠人數：**{remaining_text}**\n\n"
+            f"✅ **可以立即加入**：{fmt(state.join_now)}\n"
+            f"🕒 **可以稍後加入**：{fmt(state.join_later)}"
         )
 
     def is_full(self, state: TeamState) -> bool:
@@ -178,7 +182,6 @@ class TeamModeModal(discord.ui.Modal, title="設定遊玩模式"):
         super().__init__()
         self.cog = cog
         self.count = count
-
         self.mode = discord.ui.TextInput(
             label="遊玩模式（可留空）",
             placeholder="例如：Rank / ARAM / 任務",
@@ -199,7 +202,7 @@ class CancelledTeamView(discord.ui.View):
 
     @discord.ui.button(
         label="Menu",
-        emoji="📋",
+        emoji="⬅️",
         style=discord.ButtonStyle.secondary,
         custom_id="teams:cancelled:menu",
         row=0,
@@ -256,8 +259,10 @@ class TeamView(discord.ui.View):
 
     @discord.ui.button(
         label="立即加入",
+        emoji="✅",
         style=discord.ButtonStyle.success,
         custom_id="teams:join_now",
+        row=0,
     )
     async def join_now(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.state.cancelled:
@@ -265,7 +270,6 @@ class TeamView(discord.ui.View):
             return
 
         uid = interaction.user.id
-
         if uid == self.state.leader_id:
             await interaction.response.send_message("你係召集人，唔需要再加入名單。", ephemeral=True)
             return
@@ -284,8 +288,10 @@ class TeamView(discord.ui.View):
 
     @discord.ui.button(
         label="稍後加入",
+        emoji="🕒",
         style=discord.ButtonStyle.primary,
         custom_id="teams:join_later",
+        row=0,
     )
     async def join_later(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.state.cancelled:
@@ -293,7 +299,6 @@ class TeamView(discord.ui.View):
             return
 
         uid = interaction.user.id
-
         if uid == self.state.leader_id:
             await interaction.response.send_message("你係召集人，唔需要再加入名單。", ephemeral=True)
             return
@@ -311,9 +316,47 @@ class TeamView(discord.ui.View):
         await self.refresh(interaction)
 
     @discord.ui.button(
+        label="建立小隊 call",
+        emoji="🎧",
+        style=discord.ButtonStyle.secondary,
+        custom_id="teams:create_tempvc",
+        row=1,
+    )
+    async def create_tempvc(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.state.cancelled:
+            await interaction.response.send_message("❌ 呢個組隊已取消。", ephemeral=True)
+            return
+
+        if interaction.user.id != self.state.leader_id:
+            await interaction.response.send_message("只有召集人可以由呢個組隊建立小隊 call。", ephemeral=True)
+            return
+
+        tempvc_cog = interaction.client.get_cog("TempVC")
+        if tempvc_cog is None:
+            await interaction.response.send_message("❌ 小隊 call 功能未載入。", ephemeral=True)
+            return
+
+        entry = getattr(tempvc_cog, "menu_entry", None) or getattr(tempvc_cog, "create_temp_vc_from_menu", None)
+        if not callable(entry):
+            await interaction.response.send_message("❌ 小隊 call 入口未設定。", ephemeral=True)
+            return
+
+        try:
+            await entry(interaction)
+        except discord.InteractionResponded:
+            pass
+        except Exception as exc:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ 建立小隊 call 失敗：`{type(exc).__name__}`。", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ 建立小隊 call 失敗：`{type(exc).__name__}`。", ephemeral=True)
+
+    @discord.ui.button(
         label="取消",
+        emoji="🗑️",
         style=discord.ButtonStyle.danger,
         custom_id="teams:cancel",
+        row=1,
     )
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         uid = interaction.user.id
