@@ -402,11 +402,12 @@ class Drink(commands.Cog):
         icon = ICON_MAP.get(drink.typ, ICON_MAP["default"])
         giver = interaction.user.mention
         receiver = (to or interaction.user).mention
+        drink_name = f"**{drink.eng}（{drink.zh}）**"
 
         if to and to.id != interaction.user.id:
-            return f"{icon} {giver} 為 {receiver} 賜上一杯 **{drink.eng}（{drink.zh}）**。"
+            return f"{icon} {giver} 賜一杯 {drink_name} 給 {receiver}。"
 
-        return f"{icon} {giver} 在吧枱前點了一杯 **{drink.eng}（{drink.zh}）**。"
+        return f"{icon} Bartender Special：酒保為 {giver} 調製了一杯 {drink_name}。"
 
     async def _wait_for_gift_target(self, interaction: discord.Interaction) -> discord.Member | None:
         if interaction.channel is None:
