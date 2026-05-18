@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import inspect
-import re
 import sqlite3
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -20,6 +20,9 @@ from data.menu_registry import MenuItem, get_menu_items
 MENU_COLOR = 0x2B2D31
 COOLDOWN_SECONDS = 3.0
 MENTION_DEDUPE_TTL_SECONDS = 300.0
+ROLE_TOOLS_TIMEOUT_SECONDS = 300
+ROLE_BATCH_PAUSE_EVERY = 10
+ROLE_BATCH_PAUSE_SECONDS = 0.8
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BARTENDER_IMAGE = ASSETS_DIR / "bartender.png"
@@ -114,6 +117,21 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "drink": ["menu_entry"],
     "confession": ["menu_entry"],
 }
+
+
+@dataclass(frozen=True)
+class RoleActionState:
+    mode: str  # add / remove
+    target_kind: str  # member / role
+    target_member_id: int | None = None
+    target_role_id: int | None = None
+    apply_role_id: int | None = None
+    include_bots: bool = False
+
+
+# -----------------------------------------------------------------------------
+# Stats
+# -----------------------------------------------------------------------------
 
 
 def init_stats_db() -> None:
@@ -228,6 +246,11 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
     return "\n".join(lines)
 
 
+# -----------------------------------------------------------------------------
+# Shared helpers
+# -----------------------------------------------------------------------------
+
+
 def can_use_admin(member: discord.Member | discord.User) -> bool:
     """Backward-compatible admin/helper checker.
 
@@ -249,6 +272,226 @@ def build_menu_file() -> discord.File | None:
 def _apply_bartender_thumbnail(embed: discord.Embed) -> None:
     if BARTENDER_IMAGE.exists():
         embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
+
+
+async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
+    if interaction.response.is_done():
+        return
+    try:
+        await interaction.response.defer(ephemeral=ephemeral, thinking=True)
+    except discord.HTTPException:
+        pass
+
+
+def get_retry_after(user_id: int) -> float:
+    last_used = USER_MENU_COOLDOWNS.get(user_id, 0.0)
+    elapsed = time.time() - last_used
+    retry_after = COOLDOWN_SECONDS - elapsed
+    return retry_after if retry_after > 0 else 0.0
+
+
+def touch_cooldown(user_id: int) -> None:
+    USER_MENU_COOLDOWNS[user_id] = time.time()
+
+
+def get_invite_retry_after(user_id: int) -> float:
+    last_used = USER_INVITE_COOLDOWNS.get(user_id, 0.0)
+    elapsed = time.time() - last_used
+    retry_after = INVITE_COOLDOWN_SECONDS - elapsed
+    return retry_after if retry_after > 0 else 0.0
+
+
+def touch_invite_cooldown(user_id: int) -> None:
+    USER_INVITE_COOLDOWNS[user_id] = time.time()
+
+
+def format_retry_seconds(seconds: float) -> str:
+    seconds_int = max(0, int(seconds + 0.999))
+    minutes, sec = divmod(seconds_int, 60)
+    if minutes <= 0:
+        return f"{sec} 秒"
+    return f"{minutes} 分 {sec} 秒"
+
+
+def _cleanup_mention_dedupe(now: float | None = None) -> None:
+    now = now if now is not None else time.time()
+    expired_ids = [
+        message_id
+        for message_id, seen_at in MENTION_MESSAGE_DEDUPE.items()
+        if now - seen_at >= MENTION_DEDUPE_TTL_SECONDS
+    ]
+    for message_id in expired_ids:
+        MENTION_MESSAGE_DEDUPE.pop(message_id, None)
+
+    if len(MENTION_MESSAGE_DEDUPE) > 1000:
+        newest = sorted(MENTION_MESSAGE_DEDUPE.items(), key=lambda item: item[1], reverse=True)[:300]
+        MENTION_MESSAGE_DEDUPE.clear()
+        MENTION_MESSAGE_DEDUPE.update(dict(newest))
+
+
+def claim_mention_message(message_id: int) -> bool:
+    """Return True only once per Discord message id within this process.
+
+    This prevents duplicate mention replies caused by duplicated event dispatches or
+    accidental duplicate listener registration in a single running bot process.
+    """
+    now = time.time()
+    _cleanup_mention_dedupe(now)
+
+    if message_id in MENTION_MESSAGE_DEDUPE:
+        return False
+
+    MENTION_MESSAGE_DEDUPE[message_id] = now
+    return True
+
+
+def get_member_from_state(guild: discord.Guild, member_id: int | None) -> discord.Member | None:
+    if member_id is None:
+        return None
+    return guild.get_member(member_id)
+
+
+def get_role_from_state(guild: discord.Guild, role_id: int | None) -> discord.Role | None:
+    if role_id is None:
+        return None
+    return guild.get_role(role_id)
+
+
+def get_batch_target_members(target_role: discord.Role, *, include_bots: bool) -> list[discord.Member]:
+    members = list(target_role.members)
+    if not include_bots:
+        members = [member for member in members if not member.bot]
+    members.sort(key=lambda member: member.display_name.casefold())
+    return members
+
+
+def mode_label(mode: str) -> str:
+    return "加角色" if mode == "add" else "移除角色"
+
+
+def mode_emoji(mode: str) -> str:
+    return "➕" if mode == "add" else "➖"
+
+
+def build_role_action_embed(mode: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"🎭 Role Tools｜{mode_label(mode)}",
+        description=(
+            "請選擇操作模式：\n\n"
+            "👤 **單一成員** — 對指定一位成員加 / 移除角色\n"
+            "🎭 **角色群組** — 對所有擁有某個角色的成員批量處理\n\n"
+            "每個操作最後都會有確認頁，避免誤操作。"
+        ),
+        color=MENU_COLOR,
+    )
+    embed.set_footer(text="Con9sole Bartender｜Role Tools 只限授權成員使用。")
+    return embed
+
+
+def build_member_select_embed(mode: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{mode_emoji(mode)} Role Tools｜{mode_label(mode)}｜選擇成員",
+        description="請用下面的 **User Select** 選擇目標成員。",
+        color=MENU_COLOR,
+    )
+    embed.set_footer(text="你可以在 Discord 的選單內搜尋成員名稱。")
+    return embed
+
+
+def build_group_select_embed(mode: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{mode_emoji(mode)} Role Tools｜{mode_label(mode)}｜選擇目標群組",
+        description=(
+            "請用下面的 **Role Select** 選擇目標角色群組。\n\n"
+            "Bot 會對所有擁有此角色的成員執行操作。"
+        ),
+        color=MENU_COLOR,
+    )
+    embed.set_footer(text="批量操作會在最後顯示預計影響人數。")
+    return embed
+
+
+def build_apply_role_select_embed(mode: str, state: RoleActionState, guild: discord.Guild) -> discord.Embed:
+    if state.target_kind == "member":
+        member = get_member_from_state(guild, state.target_member_id)
+        target_text = member.mention if member else "`目標成員已不存在`"
+    else:
+        role = get_role_from_state(guild, state.target_role_id)
+        target_text = f"所有擁有 {role.mention} 的成員" if role else "`目標角色已不存在`"
+
+    embed = discord.Embed(
+        title=f"{mode_emoji(mode)} Role Tools｜{mode_label(mode)}｜選擇角色",
+        description=(
+            f"目標：{target_text}\n\n"
+            f"請用下面的 **Role Select** 選擇要{mode_label(mode)}的角色。"
+        ),
+        color=MENU_COLOR,
+    )
+    embed.set_footer(text="下一步會顯示確認頁。")
+    return embed
+
+
+def build_include_bots_embed(mode: str, state: RoleActionState, guild: discord.Guild) -> discord.Embed:
+    target_role = get_role_from_state(guild, state.target_role_id)
+    target_text = target_role.mention if target_role else "`目標角色已不存在`"
+    apply_role = get_role_from_state(guild, state.apply_role_id)
+    apply_text = apply_role.mention if apply_role else "`處理角色已不存在`"
+
+    embed = discord.Embed(
+        title=f"{mode_emoji(mode)} Role Tools｜批量設定",
+        description=(
+            f"目標群組：所有擁有 {target_text} 的成員\n"
+            f"要{mode_label(mode)}：{apply_text}\n\n"
+            "批量操作是否包含 Bot？\n\n"
+            "建議保持 **不包含 Bot**，除非你清楚知道要處理 bot account。"
+        ),
+        color=MENU_COLOR,
+    )
+    return embed
+
+
+def build_confirm_embed(mode: str, state: RoleActionState, guild: discord.Guild) -> discord.Embed:
+    apply_role = get_role_from_state(guild, state.apply_role_id)
+    apply_text = apply_role.mention if apply_role else "`處理角色已不存在`"
+
+    if state.target_kind == "member":
+        member = get_member_from_state(guild, state.target_member_id)
+        target_text = member.mention if member else "`目標成員已不存在`"
+        impact_text = "`1` 位成員"
+    else:
+        target_role = get_role_from_state(guild, state.target_role_id)
+        members = get_batch_target_members(target_role, include_bots=state.include_bots) if target_role else []
+        target_text = f"所有擁有 {target_role.mention} 的成員" if target_role else "`目標角色已不存在`"
+        impact_text = f"`{len(members)}` 位成員"
+
+    embed = discord.Embed(
+        title=f"{mode_emoji(mode)} 確認{mode_label(mode)}？",
+        description=(
+            f"目標：{target_text}\n"
+            f"角色：{apply_text}\n"
+            f"包含 Bot：`{'是' if state.include_bots else '否'}`\n"
+            f"預計影響：{impact_text}\n\n"
+            "⚠️ 此操作會立即修改成員角色。"
+        ),
+        color=0xED4245 if mode == "remove" else MENU_COLOR,
+    )
+    embed.set_footer(text="請確認無誤後先按確認。")
+    return embed
+
+
+def build_role_list_select_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="📋 Role Tools｜查看角色",
+        description="請用下面的 **User Select** 選擇要查看角色的成員。",
+        color=MENU_COLOR,
+    )
+    embed.set_footer(text="選擇後會顯示該成員目前擁有的角色。")
+    return embed
+
+
+# -----------------------------------------------------------------------------
+# Main menu embeds
+# -----------------------------------------------------------------------------
 
 
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
@@ -327,7 +570,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
             "**管理工具**\n\n"
             "📊 **Stats** — Community Bot 使用數據\n"
             "🔄 **Reload** — 直接重載所有 cogs\n"
-            "🎭 **Role Tools** — Button 角色管理工具\n"
+            "🎭 **Role Tools** — Select Menu 角色管理工具\n"
             "🏓 **Ping** — Bot latency\n"
             "🧹 **VC Teardown** — 列出並刪除 Bot Temp VC\n\n"
             "⬅️ **Menu** — 返回吧枱主頁"
@@ -342,13 +585,13 @@ def build_role_tools_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🎭 Role Tools",
         description=(
-            "**Button 角色管理工具**\n\n"
-            "➕ **加角色** — 對單一成員，或擁有指定角色的所有成員加角色\n"
-            "➖ **移除角色** — 對單一成員，或擁有指定角色的所有成員移除角色\n"
-            "📋 **查看角色** — 查看某位成員目前擁有的角色\n"
+            "**Select Menu 角色管理工具**\n\n"
+            "➕ **加角色** — 用選單選成員 / 角色，再確認執行\n"
+            "➖ **移除角色** — 用選單選成員 / 角色，再確認執行\n"
+            "📋 **查看角色** — 用 User Select 選成員查看角色\n"
             "🧬 **新版本頻道** — 先保留為 slash 指令提示，不直接 button 執行\n\n"
-            "輸入支援：`@mention`、`ID`、或精準名稱。\n"
-            "⚠️ 批量處理時請先確認目標角色無誤。"
+            "✅ 適合手機使用，唔需要 copy ID。\n"
+            "⚠️ 批量處理前會顯示預計影響人數。"
         ),
         color=MENU_COLOR,
     )
@@ -371,144 +614,9 @@ def build_role_channel_new_help_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
-async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
-    if interaction.response.is_done():
-        return
-    try:
-        await interaction.response.defer(ephemeral=ephemeral, thinking=True)
-    except discord.HTTPException:
-        pass
-
-
-def get_retry_after(user_id: int) -> float:
-    last_used = USER_MENU_COOLDOWNS.get(user_id, 0.0)
-    elapsed = time.time() - last_used
-    retry_after = COOLDOWN_SECONDS - elapsed
-    return retry_after if retry_after > 0 else 0.0
-
-
-def touch_cooldown(user_id: int) -> None:
-    USER_MENU_COOLDOWNS[user_id] = time.time()
-
-
-def get_invite_retry_after(user_id: int) -> float:
-    last_used = USER_INVITE_COOLDOWNS.get(user_id, 0.0)
-    elapsed = time.time() - last_used
-    retry_after = INVITE_COOLDOWN_SECONDS - elapsed
-    return retry_after if retry_after > 0 else 0.0
-
-
-def touch_invite_cooldown(user_id: int) -> None:
-    USER_INVITE_COOLDOWNS[user_id] = time.time()
-
-
-def format_retry_seconds(seconds: float) -> str:
-    seconds_int = max(0, int(seconds + 0.999))
-    minutes, sec = divmod(seconds_int, 60)
-    if minutes <= 0:
-        return f"{sec} 秒"
-    return f"{minutes} 分 {sec} 秒"
-
-
-def _cleanup_mention_dedupe(now: float | None = None) -> None:
-    now = now if now is not None else time.time()
-    expired_ids = [
-        message_id
-        for message_id, seen_at in MENTION_MESSAGE_DEDUPE.items()
-        if now - seen_at >= MENTION_DEDUPE_TTL_SECONDS
-    ]
-    for message_id in expired_ids:
-        MENTION_MESSAGE_DEDUPE.pop(message_id, None)
-
-    if len(MENTION_MESSAGE_DEDUPE) > 1000:
-        newest = sorted(MENTION_MESSAGE_DEDUPE.items(), key=lambda item: item[1], reverse=True)[:300]
-        MENTION_MESSAGE_DEDUPE.clear()
-        MENTION_MESSAGE_DEDUPE.update(dict(newest))
-
-
-def claim_mention_message(message_id: int) -> bool:
-    """Return True only once per Discord message id within this process.
-
-    This prevents duplicate mention replies caused by duplicated event dispatches or
-    accidental duplicate listener registration in a single running bot process.
-    """
-    now = time.time()
-    _cleanup_mention_dedupe(now)
-
-    if message_id in MENTION_MESSAGE_DEDUPE:
-        return False
-
-    MENTION_MESSAGE_DEDUPE[message_id] = now
-    return True
-
-
-def extract_discord_id(raw: str) -> int | None:
-    text = raw.strip()
-    if not text:
-        return None
-
-    match = re.search(r"<@!?([0-9]{15,25})>|<@&([0-9]{15,25})>|([0-9]{15,25})", text)
-    if not match:
-        return None
-
-    for group in match.groups():
-        if group:
-            try:
-                return int(group)
-            except ValueError:
-                return None
-
-    return None
-
-
-def normalize_name(raw: str) -> str:
-    return raw.strip().lstrip("@").strip().casefold()
-
-
-def parse_bool_text(raw: str) -> bool:
-    text = raw.strip().lower()
-    return text in {"yes", "y", "true", "1", "include", "包含", "係", "是", "要"}
-
-
-def resolve_member(guild: discord.Guild, raw: str) -> discord.Member | None:
-    target_id = extract_discord_id(raw)
-    if target_id is not None:
-        member = guild.get_member(target_id)
-        if member is not None:
-            return member
-
-    name = normalize_name(raw)
-    if not name:
-        return None
-
-    for member in guild.members:
-        if member.name.casefold() == name or member.display_name.casefold() == name:
-            return member
-
-    for member in guild.members:
-        global_name = getattr(member, "global_name", None)
-        if global_name and str(global_name).casefold() == name:
-            return member
-
-    return None
-
-
-def resolve_role(guild: discord.Guild, raw: str) -> discord.Role | None:
-    role_id = extract_discord_id(raw)
-    if role_id is not None:
-        role = guild.get_role(role_id)
-        if role is not None:
-            return role
-
-    name = normalize_name(raw)
-    if not name:
-        return None
-
-    for role in guild.roles:
-        if role.name.casefold() == name:
-            return role
-
-    return None
+# -----------------------------------------------------------------------------
+# Registry router
+# -----------------------------------------------------------------------------
 
 
 def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]] | None:
@@ -559,8 +667,8 @@ class RegistryButton(discord.ui.Button):
 
 
 class BaseMenuView(discord.ui.View):
-    def __init__(self, cog: "Menu") -> None:
-        super().__init__(timeout=None)
+    def __init__(self, cog: "Menu", *, timeout: float | None = None) -> None:
+        super().__init__(timeout=timeout)
         self.cog = cog
 
     async def _enforce_cooldown(self, interaction: discord.Interaction) -> bool:
@@ -594,9 +702,23 @@ class BaseMenuView(discord.ui.View):
         return False
 
 
+class OwnerOnlyRoleToolView(BaseMenuView):
+    def __init__(self, cog: "Menu", *, owner_id: int, timeout: float | None = ROLE_TOOLS_TIMEOUT_SECONDS) -> None:
+        super().__init__(cog, timeout=timeout)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
+            return False
+        if not await self._require_admin(interaction):
+            return False
+        return True
+
+
 class RegistryMenuView(BaseMenuView):
     def __init__(self, cog: "Menu", layer: str) -> None:
-        super().__init__(cog)
+        super().__init__(cog, timeout=None)
         self.layer = layer
 
         for item in get_menu_items(layer):
@@ -668,7 +790,7 @@ class AdminToolView(RegistryMenuView):
 
 class HelpMenuView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
-        super().__init__(cog)
+        super().__init__(cog, timeout=None)
 
     @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:help:home", row=0)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -677,62 +799,14 @@ class HelpMenuView(BaseMenuView):
         await self.cog.open_home_menu_from_button(interaction)
 
 
-class RoleChangeModal(discord.ui.Modal):
-    target = discord.ui.TextInput(
-        label="目標成員 / 目標角色",
-        placeholder="@User / User ID / @Role / Role ID / 精準名稱",
-        required=True,
-        max_length=100,
-    )
-    role = discord.ui.TextInput(
-        label="要加上 / 移除嘅角色",
-        placeholder="@Role / Role ID / 精準角色名",
-        required=True,
-        max_length=100,
-    )
-    include_bots = discord.ui.TextInput(
-        label="批量時包含 Bot？",
-        placeholder="yes / no；預設 no",
-        required=False,
-        default="no",
-        max_length=10,
-    )
-
-    def __init__(self, cog: "Menu", *, mode: str):
-        title = "加角色" if mode == "add" else "移除角色"
-        super().__init__(title=f"Role Tools｜{title}")
-        self.cog = cog
-        self.mode = mode
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.execute_role_change_from_modal(
-            interaction,
-            mode=self.mode,
-            target_text=str(self.target.value),
-            role_text=str(self.role.value),
-            include_bots=parse_bool_text(str(self.include_bots.value)),
-        )
-
-
-class RoleListModal(discord.ui.Modal, title="Role Tools｜查看角色"):
-    member = discord.ui.TextInput(
-        label="要查看嘅成員",
-        placeholder="@User / User ID / 精準名稱",
-        required=True,
-        max_length=100,
-    )
-
-    def __init__(self, cog: "Menu"):
-        super().__init__()
-        self.cog = cog
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.execute_role_list_from_modal(interaction, member_text=str(self.member.value))
+# -----------------------------------------------------------------------------
+# Role Tools select flow
+# -----------------------------------------------------------------------------
 
 
 class RoleToolsView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
-        super().__init__(cog)
+        super().__init__(cog, timeout=None)
 
     @discord.ui.button(label="加角色", emoji="➕", style=discord.ButtonStyle.primary, custom_id="bartender:role_tools:grant", row=0)
     async def grant_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -740,7 +814,11 @@ class RoleToolsView(BaseMenuView):
             return
         if not await self._require_admin(interaction):
             return
-        await interaction.response.send_modal(RoleChangeModal(self.cog, mode="add"))
+        await interaction.response.send_message(
+            embed=build_role_action_embed("add"),
+            view=RoleActionTypeView(self.cog, owner_id=interaction.user.id, mode="add"),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="移除角色", emoji="➖", style=discord.ButtonStyle.danger, custom_id="bartender:role_tools:revoke", row=0)
     async def revoke_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -748,7 +826,11 @@ class RoleToolsView(BaseMenuView):
             return
         if not await self._require_admin(interaction):
             return
-        await interaction.response.send_modal(RoleChangeModal(self.cog, mode="remove"))
+        await interaction.response.send_message(
+            embed=build_role_action_embed("remove"),
+            view=RoleActionTypeView(self.cog, owner_id=interaction.user.id, mode="remove"),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="查看角色", emoji="📋", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:list", row=1)
     async def list_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -756,7 +838,11 @@ class RoleToolsView(BaseMenuView):
             return
         if not await self._require_admin(interaction):
             return
-        await interaction.response.send_modal(RoleListModal(self.cog))
+        await interaction.response.send_message(
+            embed=build_role_list_select_embed(),
+            view=RoleListSelectView(self.cog, owner_id=interaction.user.id),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="新版本頻道", emoji="🧬", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:channel_new", row=1)
     async def channel_new_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -786,6 +872,286 @@ class RoleToolsView(BaseMenuView):
         await self.cog.open_home_menu_from_button(interaction)
 
 
+class RoleActionTypeView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int, mode: str) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.mode = mode
+
+    @discord.ui.button(label="單一成員", emoji="👤", style=discord.ButtonStyle.primary, row=0)
+    async def member_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_member_select_embed(self.mode),
+            view=RoleMemberSelectView(self.cog, owner_id=interaction.user.id, mode=self.mode),
+        )
+
+    @discord.ui.button(label="角色群組", emoji="🎭", style=discord.ButtonStyle.secondary, row=0)
+    async def role_group_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_group_select_embed(self.mode),
+            view=RoleGroupTargetSelectView(self.cog, owner_id=interaction.user.id, mode=self.mode),
+        )
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Role Tools 操作。", embed=None, view=None)
+        self.stop()
+
+
+class MemberTargetSelect(discord.ui.UserSelect):
+    def __init__(self) -> None:
+        super().__init__(placeholder="選擇目標成員", min_values=1, max_values=1, row=0)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, RoleMemberSelectView):
+            await interaction.response.send_message("❌ Role Tools view 狀態異常，請重新開啟。", ephemeral=True)
+            return
+        await self.view.handle_member_selected(interaction, self.values[0])
+
+
+class RoleMemberSelectView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int, mode: str) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.mode = mode
+        self.add_item(MemberTargetSelect())
+
+    async def handle_member_selected(self, interaction: discord.Interaction, selected: discord.Member | discord.User) -> None:
+        if not interaction.guild:
+            await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
+            return
+
+        member = selected if isinstance(selected, discord.Member) else interaction.guild.get_member(selected.id)
+        if member is None:
+            await interaction.response.edit_message(content="❌ 找不到目標成員，請重新開啟 Role Tools。", embed=None, view=None)
+            return
+
+        state = RoleActionState(mode=self.mode, target_kind="member", target_member_id=member.id)
+        await interaction.response.edit_message(
+            embed=build_apply_role_select_embed(self.mode, state, interaction.guild),
+            view=RoleApplyRoleSelectView(self.cog, owner_id=interaction.user.id, state=state),
+        )
+
+    @discord.ui.button(label="返回", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_role_action_embed(self.mode),
+            view=RoleActionTypeView(self.cog, owner_id=interaction.user.id, mode=self.mode),
+        )
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Role Tools 操作。", embed=None, view=None)
+        self.stop()
+
+
+class GroupTargetRoleSelect(discord.ui.RoleSelect):
+    def __init__(self) -> None:
+        super().__init__(placeholder="選擇目標角色群組", min_values=1, max_values=1, row=0)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, RoleGroupTargetSelectView):
+            await interaction.response.send_message("❌ Role Tools view 狀態異常，請重新開啟。", ephemeral=True)
+            return
+        await self.view.handle_target_role_selected(interaction, self.values[0])
+
+
+class RoleGroupTargetSelectView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int, mode: str) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.mode = mode
+        self.add_item(GroupTargetRoleSelect())
+
+    async def handle_target_role_selected(self, interaction: discord.Interaction, role: discord.Role) -> None:
+        if not interaction.guild:
+            await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
+            return
+
+        if role.is_default():
+            await interaction.response.send_message("❌ 不能選擇 @everyone 作為目標群組。", ephemeral=True)
+            return
+
+        state = RoleActionState(mode=self.mode, target_kind="role", target_role_id=role.id)
+        await interaction.response.edit_message(
+            embed=build_apply_role_select_embed(self.mode, state, interaction.guild),
+            view=RoleApplyRoleSelectView(self.cog, owner_id=interaction.user.id, state=state),
+        )
+
+    @discord.ui.button(label="返回", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_role_action_embed(self.mode),
+            view=RoleActionTypeView(self.cog, owner_id=interaction.user.id, mode=self.mode),
+        )
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Role Tools 操作。", embed=None, view=None)
+        self.stop()
+
+
+class ApplyRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, mode: str) -> None:
+        super().__init__(placeholder=f"選擇要{mode_label(mode)}的角色", min_values=1, max_values=1, row=0)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, RoleApplyRoleSelectView):
+            await interaction.response.send_message("❌ Role Tools view 狀態異常，請重新開啟。", ephemeral=True)
+            return
+        await self.view.handle_apply_role_selected(interaction, self.values[0])
+
+
+class RoleApplyRoleSelectView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int, state: RoleActionState) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.state = state
+        self.add_item(ApplyRoleSelect(state.mode))
+
+    async def handle_apply_role_selected(self, interaction: discord.Interaction, role: discord.Role) -> None:
+        if not interaction.guild:
+            await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
+            return
+
+        if role.is_default():
+            await interaction.response.send_message("❌ 不能加上或移除 @everyone。", ephemeral=True)
+            return
+
+        new_state = RoleActionState(
+            mode=self.state.mode,
+            target_kind=self.state.target_kind,
+            target_member_id=self.state.target_member_id,
+            target_role_id=self.state.target_role_id,
+            apply_role_id=role.id,
+            include_bots=False,
+        )
+
+        if new_state.target_kind == "role":
+            await interaction.response.edit_message(
+                embed=build_include_bots_embed(new_state.mode, new_state, interaction.guild),
+                view=RoleIncludeBotsView(self.cog, owner_id=interaction.user.id, state=new_state),
+            )
+            return
+
+        await interaction.response.edit_message(
+            embed=build_confirm_embed(new_state.mode, new_state, interaction.guild),
+            view=RoleConfirmView(self.cog, owner_id=interaction.user.id, state=new_state),
+        )
+
+    @discord.ui.button(label="返回", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
+            return
+
+        if self.state.target_kind == "member":
+            await interaction.response.edit_message(
+                embed=build_member_select_embed(self.state.mode),
+                view=RoleMemberSelectView(self.cog, owner_id=interaction.user.id, mode=self.state.mode),
+            )
+        else:
+            await interaction.response.edit_message(
+                embed=build_group_select_embed(self.state.mode),
+                view=RoleGroupTargetSelectView(self.cog, owner_id=interaction.user.id, mode=self.state.mode),
+            )
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Role Tools 操作。", embed=None, view=None)
+        self.stop()
+
+
+class RoleIncludeBotsView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int, state: RoleActionState) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.state = state
+
+    async def _go_confirm(self, interaction: discord.Interaction, include_bots: bool) -> None:
+        if not interaction.guild:
+            await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
+            return
+
+        new_state = RoleActionState(
+            mode=self.state.mode,
+            target_kind=self.state.target_kind,
+            target_member_id=self.state.target_member_id,
+            target_role_id=self.state.target_role_id,
+            apply_role_id=self.state.apply_role_id,
+            include_bots=include_bots,
+        )
+        await interaction.response.edit_message(
+            embed=build_confirm_embed(new_state.mode, new_state, interaction.guild),
+            view=RoleConfirmView(self.cog, owner_id=interaction.user.id, state=new_state),
+        )
+
+    @discord.ui.button(label="不包含 Bot", emoji="🚫", style=discord.ButtonStyle.primary, row=0)
+    async def exclude_bots_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._go_confirm(interaction, include_bots=False)
+
+    @discord.ui.button(label="包含 Bot", emoji="🤖", style=discord.ButtonStyle.secondary, row=0)
+    async def include_bots_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._go_confirm(interaction, include_bots=True)
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Role Tools 操作。", embed=None, view=None)
+        self.stop()
+
+
+class RoleConfirmView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int, state: RoleActionState) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.state = state
+        self.done = False
+
+    @discord.ui.button(label="確認", emoji="✅", style=discord.ButtonStyle.danger, row=0)
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.done:
+            await interaction.response.send_message("呢個操作已經完成。", ephemeral=True)
+            return
+
+        self.done = True
+        await self.cog.execute_role_change_from_select(interaction, state=self.state)
+        self.stop()
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=0)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消 Role Tools 操作。", embed=None, view=None)
+        self.stop()
+
+
+class RoleListUserSelect(discord.ui.UserSelect):
+    def __init__(self) -> None:
+        super().__init__(placeholder="選擇要查看角色的成員", min_values=1, max_values=1, row=0)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, RoleListSelectView):
+            await interaction.response.send_message("❌ Role Tools view 狀態異常，請重新開啟。", ephemeral=True)
+            return
+        await self.view.handle_user_selected(interaction, self.values[0])
+
+
+class RoleListSelectView(OwnerOnlyRoleToolView):
+    def __init__(self, cog: "Menu", *, owner_id: int) -> None:
+        super().__init__(cog, owner_id=owner_id)
+        self.add_item(RoleListUserSelect())
+
+    async def handle_user_selected(self, interaction: discord.Interaction, selected: discord.Member | discord.User) -> None:
+        if not interaction.guild:
+            await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
+            return
+
+        member = selected if isinstance(selected, discord.Member) else interaction.guild.get_member(selected.id)
+        if member is None:
+            await interaction.response.edit_message(content="❌ 找不到指定成員。", embed=None, view=None)
+            return
+
+        await self.cog.execute_role_list_for_member(interaction, member=member)
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="已取消查看角色。", embed=None, view=None)
+        self.stop()
+
+
+# Backward-compatible aliases used by other cogs.
 MainMenuView = QuickBarView
 CommunityHubView = HomeMenuView
 MenuEntryView = QuickBarView
@@ -803,6 +1169,11 @@ def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | 
     if menu_cog is None:
         return None
     return QuickBarView(menu_cog)
+
+
+# -----------------------------------------------------------------------------
+# Cog
+# -----------------------------------------------------------------------------
 
 
 class Menu(commands.Cog):
@@ -830,59 +1201,50 @@ class Menu(commands.Cog):
     async def record_usage(self, feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
         record_usage_sync(feature, user_id, guild_id)
 
-    async def execute_role_change_from_modal(
-        self,
-        interaction: discord.Interaction,
-        *,
-        mode: str,
-        target_text: str,
-        role_text: str,
-        include_bots: bool,
-    ) -> None:
+    async def execute_role_change_from_select(self, interaction: discord.Interaction, *, state: RoleActionState) -> None:
         if not interaction.guild:
-            await interaction.response.send_message("⚠️ 呢個工具只可以喺伺服器內使用。", ephemeral=True)
+            await interaction.response.edit_message(content="⚠️ 呢個工具只可以喺伺服器內使用。", embed=None, view=None)
             return
 
         if not can_use_admin(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
+            await interaction.response.edit_message(content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", embed=None, view=None)
             return
 
         role_cog = interaction.client.get_cog("RoleManager")
         if role_cog is None or not hasattr(role_cog, "_apply_role_change"):
-            await interaction.response.send_message("❌ RoleManager cog 未載入，請先 `/reload role`。", ephemeral=True)
+            await interaction.response.edit_message(content="❌ RoleManager cog 未載入，請先 `/reload role`。", embed=None, view=None)
             return
 
-        target_member = resolve_member(interaction.guild, target_text)
-        target_role = None if target_member is not None else resolve_role(interaction.guild, target_text)
-
-        if target_member is None and target_role is None:
-            await interaction.response.send_message(
-                "❌ 找不到目標成員或目標角色。\n"
-                "請使用 `@User` / `User ID` / `@Role` / `Role ID` / 精準名稱。",
-                ephemeral=True,
-            )
+        apply_role = get_role_from_state(interaction.guild, state.apply_role_id)
+        if apply_role is None:
+            await interaction.response.edit_message(content="❌ 要處理嘅角色已不存在。", embed=None, view=None)
             return
 
-        role = resolve_role(interaction.guild, role_text)
-        if role is None:
-            await interaction.response.send_message(
-                "❌ 找不到要處理嘅角色。\n"
-                "請使用 `@Role` / `Role ID` / 精準角色名。",
-                ephemeral=True,
-            )
-            return
+        target_member: discord.Member | None = None
+        target_role: discord.Role | None = None
 
-        feature = "admin_role_grant" if mode == "add" else "admin_role_revoke"
+        if state.target_kind == "member":
+            target_member = get_member_from_state(interaction.guild, state.target_member_id)
+            if target_member is None:
+                await interaction.response.edit_message(content="❌ 目標成員已不存在。", embed=None, view=None)
+                return
+        else:
+            target_role = get_role_from_state(interaction.guild, state.target_role_id)
+            if target_role is None:
+                await interaction.response.edit_message(content="❌ 目標角色群組已不存在。", embed=None, view=None)
+                return
+
+        feature = "admin_role_grant" if state.mode == "add" else "admin_role_revoke"
         record_usage_sync(feature, interaction.user.id, interaction.guild_id)
 
         try:
             await role_cog._apply_role_change(  # type: ignore[attr-defined]
                 interaction,
-                role_id=str(role.id),
+                role_id=str(apply_role.id),
                 target_member=target_member,
                 target_role=target_role,
-                include_bots=include_bots,
-                mode=mode,
+                include_bots=state.include_bots,
+                mode=state.mode,
             )
         except discord.InteractionResponded:
             return
@@ -893,21 +1255,13 @@ class Menu(commands.Cog):
                 ephemeral=True,
             )
 
-    async def execute_role_list_from_modal(self, interaction: discord.Interaction, *, member_text: str) -> None:
+    async def execute_role_list_for_member(self, interaction: discord.Interaction, *, member: discord.Member) -> None:
         if not interaction.guild:
-            await interaction.response.send_message("⚠️ 呢個工具只可以喺伺服器內使用。", ephemeral=True)
+            await interaction.response.edit_message(content="⚠️ 呢個工具只可以喺伺服器內使用。", embed=None, view=None)
             return
 
         if not can_use_admin(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
-            return
-
-        member = resolve_member(interaction.guild, member_text)
-        if member is None:
-            await interaction.response.send_message(
-                "❌ 找不到指定成員。請使用 `@User` / `User ID` / 精準名稱。",
-                ephemeral=True,
-            )
+            await interaction.response.edit_message(content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", embed=None, view=None)
             return
 
         roles = [role for role in member.roles if not role.is_default()]
@@ -915,7 +1269,7 @@ class Menu(commands.Cog):
         record_usage_sync("admin_role_list", interaction.user.id, interaction.guild_id)
 
         if not roles:
-            await interaction.response.send_message(f"ℹ️ {member.mention} 沒有任何自訂角色。", ephemeral=True)
+            await interaction.response.edit_message(content=f"ℹ️ {member.mention} 沒有任何自訂角色。", embed=None, view=None)
             return
 
         lines = [f"{role.mention} (ID: `{role.id}`)" for role in roles]
@@ -938,7 +1292,7 @@ class Menu(commands.Cog):
             color=MENU_COLOR,
         )
         embed.set_footer(text=f"共有 {len(roles)} 個角色")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
 
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, ephemeral=True)
