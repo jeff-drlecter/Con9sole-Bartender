@@ -96,13 +96,16 @@ STYLE_MAP: dict[str, discord.ButtonStyle] = {
     "link": discord.ButtonStyle.link,
 }
 
+# Phase 3 cleanup:
+# All major feature cogs now expose stable menu_entry() or explicit registry methods.
+# Keep this map minimal so menu.py behaves as a clean registry router.
 COG_METHOD_FALLBACKS: dict[str, list[str]] = {
-    "team": ["menu_entry", "open_team_menu", "start_team_menu", "team_menu"],
-    "tempvc": ["menu_entry", "create_temp_vc_from_menu", "send_control_panel", "tempvc_panel", "tempvc", "panel"],
-    "tempvc_control": ["open_control_panel_from_menu", "control_panel", "open_control_panel", "send_control_panel"],
-    "cheers": ["menu_entry", "do_cheers", "cheers_cmd", "cheers"],
-    "drink": ["menu_entry", "do_drink", "drink"],
-    "confession": ["menu_entry", "open_confession_modal", "confession_menu", "start_confession"],
+    "team": ["menu_entry"],
+    "tempvc": ["menu_entry"],
+    "tempvc_control": ["open_control_panel_from_menu"],
+    "cheers": ["menu_entry"],
+    "drink": ["menu_entry"],
+    "confession": ["menu_entry"],
 }
 
 
@@ -319,7 +322,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
             "🔄 **Reload** — 直接重載所有 cogs\n"
             "🎭 **Role Tools** — 角色管理指令入口\n"
             "🏓 **Ping** — Bot latency\n"
-            "🧹 **VC Teardown** — 刪除目前 Temp VC\n\n"
+            "🧹 **VC Teardown** — 列出並刪除 Bot Temp VC\n\n"
             "⬅️ **Menu** — 返回吧枱主頁"
         ),
         color=MENU_COLOR,
@@ -874,7 +877,6 @@ class Menu(commands.Cog):
         await send_or_followup(interaction, content=f"🏓 Pong! `{latency_ms} ms`", ephemeral=True)
 
     async def admin_vc_teardown_from_button(self, interaction: discord.Interaction) -> None:
-        await safe_defer(interaction, ephemeral=True)
         record_usage_sync("admin_vc_teardown", interaction.user.id, interaction.guild_id)
 
         tempvc_cog = interaction.client.get_cog("TempVC")
@@ -883,6 +885,8 @@ class Menu(commands.Cog):
                 result = tempvc_cog.teardown_temp_vc_from_menu(interaction)  # type: ignore[attr-defined]
                 if inspect.isawaitable(result):
                     await result
+                return
+            except discord.InteractionResponded:
                 return
             except Exception as exc:
                 await send_or_followup(
