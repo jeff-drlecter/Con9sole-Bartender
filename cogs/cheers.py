@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import random
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 import discord
@@ -20,6 +22,16 @@ from data.cheers_quotes import (
 )
 
 CHEERS_USER_COOLDOWNS: dict[int, float] = {}
+CHEER_TARGET_TIMEOUT_SECONDS = 60.0
+
+
+@dataclass
+class CheerTargetPending:
+    started_at: float
+    cancel_event: asyncio.Event
+
+
+PENDING_CHEER_TARGET_REQUESTS: dict[int, CheerTargetPending] = {}
 
 
 def get_cheers_retry_after(user_id: int) -> float:
@@ -31,6 +43,19 @@ def get_cheers_retry_after(user_id: int) -> float:
 
 def touch_cheers_cooldown(user_id: int) -> None:
     CHEERS_USER_COOLDOWNS[user_id] = time.time()
+
+
+def cleanup_pending_cheer_requests() -> None:
+    now = time.time()
+    expired_user_ids = [
+        user_id
+        for user_id, pending in PENDING_CHEER_TARGET_REQUESTS.items()
+        if now - pending.started_at >= CHEER_TARGET_TIMEOUT_SECONDS
+    ]
+    for user_id in expired_user_ids:
+        pending = PENDING_CHEER_TARGET_REQUESTS.pop(user_id, None)
+        if pending is not None and not pending.cancel_event.is_set():
+            pending.cancel_event.set()
 
 
 def pick_quote() -> CheerQuote:
@@ -51,6 +76,47 @@ def build_result_payload(interaction: discord.Interaction, result_embed: discord
         payload["file"] = menu_file
 
     return payload
+
+
+def build_cheer_target_prompt_embed(user: discord.abc.User) -> discord.Embed:
+    embed = discord.Embed(
+        title="🙌 幫人打氣",
+        description=(
+            f"{user.mention}，請喺 **60 秒內** 喺呢個 channel tag 一位你想打氣嘅成員。\n\n"
+            "例：`@jeff`\n\n"
+            "你亦可以撳下面嘅 **取消** 按鈕。"
+        ),
+        color=0x2B2D31,
+    )
+    embed.set_footer(text="Con9sole Bartender｜只會讀取你下一個訊息。")
+    return embed
+
+
+class CheerTargetCancelView(discord.ui.View):
+    def __init__(self, *, owner_id: int, cancel_event: asyncio.Event) -> None:
+        super().__init__(timeout=CHEER_TARGET_TIMEOUT_SECONDS)
+        self.owner_id = owner_id
+        self.cancel_event = cancel_event
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個打氣取消按鈕只限發起者使用。", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.cancel_event.is_set():
+            await interaction.response.send_message("幫人打氣操作已經取消或逾時。", ephemeral=True)
+            return
+
+        self.cancel_event.set()
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+
+        await interaction.response.edit_message(content="已取消幫人打氣。", embed=None, view=self)
+        self.stop()
 
 
 class Cheers(commands.Cog):
@@ -92,9 +158,112 @@ class Cheers(commands.Cog):
         giver = interaction.user.mention
 
         if to and to.id != interaction.user.id:
-            return f"🎉 {giver} 為 {to.mention} 送上打氣時間！"
+            return f"🎉 {giver} 為 {to.mention} 送上一句打氣！"
 
         return f"🎉 {giver} 的打氣時間！"
+
+    async def _wait_for_cheer_target(self, interaction: discord.Interaction) -> discord.Member | None:
+        if interaction.channel is None:
+            await send_or_followup(interaction, content="❌ 搵唔到目前 channel，請重新試一次。", ephemeral=True)
+            return None
+
+        cleanup_pending_cheer_requests()
+        if interaction.user.id in PENDING_CHEER_TARGET_REQUESTS:
+            await send_or_followup(
+                interaction,
+                content="⏳ 你已經有一個等待 tag 對象嘅幫人打氣操作。請先完成，或者撳該訊息嘅取消按鈕。",
+                ephemeral=True,
+            )
+            return None
+
+        ok = await self._enforce_cheers_cooldown(interaction)
+        if not ok:
+            return None
+
+        cancel_event = asyncio.Event()
+        PENDING_CHEER_TARGET_REQUESTS[interaction.user.id] = CheerTargetPending(
+            started_at=time.time(),
+            cancel_event=cancel_event,
+        )
+
+        view = CheerTargetCancelView(owner_id=interaction.user.id, cancel_event=cancel_event)
+        await send_or_followup(
+            interaction,
+            embed=build_cheer_target_prompt_embed(interaction.user),
+            view=view,
+            ephemeral=True,
+        )
+
+        def check(message: discord.Message) -> bool:
+            if message.author.bot:
+                return False
+            if message.author.id != interaction.user.id:
+                return False
+            if message.channel.id != interaction.channel_id:
+                return False
+            return True
+
+        message_task = asyncio.create_task(
+            self.bot.wait_for(
+                "message",
+                check=check,
+                timeout=CHEER_TARGET_TIMEOUT_SECONDS,
+            )
+        )
+        cancel_task = asyncio.create_task(cancel_event.wait())
+
+        try:
+            done, pending_tasks = await asyncio.wait(
+                {message_task, cancel_task},
+                timeout=CHEER_TARGET_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending_tasks:
+                task.cancel()
+
+            if cancel_task in done and cancel_event.is_set():
+                return None
+
+            if message_task not in done:
+                await interaction.followup.send("⏳ 已逾時，幫人打氣已取消。", ephemeral=True)
+                return None
+
+            try:
+                message = message_task.result()
+            except asyncio.TimeoutError:
+                await interaction.followup.send("⏳ 已逾時，幫人打氣已取消。", ephemeral=True)
+                return None
+        finally:
+            PENDING_CHEER_TARGET_REQUESTS.pop(interaction.user.id, None)
+            view.stop()
+
+        if message.content.strip().casefold() in {"cancel", "取消", "stop"}:
+            await interaction.followup.send("已取消幫人打氣。", ephemeral=True)
+            return None
+
+        if len(message.mentions) != 1:
+            await interaction.followup.send("❌ 請只 tag 一位成員。", ephemeral=True)
+            return None
+
+        target = message.mentions[0]
+        if not isinstance(target, discord.Member):
+            if interaction.guild is not None:
+                target = interaction.guild.get_member(target.id)
+
+        if target is None or not isinstance(target, discord.Member):
+            await interaction.followup.send("❌ 搵唔到呢位成員，請重新試一次。", ephemeral=True)
+            return None
+
+        if target.id == interaction.user.id:
+            await interaction.followup.send("🎉 想為自己打氣可以直接用打氣時間，幫人打氣請 tag 另一位成員。", ephemeral=True)
+            return None
+
+        if target.bot:
+            await interaction.followup.send("🤖 酒保暫時唔向 bot 打氣，請 tag 一位真人成員。", ephemeral=True)
+            return None
+
+        return target
 
     async def do_cheers(
         self,
@@ -141,6 +310,17 @@ class Cheers(commands.Cog):
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
         await self.do_cheers(interaction, enforce_cooldown=True)
+
+    async def cheer_for_member_entry(self, interaction: discord.Interaction) -> None:
+        target = await self._wait_for_cheer_target(interaction)
+        if target is None:
+            return
+
+        await self.do_cheers(
+            interaction,
+            to=target,
+            enforce_cooldown=False,
+        )
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="cheers", description="由 Bartender 送上一句打氣說話")
