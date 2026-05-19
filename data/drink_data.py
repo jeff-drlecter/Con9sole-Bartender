@@ -30,7 +30,7 @@ RARITY_STYLE = {
     "SSR": {"label": "Top Shelf", "emoji": "🟡", "weight": 3, "color": 0xF1C40F},
 }
 
-RECENT_HISTORY_LIMIT = 8
+RECENT_HISTORY_LIMIT = 4
 DRINK_COOLDOWN_SECONDS = 1800.0
 BARTENDER_ATTACHMENT_NAME = "bartender.png"
 
