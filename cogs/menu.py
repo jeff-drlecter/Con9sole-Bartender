@@ -784,6 +784,13 @@ class RegistryMenuView(BaseMenuView):
         except discord.InteractionResponded:
             pass
         except Exception as exc:
+            # 如果目標功能已經回覆過 user，就唔再補第二個錯誤訊息。
+            # 例如 tempvc_control 已經提示「你而家未身處任何語音房」，
+            # 就避免再出「AttributeError」造成重覆錯誤。
+            if interaction.response.is_done():
+                print(f"[Menu router suppressed] {item.id}: {type(exc).__name__}: {exc}")
+                return
+
             await send_or_followup(
                 interaction,
                 content=f"❌ 執行 `{item.id}` 時出錯：`{type(exc).__name__}`。",
