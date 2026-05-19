@@ -18,7 +18,7 @@ from discord.ext import commands
 
 from config import GUILD_ID
 from cogs.menu import build_full_menu_view, build_menu_file
-from core.permissions import is_admin_or_helper
+from core.permissions import is_admin_or_helper  # 仍保留 import，唔會 skip cooldown
 from core.safe_send import send_or_followup
 from core.drink_state import DrinkStateStore
 from data.drink_data import (
@@ -153,6 +153,7 @@ def record_drink_event(
                 ),
             )
     except Exception:
+        # 統計失敗唔好阻住正常叫酒
         pass
 
 
@@ -203,7 +204,12 @@ def _recent_event(guild_id: int | None, where_sql: str, params: tuple[object, ..
         ).fetchone()
 
 
-def _top_member_id(guild_id: int | None, select_field: str, where_sql: str, params: tuple[object, ...]) -> tuple[int, int] | None:
+def _top_member_id(
+    guild_id: int | None,
+    select_field: str,
+    where_sql: str,
+    params: tuple[object, ...],
+) -> tuple[int, int] | None:
     init_drink_events_db()
     with sqlite3.connect(STATS_DB) as conn:
         row = conn.execute(
@@ -327,21 +333,6 @@ def _progress_bar(current: int, total: int, *, size: int = 10) -> str:
     return "█" * filled + "░" * (size - filled)
 
 
-def _rarity_label(rarity: str) -> str:
-    meta = RARITY_STYLE.get(rarity, {})
-    emoji = str(meta.get("emoji", "🍸"))
-    label = str(meta.get("label", rarity))
-    return f"{emoji} {label}"
-
-
-def _rarity_color(rarity: str) -> int:
-    meta = RARITY_STYLE.get(rarity, {})
-    try:
-        return int(meta.get("color", 0x2B2D31))
-    except Exception:
-        return 0x2B2D31
-
-
 def _format_collection_row(row: sqlite3.Row) -> str:
     flags: list[str] = []
     if int(row["self_count"] or 0) > 0:
@@ -442,7 +433,7 @@ def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             f"{user.mention}，請喺 **60 秒內** 喺呢個 channel tag 一位你想賜酒嘅成員。\n\n"
             "例：`@jeff`\n\n"
-            "你亦可以撳下面嘅 **取消** 按鈕。"
+            "你亦可以直接用 `/gift` slash command。"
         ),
         color=0x2B2D31,
     )
@@ -450,7 +441,6 @@ def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
-# ── Collection embeds / buttons（全保持原樣）────────────────────────────────────────
 def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
     guild_id = guild.id if guild else None
     user_id = user.id
@@ -471,6 +461,12 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
         (EVENT_GIFT_DRINK, user_id),
     )
     total_count = self_count + given_count + received_count
+
+    distinct_count = _count_distinct_drinks(
+        guild_id,
+        "actor_id = ? OR target_id = ?",
+        (user_id, user_id),
+    )
 
     top_given = _top_member_id(
         guild_id,
@@ -515,6 +511,7 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
             f"🍹 **自己叫酒：** `{self_count}` 杯\n"
             f"🥂 **賜酒畀人：** `{given_count}` 杯\n"
             f"🍷 **收到賜酒：** `{received_count}` 杯\n"
+            f"🍾 **收藏過酒款：** `{distinct_count}` 款\n"
             f"📊 **總酒保互動：** `{total_count}` 次"
         ),
         color=0x2B2D31,
@@ -529,10 +526,8 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
     return embed
 
 
-# ...（中間 Collection / View / Button 部分保持你原來嘅內容）...
-
 class Drink(commands.Cog):
-    """ /drink：以 bartender 風格隨機為指定對象點一款酒。 """
+    """酒系列：menu button / slash commands 都可用"""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -552,7 +547,36 @@ class Drink(commands.Cog):
 
         init_drink_events_db()
 
-    # ...（其餘保持原樣）...
+    async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+        retry_after = get_drink_retry_after(interaction.user.id)
+        if retry_after > 0:
+            await send_or_followup(
+                interaction,
+                f"防 spam：你要等 `{retry_after:.0f}` 秒先再叫酒/賜酒。",
+                ephemeral=True,
+            )
+            return False
+
+        touch_drink_cooldown(interaction.user.id)
+        return True
+
+    async def _record_usage(self, interaction: discord.Interaction, *, feature: str) -> None:
+        # Optional：你以前嘅 usage tracking 如果未搬到 /data，可以先保留空
+        return None
+
+    def _pick_rarity(self) -> str:
+        rarities = list(RARITY_STYLE.keys())
+        weights = [int(RARITY_STYLE[r].get("weight", 0)) for r in rarities]
+        chosen = random.choices(rarities, weights=weights, k=1)[0]
+        return chosen
+
+    def _build_pool_for_rarity(self, rarity: str) -> list[DrinkEntry]:
+        pool: list[DrinkEntry] = []
+
+        # seasonal pool優先令限定更容易出現（取決於近期歷史權重）
+        pool.extend([d for d in current_seasonal_pool() if d.rarity == rarity])
+        pool.extend([d for d in ALL_DRINKS if d.rarity == rarity])
+        return pool
 
     def _pick_unique_drink(self, user_id: int, rarity: str) -> DrinkEntry:
         pool = self._build_pool_for_rarity(rarity)
@@ -561,18 +585,15 @@ class Drink(commands.Cog):
 
         recent = set(self.user_recent_draws[user_id])
 
-        # Soft repeat weighting:
-        # - 最近 4/8 杯仍然有機會再中（視乎 drink_data 設定）
-        # - 但非最近酒款有 4 倍機率
-        weights = [
-            1 if drink.eng in recent else 4
-            for drink in pool
-        ]
+        # Soft repeat weighting：
+        # - 最近 N 杯仍然有機會再中（輪換/低機率）
+        # - 非最近酒款有更高機率
+        weights = [1 if drink.eng in recent else 4 for drink in pool]
 
         chosen = random.choices(pool, weights=weights, k=1)[0]
         self.user_recent_draws[user_id].append(chosen.eng)
 
-        # 保存最近歷史
+        # 保存最近歷史（用 /data 持久化）
         _drink_state.state.recent_drinks[user_id] = list(self.user_recent_draws[user_id])
         try:
             _drink_state.save()
@@ -581,12 +602,7 @@ class Drink(commands.Cog):
 
         return chosen
 
-    def _build_header_line(
-        self,
-        interaction: discord.Interaction,
-        to: discord.Member | None,
-        drink: DrinkEntry,
-    ) -> str:
+    def _build_header_line(self, interaction: discord.Interaction, to: discord.Member | None, drink: DrinkEntry) -> str:
         icon = ICON_MAP.get(drink.typ, ICON_MAP["default"])
         giver = interaction.user.mention
         receiver = (to or interaction.user).mention
@@ -596,8 +612,6 @@ class Drink(commands.Cog):
             return f"{icon} {giver} 賜一杯 {drink_name} 給 {receiver}。"
 
         return f"{icon} Bartender Special：酒保為 {giver} 調製了一杯 {drink_name}。"
-
-    # ...（其餘保持原樣）...
 
     async def do_drink(
         self,
@@ -660,7 +674,98 @@ class Drink(commands.Cog):
         else:
             await interaction.response.send_message(**send_kwargs)
 
-    # ...（其餘 command / setup 保持原樣）...
+    # ── menu_registry entry methods ────────────────────────────────────────────────
+    async def menu_entry(self, interaction: discord.Interaction) -> None:
+        await self.do_drink(interaction, feature="drink_menu")
+
+    async def stats_entry(self, interaction: discord.Interaction) -> None:
+        embed = build_drink_stats_embed(interaction.guild, interaction.user)
+        payload = build_result_payload(interaction, embed)
+
+        if interaction.response.is_done():
+            await interaction.followup.send(**payload)
+        else:
+            await interaction.response.send_message(**payload)
+
+    async def collection_entry(self, interaction: discord.Interaction) -> None:
+        guild_id = interaction.guild.id if interaction.guild else None
+        user_id = interaction.user.id
+
+        rarity_counts = _fetch_collection_rarity_counts(guild_id, user_id)
+        rows = _fetch_collection_rows(guild_id, user_id, limit=COLLECTION_PAGE_LIMIT)
+
+        # 目前先做簡易版：最多顯示 12 行，不做按鈕分類
+        total_distinct = _count_distinct_drinks(guild_id, "actor_id = ? OR target_id = ?", (user_id, user_id))
+        total_catalog = sum(len(v) for v in _catalog_by_rarity().values())
+
+        progress = _progress_bar(total_distinct, total_catalog, size=20)
+
+        lines = [f"收集進度：`{total_distinct}/{total_catalog}`", progress, ""]
+        if rows:
+            lines.append("\n".join(_format_collection_row(r) for r in rows))
+        else:
+            lines.append("暫時未有收藏紀錄。")
+
+        embed = discord.Embed(
+            title="🍾 酒單收藏",
+            description="\n".join(lines),
+            color=0x2B2D31,
+            timestamp=discord.utils.utcnow(),
+        )
+
+        # 稀有度統計
+        rarity_lines = []
+        for rarity, meta in RARITY_STYLE.items():
+            rarity_lines.append(f"{meta['emoji']} {meta['label']}：`{rarity_counts.get(rarity, 0)}`")
+        embed.add_field(name="稀有度數量", value="\n".join(rarity_lines), inline=False)
+        embed.set_footer(text="Con9sole Bartender｜收藏 v1")
+
+        payload = build_result_payload(interaction, embed)
+        if interaction.response.is_done():
+            await interaction.followup.send(**payload)
+        else:
+            await interaction.response.send_message(**payload)
+
+    async def gift_drink_entry(self, interaction: discord.Interaction) -> None:
+        # 直接做最簡易/最穩版本：用 /gift slash command會更好
+        # menu button here：要求 cd + require mention message
+        ok = await self._enforce_drink_cooldown(interaction)
+        if not ok:
+            return
+
+        # 簡易版提醒
+        await send_or_followup(interaction, embed=build_gift_prompt_embed(interaction.user), ephemeral=True)
+
+        def check(message: discord.Message) -> bool:
+            return (
+                message.author.id == interaction.user.id
+                and message.channel == interaction.channel
+                and len(message.mentions) >= 1
+            )
+
+        try:
+            msg = await self.bot.wait_for("message", timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS, check=check)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("賜酒已取消（超時）。", ephemeral=True)
+            return
+
+        target = msg.mentions[0]
+        if target.bot:
+            await interaction.followup.send("唔可以賜酒畀 bot。", ephemeral=True)
+            return
+
+        await self.do_drink(interaction, to=target, feature="drink_gift_menu")
+
+    # ── slash commands ─────────────────────────────────────────────────────────────
+    @app_commands.command(name="drink", description="叫酒（酒保特選飲品）")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))  # optional：如果你係鎖 guild
+    async def drink_slash(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
+        await self.do_drink(interaction, to=member, feature="drink_slash")
+
+    @app_commands.command(name="gift", description="賜酒畀某人")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def gift_slash(self, interaction: discord.Interaction, member: discord.Member) -> None:
+        await self.do_drink(interaction, to=member, feature="drink_gift_slash")
 
 
 async def setup(bot: commands.Bot):
