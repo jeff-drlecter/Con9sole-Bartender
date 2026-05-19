@@ -57,6 +57,7 @@ FEATURE_LABELS: dict[str, str] = {
     "drink": "調酒",
     "drink_gift": "賜酒",
     "drink_stats": "酒保紀錄",
+    "drink_collection": "酒單收藏",
     "confession": "無名告白",
     "ig": "IG Page",
     "threads": "Threads Page",
@@ -85,6 +86,7 @@ FEATURE_EMOJIS: dict[str, str] = {
     "drink": "🍹",
     "drink_gift": "🥂",
     "drink_stats": "📊",
+    "drink_collection": "🍾",
     "confession": "🕯️",
     "ig": "📸",
     "threads": "🧵",
@@ -119,6 +121,7 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "drink": ["menu_entry"],
     "drink_gift": ["gift_drink_entry"],
     "drink_stats": ["stats_entry"],
+    "drink_collection": ["collection_entry"],
     "confession": ["menu_entry"],
 }
 
@@ -555,7 +558,8 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
             "🕯️ **無名告白** — 匿名投稿\n\n"
             "🍹 **調酒** — 酒保特選\n"
             "🥂 **賜酒** — 賜一杯酒給其他成員\n"
-            "📊 **酒保紀錄** — 查看自己的酒保互動\n\n"
+            "📊 **酒保紀錄** — 查看自己的酒保互動\n"
+            "🍾 **酒單收藏** — 查看酒款收藏進度\n\n"
             "🔗 **生成邀請碼** — 7 日 / 10 次公開邀請連結\n"
             "📸 **IG Page** — 官方 Instagram\n"
             "🧵 **Threads Page** — 官方 Threads\n\n"
@@ -581,7 +585,8 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "🙌 **幫人打氣**｜tag 一位成員，送一句打氣給對方\n\n"
             "🍹 **調酒**｜抽一杯酒保特選飲品\n"
             "🥂 **賜酒**｜tag 一位成員，賜一杯酒給對方\n"
-            "📊 **酒保紀錄**｜查看自己叫酒 / 賜酒 / 收到賜酒紀錄\n\n"
+            "📊 **酒保紀錄**｜查看自己叫酒 / 賜酒 / 收到賜酒紀錄\n"
+            "🍾 **酒單收藏**｜查看已解鎖酒款、稀有度進度與最近解鎖\n\n"
             "🕯️ **無名告白**｜匿名投稿\n"
             "📸 **IG Page / Threads Page**｜查看官方社交平台\n"
             "🔗 **生成邀請碼**｜7 日有效、最多 10 次使用，每人 10 分鐘一次\n"
