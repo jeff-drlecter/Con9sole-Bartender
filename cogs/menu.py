@@ -28,20 +28,17 @@ ROLE_BATCH_PAUSE_SECONDS = 0.8
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BARTENDER_IMAGE = ASSETS_DIR / "bartender.png"
 BARTENDER_ATTACHMENT_NAME = "bartender.png"
-
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 STATS_DB = DATA_DIR / "community_stats.sqlite3"
-HK_TZ = timezone(timedelta(hours=8))
 
+HK_TZ = timezone(timedelta(hours=8))
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
 THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://threads.net/con9sole")
-
 INVITE_CHANNEL_ID = getattr(config, "INVITE_CHANNEL_ID", None)
 INVITE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 INVITE_MAX_USES = 10
 INVITE_COOLDOWN_SECONDS = 10 * 60
-
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
@@ -56,7 +53,10 @@ FEATURE_LABELS: dict[str, str] = {
     "tempvc": "小隊 call",
     "tempvc_control": "小隊 call 控制",
     "cheers": "打氣",
+    "cheers_target": "幫人打氣",
     "drink": "調酒",
+    "drink_gift": "賜酒",
+    "drink_stats": "酒保紀錄",
     "confession": "無名告白",
     "ig": "IG Page",
     "threads": "Threads Page",
@@ -81,7 +81,10 @@ FEATURE_EMOJIS: dict[str, str] = {
     "tempvc": "🎧",
     "tempvc_control": "🎛️",
     "cheers": "🎉",
+    "cheers_target": "🙌",
     "drink": "🍹",
+    "drink_gift": "🥂",
+    "drink_stats": "📊",
     "confession": "🕯️",
     "ig": "📸",
     "threads": "🧵",
@@ -107,15 +110,15 @@ STYLE_MAP: dict[str, discord.ButtonStyle] = {
     "link": discord.ButtonStyle.link,
 }
 
-# Phase 3 cleanup:
-# All major feature cogs now expose stable menu_entry() or explicit registry methods.
-# Keep this map minimal so menu.py behaves as a clean registry router.
 COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "team": ["menu_entry"],
     "tempvc": ["menu_entry"],
     "tempvc_control": ["open_control_panel_from_menu"],
     "cheers": ["menu_entry"],
+    "cheers_target": ["cheer_for_member_entry"],
     "drink": ["menu_entry"],
+    "drink_gift": ["gift_drink_entry"],
+    "drink_stats": ["stats_entry"],
     "confession": ["menu_entry"],
 }
 
@@ -133,7 +136,6 @@ class RoleActionState:
 # -----------------------------------------------------------------------------
 # Stats
 # -----------------------------------------------------------------------------
-
 
 def init_stats_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -194,7 +196,6 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
         params.append(since.isoformat())
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
-
     with sqlite3.connect(STATS_DB) as conn:
         rows = conn.execute(
             f"""
@@ -206,7 +207,6 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
             """,
             params,
         ).fetchall()
-
     return [(str(row[0]), int(row[1])) for row in rows]
 
 
@@ -225,13 +225,8 @@ def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
         params.append(since.isoformat())
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
-
     with sqlite3.connect(STATS_DB) as conn:
-        row = conn.execute(
-            f"SELECT COUNT(*) AS total FROM command_usage {where_sql}",
-            params,
-        ).fetchone()
-
+        row = conn.execute(f"SELECT COUNT(*) AS total FROM command_usage {where_sql}", params).fetchone()
     return int(row[0]) if row else 0
 
 
@@ -251,13 +246,8 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
 # Shared helpers
 # -----------------------------------------------------------------------------
 
-
 def can_use_admin(member: discord.Member | discord.User) -> bool:
-    """Backward-compatible admin/helper checker.
-
-    Keep this alias because other cogs may still import it from cogs.menu.
-    Actual permission logic lives in core.permissions.
-    """
+    """Backward-compatible admin/helper checker."""
     return is_admin_or_helper(member)
 
 
@@ -331,17 +321,10 @@ def _cleanup_mention_dedupe(now: float | None = None) -> None:
 
 
 def claim_mention_message(message_id: int) -> bool:
-    """Return True only once per Discord message id within this process.
-
-    This prevents duplicate mention replies caused by duplicated event dispatches or
-    accidental duplicate listener registration in a single running bot process.
-    """
     now = time.time()
     _cleanup_mention_dedupe(now)
-
     if message_id in MENTION_MESSAGE_DEDUPE:
         return False
-
     MENTION_MESSAGE_DEDUPE[message_id] = now
     return True
 
@@ -350,18 +333,15 @@ def extract_discord_id(raw: str) -> int | None:
     text = raw.strip()
     if not text:
         return None
-
     match = re.search(r"<@!?([0-9]{15,25})>|<@&([0-9]{15,25})>|([0-9]{15,25})", text)
     if not match:
         return None
-
     for group in match.groups():
         if group:
             try:
                 return int(group)
             except ValueError:
                 return None
-
     return None
 
 
@@ -407,6 +387,10 @@ def mode_label(mode: str) -> str:
 def mode_emoji(mode: str) -> str:
     return "➕" if mode == "add" else "➖"
 
+
+# -----------------------------------------------------------------------------
+# Role Tools embeds
+# -----------------------------------------------------------------------------
 
 def build_role_action_embed(mode: str) -> discord.Embed:
     embed = discord.Embed(
@@ -474,7 +458,6 @@ def build_include_bots_embed(mode: str, state: RoleActionState, guild: discord.G
     target_text = target_role.mention if target_role else "`目標角色已不存在`"
     apply_role = get_role_from_state(guild, state.apply_role_id)
     apply_text = apply_role.mention if apply_role else "`處理角色已不存在`"
-
     embed = discord.Embed(
         title=f"{mode_emoji(mode)} Role Tools｜批量設定",
         description=(
@@ -534,7 +517,6 @@ def build_role_list_select_embed() -> discord.Embed:
 # Main menu embeds
 # -----------------------------------------------------------------------------
 
-
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
@@ -542,7 +524,7 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
             "**「歡迎光臨，要點什麼？」**\n\n"
             "👥 **組隊**｜召集隊友\n"
             "🎧 **小隊 call**｜建立臨時語音房\n"
-            "🎛️ **控制**｜管理目前小隊 call\n"
+            "🎛️ **控制**｜管理目前小隊 call\n\n"
             "🎉 **打氣**｜為大家補充能量\n"
             "🙌 **幫人打氣**｜送一句打氣給其他成員\n"
             "🍹 **調酒**｜酒保特選\n"
@@ -567,13 +549,16 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
             f"**{COMMUNITY_NAME} 吧枱主頁**\n\n"
             "👥 **組隊** — 召集隊友\n"
             "🎧 **小隊 call** — 建立臨時語音房\n"
-            "🎛️ **小隊 call 控制** — 管理目前身處的小隊 call\n"
+            "🎛️ **小隊 call 控制** — 管理目前身處的小隊 call\n\n"
             "🎉 **打氣** — 為大家補充能量\n"
+            "🙌 **幫人打氣** — 送一句打氣給其他成員\n"
+            "🕯️ **無名告白** — 匿名投稿\n\n"
             "🍹 **調酒** — 酒保特選\n"
-            "🕯️ **無名告白** — 匿名投稿\n"
-            "📸 **IG Page** — 官方 Instagram\n"
-            "🧵 **Threads Page** — 官方 Threads\n"
+            "🥂 **賜酒** — 賜一杯酒給其他成員\n"
+            "📊 **酒保紀錄** — 查看自己的酒保互動\n\n"
             "🔗 **生成邀請碼** — 7 日 / 10 次公開邀請連結\n"
+            "📸 **IG Page** — 官方 Instagram\n"
+            "🧵 **Threads Page** — 官方 Threads\n\n"
             "ℹ️ **幫助** — 使用說明\n"
             "🛠️ **Admin Tool** — 管理工具"
         ),
@@ -591,9 +576,12 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "**Bartender 使用說明**\n\n"
             "👥 **組隊**｜發起組隊 / 招募隊友\n"
             "🎧 **小隊 call**｜建立臨時語音房\n"
-            "🎛️ **小隊 call 控制**｜改人數上限 / 刪除自己的小隊 call\n"
+            "🎛️ **小隊 call 控制**｜改人數上限 / 刪除自己的小隊 call\n\n"
             "🎉 **打氣**｜送出隨機打氣內容\n"
+            "🙌 **幫人打氣**｜tag 一位成員，送一句打氣給對方\n\n"
             "🍹 **調酒**｜抽一杯酒保特選飲品\n"
+            "🥂 **賜酒**｜tag 一位成員，賜一杯酒給對方\n"
+            "📊 **酒保紀錄**｜查看自己叫酒 / 賜酒 / 收到賜酒紀錄\n\n"
             "🕯️ **無名告白**｜匿名投稿\n"
             "📸 **IG Page / Threads Page**｜查看官方社交平台\n"
             "🔗 **生成邀請碼**｜7 日有效、最多 10 次使用，每人 10 分鐘一次\n"
@@ -661,7 +649,6 @@ def build_role_channel_new_help_embed(user: discord.abc.User) -> discord.Embed:
 # Registry router
 # -----------------------------------------------------------------------------
 
-
 def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]] | None:
     names = [item.method]
     names.extend(name for name in COG_METHOD_FALLBACKS.get(item.id, []) if name not in names)
@@ -670,7 +657,6 @@ def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]
         candidate = getattr(target, name, None)
         if candidate and inspect.iscoroutinefunction(candidate):
             return candidate
-
     return None
 
 
@@ -693,7 +679,6 @@ class RegistryButton(discord.ui.Button):
             "style": style,
             "row": item.row,
         }
-
         if item.url:
             kwargs["url"] = item.url
         else:
@@ -736,7 +721,6 @@ class BaseMenuView(discord.ui.View):
     async def _require_admin(self, interaction: discord.Interaction) -> bool:
         if can_use_admin(interaction.user):
             return True
-
         await send_or_followup(
             interaction,
             content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Admin Tool。",
@@ -763,7 +747,6 @@ class RegistryMenuView(BaseMenuView):
     def __init__(self, cog: "Menu", layer: str) -> None:
         super().__init__(cog, timeout=None)
         self.layer = layer
-
         for item in get_menu_items(layer):
             self.add_item(RegistryButton(item))
 
@@ -818,10 +801,8 @@ class HomeMenuView(RegistryMenuView):
         super().__init__(cog, "home")
         self.add_item(discord.ui.Button(label="IG Page", emoji="📸", style=discord.ButtonStyle.link, url=INSTAGRAM_URL, row=3))
         self.add_item(discord.ui.Button(label="Threads Page", emoji="🧵", style=discord.ButtonStyle.link, url=THREADS_URL, row=3))
-
         if RULES_URL:
             self.add_item(discord.ui.Button(label="Rules", emoji="🛡️", style=discord.ButtonStyle.link, url=RULES_URL, row=4))
-
         if HELP_URL:
             self.add_item(discord.ui.Button(label="Help Channel", emoji="❓", style=discord.ButtonStyle.link, url=HELP_URL, row=4))
 
@@ -846,7 +827,6 @@ class HelpMenuView(BaseMenuView):
 # Role Tools select flow
 # -----------------------------------------------------------------------------
 
-
 class RoleMemberIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 選成員"):
     user_id = discord.ui.TextInput(
         label="User ID",
@@ -866,11 +846,9 @@ class RoleMemberIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 選成
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
             return
-
         if not interaction.guild:
             await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
             return
-
         if not can_use_admin(interaction.user):
             await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
             return
@@ -913,11 +891,9 @@ class RoleListUserIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 查�
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
             return
-
         if not interaction.guild:
             await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
             return
-
         if not can_use_admin(interaction.user):
             await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
             return
@@ -937,7 +913,7 @@ class RoleListUserIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 查�
 class RoleToolsView(BaseMenuView):
     def __init__(self, cog: "Menu") -> None:
         super().__init__(cog, timeout=None)
-        
+
     @discord.ui.button(label="返回", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:admin", row=0)
     async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
@@ -945,7 +921,7 @@ class RoleToolsView(BaseMenuView):
         if not await self._require_admin(interaction):
             return
         await self.cog.open_admin_tool_from_button(interaction)
-        
+
     @discord.ui.button(label="加角色", emoji="➕", style=discord.ButtonStyle.primary, custom_id="bartender:role_tools:grant", row=0)
     async def grant_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
@@ -994,8 +970,6 @@ class RoleToolsView(BaseMenuView):
             view=RoleToolsView(self.cog),
             ephemeral=True,
         )
-
-
 
     @discord.ui.button(label="Menu", emoji="🏠", style=discord.ButtonStyle.secondary, custom_id="bartender:role_tools:home", row=2)
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -1106,7 +1080,6 @@ class RoleGroupTargetSelectView(OwnerOnlyRoleToolView):
         if not interaction.guild:
             await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
             return
-
         if role.is_default():
             await interaction.response.send_message("❌ 不能選擇 @everyone 作為目標群組。", ephemeral=True)
             return
@@ -1151,7 +1124,6 @@ class RoleApplyRoleSelectView(OwnerOnlyRoleToolView):
         if not interaction.guild:
             await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
             return
-
         if role.is_default():
             await interaction.response.send_message("❌ 不能加上或移除 @everyone。", ephemeral=True)
             return
@@ -1182,7 +1154,6 @@ class RoleApplyRoleSelectView(OwnerOnlyRoleToolView):
         if not interaction.guild:
             await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
             return
-
         if self.state.target_kind == "member":
             await interaction.response.edit_message(
                 embed=build_member_select_embed(self.state.mode),
@@ -1209,7 +1180,6 @@ class RoleIncludeBotsView(OwnerOnlyRoleToolView):
         if not interaction.guild:
             await interaction.response.edit_message(content="❌ 只可在伺服器使用。", embed=None, view=None)
             return
-
         new_state = RoleActionState(
             mode=self.state.mode,
             target_kind=self.state.target_kind,
@@ -1248,7 +1218,6 @@ class RoleConfirmView(OwnerOnlyRoleToolView):
         if self.done:
             await interaction.response.send_message("呢個操作已經完成。", ephemeral=True)
             return
-
         self.done = True
         await self.cog.execute_role_change_from_select(interaction, state=self.state)
         self.stop()
@@ -1327,7 +1296,6 @@ def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | 
 # Cog
 # -----------------------------------------------------------------------------
 
-
 class Menu(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -1357,7 +1325,6 @@ class Menu(commands.Cog):
         if not interaction.guild:
             await interaction.response.edit_message(content="⚠️ 呢個工具只可以喺伺服器內使用。", embed=None, view=None)
             return
-
         if not can_use_admin(interaction.user):
             await interaction.response.edit_message(content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", embed=None, view=None)
             return
@@ -1425,7 +1392,6 @@ class Menu(commands.Cog):
             else:
                 await interaction.response.send_message("⚠️ 呢個工具只可以喺伺服器內使用。", ephemeral=True)
             return
-
         if not can_use_admin(interaction.user):
             if edit_existing:
                 await interaction.response.edit_message(content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", embed=None, view=None)
@@ -1477,7 +1443,6 @@ class Menu(commands.Cog):
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
             return
-
         record_usage_sync("menu", interaction.user.id, interaction.guild_id)
         await send_or_followup(
             interaction,
@@ -1613,7 +1578,6 @@ class Menu(commands.Cog):
 
         stats = get_stats(interaction.guild_id, days=7)
         total = get_total_usage(interaction.guild_id, days=7)
-
         top_feature = "暫時未有"
         if stats:
             top_key = stats[0][0]
@@ -1631,7 +1595,6 @@ class Menu(commands.Cog):
         )
         embed.add_field(name="功能使用分佈", value=format_stats_block(stats), inline=False)
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
-
         await send_or_followup(interaction, embed=embed, view=AdminToolView(self), ephemeral=True)
 
     async def admin_reload_from_button(self, interaction: discord.Interaction) -> None:
@@ -1652,7 +1615,6 @@ class Menu(commands.Cog):
 
             ok_list: list[str] = []
             fail_list: list[str] = []
-
             for name in _list_cogs_package():
                 ext = f"cogs.{name}"
                 try:
@@ -1664,7 +1626,6 @@ class Menu(commands.Cog):
                 except Exception as exc:
                     ok = False
                     fail = f"`{type(exc).__name__}`: {exc}"
-
                 if ok:
                     ok_list.append(name)
                 else:
@@ -1705,7 +1666,6 @@ class Menu(commands.Cog):
 
     async def admin_vc_teardown_from_button(self, interaction: discord.Interaction) -> None:
         record_usage_sync("admin_vc_teardown", interaction.user.id, interaction.guild_id)
-
         tempvc_cog = interaction.client.get_cog("TempVC")
         if tempvc_cog and hasattr(tempvc_cog, "teardown_temp_vc_from_menu"):
             try:
@@ -1732,7 +1692,6 @@ class Menu(commands.Cog):
     async def send_mention_menu(self, message: discord.Message) -> None:
         if message.author.bot:
             return
-
         if not claim_mention_message(message.id):
             return
 
@@ -1789,7 +1748,6 @@ class Menu(commands.Cog):
     async def menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
             return
-
         record_usage_sync("menu", interaction.user.id, interaction.guild_id)
         await send_or_followup(
             interaction,
@@ -1844,7 +1802,6 @@ class Menu(commands.Cog):
 
         stats = get_stats(interaction.guild_id, days)
         total = get_total_usage(interaction.guild_id, days)
-
         top_feature = "暫時未有"
         if stats:
             top_key = stats[0][0]
@@ -1862,7 +1819,6 @@ class Menu(commands.Cog):
         )
         embed.add_field(name="功能使用分佈", value=format_stats_block(stats), inline=False)
         embed.set_footer(text=f"{COMMUNITY_NAME} · Admin Stats")
-
         await send_or_followup(interaction, embed=embed, ephemeral=False)
 
 
