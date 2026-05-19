@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Union
 import asyncio
 import re
 import time
+from typing import Dict, Optional, Union
 
 import discord
 from discord import app_commands
@@ -22,7 +22,6 @@ from utils import (
     untrack_temp_vc,
     bootstrap_track_temp_vcs,
 )
-
 
 VC_LIMIT_USER_COOLDOWNS: dict[int, float] = {}
 VC_LIMIT_CHANNEL_COOLDOWNS: dict[int, float] = {}
@@ -84,7 +83,6 @@ def user_can_run_tempvc(inter: discord.Interaction) -> bool:
 
     member: discord.Member = inter.user
     perms = member.guild_permissions
-
     if perms.administrator or perms.manage_channels:
         return True
 
@@ -105,7 +103,6 @@ def user_can_admin_teardown(member: discord.Member | discord.User) -> bool:
 
 def user_can_change_vc_limit(member: discord.Member) -> bool:
     perms = member.guild_permissions
-
     if perms.administrator or perms.manage_channels:
         return True
 
@@ -203,6 +200,7 @@ def _parse_manual_limit(value: str) -> int | None:
     value = value.strip()
     if not value:
         return None
+
     try:
         return int(value)
     except ValueError:
@@ -237,7 +235,6 @@ def _category_from_ctx_channel(
 def _is_hub_channel(channel: Optional[discord.abc.GuildChannel]) -> bool:
     if not isinstance(channel, discord.VoiceChannel):
         return False
-
     return channel.name.strip() == _get_hub_channel_name()
 
 
@@ -249,12 +246,11 @@ def _next_temp_channel_name_in_category(category: Optional[discord.CategoryChann
     base = _normalize_temp_base_for_match()
     pattern = re.compile(rf"^{re.escape(base)}\s+(\d+)$")
     used_numbers: set[int] = set()
-    channels = category.channels if category else guild.channels
 
+    channels = category.channels if category else guild.channels
     for ch in channels:
         if not isinstance(ch, discord.VoiceChannel):
             continue
-
         match = pattern.fullmatch(ch.name.strip())
         if match:
             try:
@@ -265,7 +261,6 @@ def _next_temp_channel_name_in_category(category: Optional[discord.CategoryChann
     n = 1
     while n in used_numbers:
         n += 1
-
     return f"{base} {n}"
 
 
@@ -287,7 +282,6 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
 
             guild = channel.guild
             fresh = guild.get_channel(ch_id)
-
             if fresh is None:
                 try:
                     fresh = await guild.fetch_channel(ch_id)
@@ -401,7 +395,6 @@ class TempVCLimitSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(self.view, TempVCLimitView):
             return
-
         limit = _normalize_limit(self.values[0], default=32)
         await self.view.create_with_limit(interaction, limit)
 
@@ -427,7 +420,6 @@ class TempVCLimitView(discord.ui.View):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("呢個面板只限發起者使用。", ephemeral=True)
             return False
-
         return True
 
     async def create_with_limit(self, interaction: discord.Interaction, limit: int) -> None:
@@ -441,7 +433,6 @@ class TempVCLimitView(discord.ui.View):
 
         self.created = True
         room_label = self.room_name or "自動編號"
-
         await interaction.response.edit_message(
             content=(
                 f"✅ 已選擇人數上限：`{limit}`\n"
@@ -473,7 +464,6 @@ class TempVCLimitView(discord.ui.View):
 
         msg = _build_created_message(ch, limit)
         control_view = TempVCControlView(self.cog, channel_id=ch.id)
-
         try:
             if interaction.channel is not None:
                 await interaction.channel.send(msg, view=control_view)
@@ -532,7 +522,6 @@ class TempVCControlView(discord.ui.View):
         if menu_cog and hasattr(menu_cog, "open_home_menu_from_button"):
             await menu_cog.open_home_menu_from_button(interaction)  # type: ignore[attr-defined]
             return
-
         await interaction.response.send_message("❌ Menu 功能未載入。", ephemeral=True)
 
 
@@ -848,8 +837,13 @@ class TempVC(commands.Cog):
 
     async def open_control_panel_from_menu(self, interaction: discord.Interaction) -> None:
         member, channel, error = self._get_current_member_temp_vc(interaction)
-        if error or channel is None:
-            await _send_interaction_message(interaction, f"❌ {error}", ephemeral=True)
+
+        if error or member is None or channel is None:
+            await _send_interaction_message(
+                interaction,
+                f"❌ {error or '搵唔到你目前嘅小隊 call。'}",
+                ephemeral=True,
+            )
             return
 
         await _send_interaction_message(
@@ -867,7 +861,7 @@ class TempVC(commands.Cog):
     ) -> None:
         member, channel, error = self._get_control_channel(interaction, channel_id)
         if error or member is None or channel is None:
-            await interaction.response.send_message(f"❌ {error}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {error or '搵唔到你目前嘅小隊 call。'}", ephemeral=True)
             return
 
         if not user_can_change_vc_limit(member):
@@ -942,7 +936,7 @@ class TempVC(commands.Cog):
     async def delete_temp_vc_from_control(self, interaction: discord.Interaction, channel_id: int) -> None:
         member, channel, error = self._get_control_channel(interaction, channel_id)
         if error or member is None or channel is None:
-            await interaction.response.send_message(f"❌ {error}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {error or '搵唔到你目前嘅小隊 call。'}", ephemeral=True)
             return
 
         if len(channel.members) != 1 or channel.members[0].id != member.id:
