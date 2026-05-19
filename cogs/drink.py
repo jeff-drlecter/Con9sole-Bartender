@@ -772,8 +772,16 @@ class Drink(commands.Cog):
             pool = ALL_DRINKS + current_seasonal_pool()
 
         recent = set(self.user_recent_draws[user_id])
-        candidates = [drink for drink in pool if drink.eng not in recent]
-        chosen = random.choice(candidates or pool)
+
+        # Soft repeat weighting:
+        # - 最近 8 杯仍然有機會再中
+        # - 但非最近酒款有 4 倍機率
+        weights = [
+            1 if drink.eng in recent else 4
+            for drink in pool
+        ]
+
+        chosen = random.choices(pool, weights=weights, k=1)[0]
         self.user_recent_draws[user_id].append(chosen.eng)
         return chosen
 
