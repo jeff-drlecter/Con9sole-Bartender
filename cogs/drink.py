@@ -50,7 +50,12 @@ EVENT_GIFT_DRINK = "gift_drink"
 
 
 def _default_drink_state() -> dict[str, object]:
-    return {"version": 1, "cooldowns": {}, "recent_drinks": {}}
+    return {
+        "version": 2,
+        "cooldowns": {},
+        "gift_cooldowns": {},
+        "recent_drinks": {},
+    }
 
 
 def _load_drink_state() -> dict[str, object]:
@@ -62,8 +67,9 @@ def _load_drink_state() -> dict[str, object]:
         if not isinstance(raw, dict):
             return _default_drink_state()
 
-        raw.setdefault("version", 1)
+        raw.setdefault("version", 2)
         raw.setdefault("cooldowns", {})
+        raw.setdefault("gift_cooldowns", {})
         raw.setdefault("recent_drinks", {})
         return raw
     except Exception:
@@ -78,6 +84,14 @@ def _state_cooldowns() -> dict[str, float]:
     if not isinstance(data, dict):
         data = {}
         _DRINK_STATE["cooldowns"] = data
+    return data  # type: ignore[return-value]
+
+
+def _state_gift_cooldowns() -> dict[str, float]:
+    data = _DRINK_STATE.setdefault("gift_cooldowns", {})
+    if not isinstance(data, dict):
+        data = {}
+        _DRINK_STATE["gift_cooldowns"] = data
     return data  # type: ignore[return-value]
 
 
@@ -102,6 +116,12 @@ def _save_drink_state() -> None:
 DRINK_USER_COOLDOWNS: dict[int, float] = {
     int(user_id): float(ts)
     for user_id, ts in _state_cooldowns().items()
+    if str(user_id).isdigit()
+}
+
+GIFT_DRINK_USER_COOLDOWNS: dict[int, float] = {
+    int(user_id): float(ts)
+    for user_id, ts in _state_gift_cooldowns().items()
     if str(user_id).isdigit()
 }
 
@@ -447,8 +467,19 @@ def get_drink_retry_after(user_id: int) -> float:
     return retry_after if retry_after > 0 else 0.0
 
 
+def get_gift_drink_retry_after(user_id: int) -> float:
+    last_used = GIFT_DRINK_USER_COOLDOWNS.get(user_id, 0.0)
+    elapsed = time.time() - last_used
+    retry_after = DRINK_COOLDOWN_SECONDS - elapsed
+    return retry_after if retry_after > 0 else 0.0
+
+
 def has_drink_cooldown(user_id: int) -> bool:
     return get_drink_retry_after(user_id) > 0
+
+
+def has_gift_drink_cooldown(user_id: int) -> bool:
+    return get_gift_drink_retry_after(user_id) > 0
 
 
 def touch_drink_cooldown(user_id: int) -> None:
@@ -458,9 +489,22 @@ def touch_drink_cooldown(user_id: int) -> None:
     _save_drink_state()
 
 
+def touch_gift_drink_cooldown(user_id: int) -> None:
+    ts = time.time()
+    GIFT_DRINK_USER_COOLDOWNS[user_id] = ts
+    _state_gift_cooldowns()[str(user_id)] = ts
+    _save_drink_state()
+
+
 def clear_drink_cooldown(user_id: int) -> None:
     DRINK_USER_COOLDOWNS.pop(user_id, None)
     _state_cooldowns().pop(str(user_id), None)
+    _save_drink_state()
+
+
+def clear_gift_drink_cooldown(user_id: int) -> None:
+    GIFT_DRINK_USER_COOLDOWNS.pop(user_id, None)
+    _state_gift_cooldowns().pop(str(user_id), None)
     _save_drink_state()
 
 
@@ -849,12 +893,28 @@ class Drink(commands.Cog):
             return False
         return True
 
+    async def _check_gift_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+        retry_after = get_gift_drink_retry_after(interaction.user.id)
+        if retry_after > 0:
+            message = f"⏳ 酒保正在準備賜酒，請等 {retry_after:.1f} 秒後再試。"
+            await send_or_followup(interaction, content=message, ephemeral=True)
+            return False
+        return True
+
     async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         ok = await self._check_drink_cooldown(interaction)
         if not ok:
             return False
 
         touch_drink_cooldown(interaction.user.id)
+        return True
+
+    async def _enforce_gift_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+        ok = await self._check_gift_drink_cooldown(interaction)
+        if not ok:
+            return False
+
+        touch_gift_drink_cooldown(interaction.user.id)
         return True
 
     def _pick_rarity(self) -> str:
@@ -920,8 +980,9 @@ class Drink(commands.Cog):
         # IMPORTANT:
         # Opening the gift prompt must NOT consume cooldown.
         # Cancel / timeout / invalid target must NOT consume cooldown.
+        # Gift cooldown is separate from self-drink cooldown.
         # Cooldown is consumed only when a valid target is confirmed and the drink is actually sent.
-        ok = await self._check_drink_cooldown(interaction)
+        ok = await self._check_gift_drink_cooldown(interaction)
         if not ok:
             return None
 
@@ -1078,15 +1139,19 @@ class Drink(commands.Cog):
         # Menu gift flow:
         # 1. Open prompt without consuming cooldown.
         # 2. Cancel / timeout / invalid tag does not consume cooldown.
-        # 3. A valid target calls do_drink(... enforce_cooldown=True), consuming cooldown at actual send time.
+        # 3. Gift cooldown is separate from self-drink cooldown.
+        # 4. A valid target consumes gift cooldown only.
+        # 5. do_drink(... enforce_cooldown=False) prevents self-drink cooldown from blocking gifts.
         target = await self._wait_for_gift_target(interaction)
         if target is None:
             return
 
+        touch_gift_drink_cooldown(interaction.user.id)
+
         await self.do_drink(
             interaction,
             to=target,
-            enforce_cooldown=True,
+            enforce_cooldown=False,
             feature="drink_gift",
         )
 
@@ -1104,6 +1169,13 @@ class Drink(commands.Cog):
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
     @app_commands.describe(to="收酒嘅人；留空即係自己叫酒")
     async def drink(self, interaction: discord.Interaction, to: discord.Member | None = None) -> None:
+        if to is not None and to.id != interaction.user.id:
+            ok = await self._enforce_gift_drink_cooldown(interaction)
+            if not ok:
+                return
+            await self.do_drink(interaction, to, enforce_cooldown=False, feature="drink_gift")
+            return
+
         await self.do_drink(interaction, to, enforce_cooldown=True)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
