@@ -36,6 +36,18 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "confession": ["menu_entry"],
 }
 
+# These features manage their own cooldown inside their own cog.
+# Do NOT consume the generic Menu button cooldown before routing them.
+#
+# Important for drink_gift:
+# - opening the "tag someone" prompt must not consume cooldown
+# - cancel / timeout / invalid tag must not consume cooldown
+# - Drink cog applies cooldown only after a valid target is confirmed
+TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
+    "drink",
+    "drink_gift",
+}
+
 
 def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]] | None:
     names = [item.method]
@@ -45,17 +57,19 @@ def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]
         candidate = getattr(target, name, None)
         if candidate and inspect.iscoroutinefunction(candidate):
             return candidate
+
     return None
 
 
 async def _call_method_safely(method: Callable[..., Awaitable[None]], interaction: discord.Interaction) -> None:
-    try:
-        await method(interaction)
-    except TypeError:
-        try:
-            await method(interaction, None)
-        except TypeError:
-            await method(interaction, to=None)
+    """
+    Route menu button clicks into cog entrypoints.
+
+    Previous versions retried any TypeError with extra parameters. That could hide
+    real bugs from inside a method and accidentally call an entrypoint multiple
+    times. For menu registry methods, entrypoints should accept one Interaction.
+    """
+    await method(interaction)
 
 
 class RegistryButton(discord.ui.Button):
@@ -67,6 +81,7 @@ class RegistryButton(discord.ui.Button):
             "style": style,
             "row": item.row,
         }
+
         if item.url:
             kwargs["url"] = item.url
         else:
@@ -77,8 +92,13 @@ class RegistryButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(self.view, RegistryMenuView):
-            await send_or_followup(interaction, content="❌ Menu view 狀態異常，請重新輸入 `/menu`。", ephemeral=True)
+            await send_or_followup(
+                interaction,
+                content="❌ Menu view 狀態異常，請重新輸入 `/menu`。",
+                ephemeral=True,
+            )
             return
+
         await self.view.handle_item(interaction, self.item)
 
 
@@ -93,6 +113,7 @@ class BaseMenuView(discord.ui.View):
             enforce = getattr(self.cog, "_enforce_command_cooldown", None)
         if enforce is None:
             return True
+
         return await enforce(interaction)
 
     async def _record(self, interaction: discord.Interaction, feature: str) -> None:
@@ -103,6 +124,7 @@ class BaseMenuView(discord.ui.View):
     async def _require_admin(self, interaction: discord.Interaction) -> bool:
         if can_use_admin(interaction.user):
             return True
+
         await send_or_followup(
             interaction,
             content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Admin Tool。",
@@ -115,18 +137,26 @@ class RegistryMenuView(BaseMenuView):
     def __init__(self, cog: object, layer: str) -> None:
         super().__init__(cog, timeout=None)
         self.layer = layer
+
         for item in get_menu_items(layer):
             self.add_item(RegistryButton(item))
 
     async def handle_item(self, interaction: discord.Interaction, item: MenuItem) -> None:
-        if not await self._enforce_cooldown(interaction):
-            return
+        # Generic menu cooldown is for navigation / general buttons only.
+        # Drink series cooldown is handled inside cogs.drink.
+        if item.id not in TARGET_MANAGED_COOLDOWN_ITEM_IDS:
+            if not await self._enforce_cooldown(interaction):
+                return
 
         if item.admin_only and not await self._require_admin(interaction):
             return
 
         if item.cog is None:
-            await send_or_followup(interaction, content="❌ 呢個功能未設定 cog。", ephemeral=True)
+            await send_or_followup(
+                interaction,
+                content="❌ 呢個功能未設定 cog。",
+                ephemeral=True,
+            )
             return
 
         target = self.cog if item.cog == "Menu" else interaction.client.get_cog(item.cog)
@@ -171,12 +201,47 @@ class QuickBarView(RegistryMenuView):
 class HomeMenuView(RegistryMenuView):
     def __init__(self, cog: object) -> None:
         super().__init__(cog, "home")
-        self.add_item(discord.ui.Button(label="IG Page", emoji="📸", style=discord.ButtonStyle.link, url=INSTAGRAM_URL, row=3))
-        self.add_item(discord.ui.Button(label="Threads Page", emoji="🧵", style=discord.ButtonStyle.link, url=THREADS_URL, row=3))
+
+        self.add_item(
+            discord.ui.Button(
+                label="IG Page",
+                emoji="",
+                style=discord.ButtonStyle.link,
+                url=INSTAGRAM_URL,
+                row=3,
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="Threads Page",
+                emoji="",
+                style=discord.ButtonStyle.link,
+                url=THREADS_URL,
+                row=3,
+            )
+        )
+
         if RULES_URL:
-            self.add_item(discord.ui.Button(label="Rules", emoji="🛡️", style=discord.ButtonStyle.link, url=RULES_URL, row=4))
+            self.add_item(
+                discord.ui.Button(
+                    label="Rules",
+                    emoji="📜",
+                    style=discord.ButtonStyle.link,
+                    url=RULES_URL,
+                    row=4,
+                )
+            )
+
         if HELP_URL:
-            self.add_item(discord.ui.Button(label="Help Channel", emoji="❓", style=discord.ButtonStyle.link, url=HELP_URL, row=4))
+            self.add_item(
+                discord.ui.Button(
+                    label="Help Channel",
+                    emoji="❓",
+                    style=discord.ButtonStyle.link,
+                    url=HELP_URL,
+                    row=4,
+                )
+            )
 
 
 class AdminToolView(RegistryMenuView):
@@ -188,10 +253,17 @@ class HelpMenuView(BaseMenuView):
     def __init__(self, cog: object) -> None:
         super().__init__(cog, timeout=None)
 
-    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="bartender:help:home", row=0)
+    @discord.ui.button(
+        label="Menu",
+        emoji="⬅️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bartender:help:home",
+        row=0,
+    )
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._enforce_cooldown(interaction):
             return
+
         await self.cog.open_home_menu_from_button(interaction)
 
 
@@ -205,6 +277,7 @@ def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View |
     menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
+
     return QuickBarView(menu_cog)
 
 
@@ -212,4 +285,5 @@ def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | 
     menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
+
     return QuickBarView(menu_cog)
