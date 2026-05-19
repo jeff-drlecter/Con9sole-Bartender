@@ -25,9 +25,9 @@ ICON_MAP = {
 }
 
 RARITY_STYLE = {
-    "Common": {"label": "House Pour", "emoji": "⚪", "weight": 78, "color": 0x95A5A6},
-    "Rare": {"label": "Signature Serve", "emoji": "🟣", "weight": 18, "color": 0x9B59B6},
-    "SSR": {"label": "Top Shelf", "emoji": "🟡", "weight": 4, "color": 0xF1C40F},
+    "Common": {"label": "House Pour", "emoji": "⚪", "weight": 85, "color": 0x95A5A6},
+    "Rare": {"label": "Signature Serve", "emoji": "🟣", "weight": 12, "color": 0x9B59B6},
+    "SSR": {"label": "Top Shelf", "emoji": "🟡", "weight": 3, "color": 0xF1C40F},
 }
 
 RECENT_HISTORY_LIMIT = 8
