@@ -45,20 +45,29 @@ DRINK_STATE_PATH = Path(os.getenv("DRINK_STATE_PATH", str(DATA_DIR / "drink_stat
 GIFT_DRINK_TARGET_TIMEOUT_SECONDS = 60.0
 COLLECTION_PAGE_LIMIT = 12
 
+EVENT_SELF_DRINK = "self_drink"
+EVENT_GIFT_DRINK = "gift_drink"
+
+
+def _default_drink_state() -> dict[str, object]:
+    return {"version": 1, "cooldowns": {}, "recent_drinks": {}}
+
 
 def _load_drink_state() -> dict[str, object]:
     try:
         if not DRINK_STATE_PATH.exists():
-            return {"version": 1, "cooldowns": {}, "recent_drinks": {}}
+            return _default_drink_state()
+
         raw = json.loads(DRINK_STATE_PATH.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
-            return {"version": 1, "cooldowns": {}, "recent_drinks": {}}
+            return _default_drink_state()
+
         raw.setdefault("version", 1)
         raw.setdefault("cooldowns", {})
         raw.setdefault("recent_drinks", {})
         return raw
     except Exception:
-        return {"version": 1, "cooldowns": {}, "recent_drinks": {}}
+        return _default_drink_state()
 
 
 _DRINK_STATE: dict[str, object] = _load_drink_state()
@@ -97,9 +106,6 @@ DRINK_USER_COOLDOWNS: dict[int, float] = {
 }
 
 atexit.register(_save_drink_state)
-
-EVENT_SELF_DRINK = "self_drink"
-EVENT_GIFT_DRINK = "gift_drink"
 
 
 @dataclass
@@ -198,6 +204,7 @@ def record_drink_event(
                 ),
             )
     except Exception:
+        # Stats failure should never block drink flow.
         pass
 
 
@@ -248,7 +255,12 @@ def _recent_event(guild_id: int | None, where_sql: str, params: tuple[object, ..
         ).fetchone()
 
 
-def _top_member_id(guild_id: int | None, select_field: str, where_sql: str, params: tuple[object, ...]) -> tuple[int, int] | None:
+def _top_member_id(
+    guild_id: int | None,
+    select_field: str,
+    where_sql: str,
+    params: tuple[object, ...],
+) -> tuple[int, int] | None:
     init_drink_events_db()
     with sqlite3.connect(STATS_DB) as conn:
         row = conn.execute(
@@ -435,10 +447,20 @@ def get_drink_retry_after(user_id: int) -> float:
     return retry_after if retry_after > 0 else 0.0
 
 
+def has_drink_cooldown(user_id: int) -> bool:
+    return get_drink_retry_after(user_id) > 0
+
+
 def touch_drink_cooldown(user_id: int) -> None:
     ts = time.time()
     DRINK_USER_COOLDOWNS[user_id] = ts
     _state_cooldowns()[str(user_id)] = ts
+    _save_drink_state()
+
+
+def clear_drink_cooldown(user_id: int) -> None:
+    DRINK_USER_COOLDOWNS.pop(user_id, None)
+    _state_cooldowns().pop(str(user_id), None)
     _save_drink_state()
 
 
@@ -797,13 +819,18 @@ class Drink(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.user_recent_draws: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=RECENT_HISTORY_LIMIT))
+
         for raw_user_id, drinks in _state_recent_drinks().items():
             try:
                 user_id = int(raw_user_id)
             except Exception:
                 continue
             if isinstance(drinks, list):
-                self.user_recent_draws[user_id] = deque([str(item) for item in drinks][-RECENT_HISTORY_LIMIT:], maxlen=RECENT_HISTORY_LIMIT)
+                self.user_recent_draws[user_id] = deque(
+                    [str(item) for item in drinks][-RECENT_HISTORY_LIMIT:],
+                    maxlen=RECENT_HISTORY_LIMIT,
+                )
+
         init_drink_events_db()
 
     async def _record_usage(self, interaction: discord.Interaction, feature: str = "drink") -> None:
@@ -814,11 +841,17 @@ class Drink(commands.Cog):
             except Exception:
                 pass
 
-    async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+    async def _check_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         retry_after = get_drink_retry_after(interaction.user.id)
         if retry_after > 0:
             message = f"⏳ 酒保正在整理吧枱，請等 {retry_after:.1f} 秒後再點下一杯。"
             await send_or_followup(interaction, content=message, ephemeral=True)
+            return False
+        return True
+
+    async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+        ok = await self._check_drink_cooldown(interaction)
+        if not ok:
             return False
 
         touch_drink_cooldown(interaction.user.id)
@@ -841,9 +874,6 @@ class Drink(commands.Cog):
 
         recent = set(self.user_recent_draws[user_id])
 
-        # Soft repeat weighting:
-        # - 最近 8 杯仍然有機會再中
-        # - 但非最近酒款有 4 倍機率
         weights = [
             1 if drink.eng in recent else 4
             for drink in pool
@@ -851,8 +881,10 @@ class Drink(commands.Cog):
 
         chosen = random.choices(pool, weights=weights, k=1)[0]
         self.user_recent_draws[user_id].append(chosen.eng)
+
         _state_recent_drinks()[str(user_id)] = list(self.user_recent_draws[user_id])
         _save_drink_state()
+
         return chosen
 
     def _build_header_line(
@@ -885,7 +917,11 @@ class Drink(commands.Cog):
             )
             return None
 
-        ok = await self._enforce_drink_cooldown(interaction)
+        # IMPORTANT:
+        # Opening the gift prompt must NOT consume cooldown.
+        # Cancel / timeout / invalid target must NOT consume cooldown.
+        # Cooldown is consumed only when a valid target is confirmed and the drink is actually sent.
+        ok = await self._check_drink_cooldown(interaction)
         if not ok:
             return None
 
@@ -1039,6 +1075,10 @@ class Drink(commands.Cog):
         await self.do_drink(interaction, enforce_cooldown=True)
 
     async def gift_drink_entry(self, interaction: discord.Interaction) -> None:
+        # Menu gift flow:
+        # 1. Open prompt without consuming cooldown.
+        # 2. Cancel / timeout / invalid tag does not consume cooldown.
+        # 3. A valid target calls do_drink(... enforce_cooldown=True), consuming cooldown at actual send time.
         target = await self._wait_for_gift_target(interaction)
         if target is None:
             return
@@ -1046,7 +1086,7 @@ class Drink(commands.Cog):
         await self.do_drink(
             interaction,
             to=target,
-            enforce_cooldown=False,
+            enforce_cooldown=True,
             feature="drink_gift",
         )
 
@@ -1063,13 +1103,13 @@ class Drink(commands.Cog):
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
     @app_commands.describe(to="收酒嘅人；留空即係自己叫酒")
-    async def drink(self, interaction: discord.Interaction, to: discord.Member | None = None):
+    async def drink(self, interaction: discord.Interaction, to: discord.Member | None = None) -> None:
         await self.do_drink(interaction, to, enforce_cooldown=True)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink_stats", description="查看自己或指定成員的酒保紀錄")
     @app_commands.describe(user="要查看嘅成員；留空即係自己")
-    async def drink_stats(self, interaction: discord.Interaction, user: discord.Member | None = None):
+    async def drink_stats(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
         target = user or interaction.user
         embed = build_drink_stats_embed(interaction.guild, target)
         await send_or_followup(interaction, embed=embed, ephemeral=True)
@@ -1077,7 +1117,7 @@ class Drink(commands.Cog):
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink_collection", description="查看自己或指定成員的酒單收藏")
     @app_commands.describe(user="要查看嘅成員；留空即係自己")
-    async def drink_collection(self, interaction: discord.Interaction, user: discord.Member | None = None):
+    async def drink_collection(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
         target = user or interaction.user
         await self._record_usage(interaction, feature="drink_collection")
         embed = build_drink_collection_embed(interaction.guild, target)
@@ -1085,5 +1125,5 @@ class Drink(commands.Cog):
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
 
-async def setup(bot: commands.Bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Drink(bot))
