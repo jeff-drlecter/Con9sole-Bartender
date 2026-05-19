@@ -32,6 +32,7 @@ from data.drink_data import (
 
 DRINK_USER_COOLDOWNS: dict[int, float] = {}
 GIFT_DRINK_TARGET_TIMEOUT_SECONDS = 60.0
+COLLECTION_PAGE_LIMIT = 12
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 STATS_DB = DATA_DIR / "community_stats.sqlite3"
@@ -91,6 +92,12 @@ def init_drink_events_db() -> None:
             ON drink_events(guild_id, created_at)
             """
         )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_drink_events_user_collection
+            ON drink_events(guild_id, actor_id, target_id, drink_eng)
+            """
+        )
 
 
 def record_drink_event(
@@ -148,6 +155,21 @@ def _count_events(guild_id: int | None, where_sql: str, params: tuple[object, ..
     return int(row[0]) if row else 0
 
 
+def _count_distinct_drinks(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
+    init_drink_events_db()
+    with sqlite3.connect(STATS_DB) as conn:
+        row = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT drink_eng)
+            FROM drink_events
+            WHERE guild_id IS ?
+            AND {where_sql}
+            """,
+            (guild_id, *params),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def _recent_event(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> sqlite3.Row | None:
     init_drink_events_db()
     with sqlite3.connect(STATS_DB) as conn:
@@ -184,6 +206,137 @@ def _top_member_id(guild_id: int | None, select_field: str, where_sql: str, para
     if not row:
         return None
     return int(row[0]), int(row[1])
+
+
+def _drink_catalog() -> dict[str, DrinkEntry]:
+    catalog: dict[str, DrinkEntry] = {}
+    for drink in ALL_DRINKS:
+        catalog.setdefault(drink.eng, drink)
+
+    for pool in SEASONAL_DRINKS.values():
+        for drink in pool:
+            catalog.setdefault(drink.eng, drink)
+
+    return catalog
+
+
+def _catalog_by_rarity() -> dict[str, list[DrinkEntry]]:
+    grouped: dict[str, list[DrinkEntry]] = {rarity: [] for rarity in RARITY_STYLE.keys()}
+    for drink in _drink_catalog().values():
+        grouped.setdefault(drink.rarity, []).append(drink)
+
+    for drinks in grouped.values():
+        drinks.sort(key=lambda item: (item.eng.casefold(), item.zh.casefold()))
+    return grouped
+
+
+def _fetch_collection_rows(
+    guild_id: int | None,
+    user_id: int,
+    *,
+    rarity: str | None = None,
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    init_drink_events_db()
+
+    rarity_sql = ""
+    params: list[object] = [guild_id, user_id, user_id]
+    if rarity is not None:
+        rarity_sql = "AND rarity = ?"
+        params.append(rarity)
+
+    limit_sql = ""
+    if limit is not None:
+        limit_sql = "LIMIT ?"
+        params.append(limit)
+
+    with sqlite3.connect(STATS_DB) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT
+                drink_eng,
+                drink_zh,
+                rarity,
+                MAX(created_at) AS latest_at,
+                SUM(CASE WHEN event_type = ? AND actor_id = ? AND target_id = ? THEN 1 ELSE 0 END) AS self_count,
+                SUM(CASE WHEN event_type = ? AND actor_id = ? THEN 1 ELSE 0 END) AS given_count,
+                SUM(CASE WHEN event_type = ? AND target_id = ? THEN 1 ELSE 0 END) AS received_count
+            FROM drink_events
+            WHERE guild_id IS ?
+            AND (actor_id = ? OR target_id = ?)
+            {rarity_sql}
+            GROUP BY drink_eng
+            ORDER BY latest_at DESC, drink_eng ASC
+            {limit_sql}
+            """,
+            (
+                EVENT_SELF_DRINK,
+                user_id,
+                user_id,
+                EVENT_GIFT_DRINK,
+                user_id,
+                EVENT_GIFT_DRINK,
+                user_id,
+                *params,
+            ),
+        ).fetchall()
+    return list(rows)
+
+
+def _fetch_collection_rarity_counts(guild_id: int | None, user_id: int) -> dict[str, int]:
+    init_drink_events_db()
+    with sqlite3.connect(STATS_DB) as conn:
+        rows = conn.execute(
+            """
+            SELECT rarity, COUNT(*) AS total
+            FROM (
+                SELECT drink_eng, rarity
+                FROM drink_events
+                WHERE guild_id IS ?
+                AND (actor_id = ? OR target_id = ?)
+                GROUP BY drink_eng
+            )
+            GROUP BY rarity
+            """,
+            (guild_id, user_id, user_id),
+        ).fetchall()
+    return {str(row[0]): int(row[1]) for row in rows}
+
+
+def _progress_bar(current: int, total: int, *, size: int = 10) -> str:
+    if total <= 0:
+        return "░" * size
+    filled = max(0, min(size, round((current / total) * size)))
+    return "█" * filled + "░" * (size - filled)
+
+
+def _rarity_label(rarity: str) -> str:
+    meta = RARITY_STYLE.get(rarity, {})
+    emoji = str(meta.get("emoji", "🍸"))
+    label = str(meta.get("label", rarity))
+    return f"{emoji} {label}"
+
+
+def _rarity_color(rarity: str) -> int:
+    meta = RARITY_STYLE.get(rarity, {})
+    try:
+        return int(meta.get("color", 0x2B2D31))
+    except Exception:
+        return 0x2B2D31
+
+
+def _format_collection_row(row: sqlite3.Row) -> str:
+    flags: list[str] = []
+    if int(row["self_count"] or 0) > 0:
+        flags.append("🍹")
+    if int(row["received_count"] or 0) > 0:
+        flags.append("🍷")
+    if int(row["given_count"] or 0) > 0:
+        flags.append("🥂")
+
+    flag_text = "".join(flags) or "✅"
+    return f"{flag_text} **{row['drink_eng']}（{row['drink_zh']}）**"
 
 
 def format_member_ref(guild: discord.Guild | None, user_id: int) -> str:
@@ -267,7 +420,7 @@ def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
         title="🥂 賜酒",
         description=(
             f"{user.mention}，請喺 **60 秒內** 喺呢個 channel tag 一位你想賜酒嘅成員。\n\n"
-            "例：`@jeff `\n\n"
+            "例：`@jeff`\n\n"
             "你亦可以撳下面嘅 **取消** 按鈕。"
         ),
         color=0x2B2D31,
@@ -352,6 +505,199 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
     embed.add_field(name="最近收到賜酒", value=format_recent_event(guild, recent_received, user_id=user_id, kind="received"), inline=False)
     embed.set_footer(text="Con9sole Bartender｜酒保紀錄 v1")
     return embed
+
+
+def build_drink_collection_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
+    guild_id = guild.id if guild else None
+    user_id = user.id
+
+    catalog = _drink_catalog()
+    catalog_by_rarity = _catalog_by_rarity()
+    total_catalog = len(catalog)
+
+    all_rows = _fetch_collection_rows(guild_id, user_id)
+    unlocked_total = len(all_rows)
+    progress = (unlocked_total / total_catalog * 100) if total_catalog else 0.0
+    bar = _progress_bar(unlocked_total, total_catalog)
+
+    self_unique = _count_distinct_drinks(
+        guild_id,
+        "event_type = ? AND actor_id = ? AND target_id = ?",
+        (EVENT_SELF_DRINK, user_id, user_id),
+    )
+    given_unique = _count_distinct_drinks(
+        guild_id,
+        "event_type = ? AND actor_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+    received_unique = _count_distinct_drinks(
+        guild_id,
+        "event_type = ? AND target_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+    unlocked_by_rarity = _fetch_collection_rarity_counts(guild_id, user_id)
+    rarity_lines: list[str] = []
+    for rarity, drinks in catalog_by_rarity.items():
+        total = len(drinks)
+        unlocked = unlocked_by_rarity.get(rarity, 0)
+        rarity_lines.append(f"{_rarity_label(rarity)}：`{unlocked}` / `{total}`")
+
+    recent_rows = all_rows[:5]
+    recent_text = "暫時未有解鎖紀錄"
+    if recent_rows:
+        recent_text = "\n".join(_format_collection_row(row) for row in recent_rows)
+
+    embed = discord.Embed(
+        title=f"🍾 {user.display_name} 的酒單收藏",
+        description=(
+            f"**已解鎖酒款：** `{unlocked_total}` / `{total_catalog}`\n"
+            f"**收藏進度：** `{progress:.1f}%`\n"
+            f"`{bar}`\n\n"
+            f"🍹 **自己叫酒解鎖：** `{self_unique}` 款\n"
+            f"🍷 **收到賜酒解鎖：** `{received_unique}` 款\n"
+            f"🥂 **賜酒畀人解鎖：** `{given_unique}` 款"
+        ),
+        color=0x2B2D31,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(name="稀有度收藏", value="\n".join(rarity_lines) or "暫時未有資料", inline=False)
+    embed.add_field(name="最近解鎖", value=recent_text, inline=False)
+    embed.set_footer(text="Con9sole Bartender｜🍹 自己叫酒｜🍷 收到賜酒｜🥂 賜酒畀人")
+    return embed
+
+
+def build_drink_collection_rarity_embed(
+    guild: discord.Guild | None,
+    user: discord.Member | discord.User,
+    rarity: str,
+) -> discord.Embed:
+    guild_id = guild.id if guild else None
+    user_id = user.id
+
+    catalog_by_rarity = _catalog_by_rarity()
+    total = len(catalog_by_rarity.get(rarity, []))
+    rows = _fetch_collection_rows(guild_id, user_id, rarity=rarity)
+    unlocked = len(rows)
+    locked = max(0, total - unlocked)
+
+    shown_rows = rows[:COLLECTION_PAGE_LIMIT]
+    if shown_rows:
+        list_text = "\n".join(_format_collection_row(row) for row in shown_rows)
+        if unlocked > COLLECTION_PAGE_LIMIT:
+            list_text += f"\n…仲有 `{unlocked - COLLECTION_PAGE_LIMIT}` 款已解鎖未顯示。"
+    else:
+        list_text = "暫時未解鎖呢個稀有度嘅酒款。"
+
+    hidden_text = f"❔ `{locked}` 款仍藏喺吧枱深處。" if locked else "✅ 呢個稀有度已全部解鎖。"
+
+    embed = discord.Embed(
+        title=f"🍾 {user.display_name} 的{_rarity_label(rarity)}收藏",
+        description=(
+            f"**解鎖進度：** `{unlocked}` / `{total}`\n"
+            f"`{_progress_bar(unlocked, total)}`\n\n"
+            f"**已解鎖**\n"
+            f"{list_text}\n\n"
+            f"**未解鎖**\n"
+            f"{hidden_text}"
+        ),
+        color=_rarity_color(rarity),
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.set_footer(text="Con9sole Bartender｜不顯示未解鎖酒名，保留探索感。")
+    return embed
+
+
+def build_drink_collection_recent_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
+    guild_id = guild.id if guild else None
+    user_id = user.id
+    rows = _fetch_collection_rows(guild_id, user_id, limit=COLLECTION_PAGE_LIMIT)
+
+    if rows:
+        text = "\n".join(_format_collection_row(row) for row in rows)
+    else:
+        text = "暫時未有解鎖紀錄。先去吧枱叫一杯，或者等朋友賜一杯酒俾你。"
+
+    embed = discord.Embed(
+        title=f"🕒 {user.display_name} 最近解鎖酒款",
+        description=text,
+        color=0x2B2D31,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.set_footer(text="Con9sole Bartender｜最近解鎖會按最後互動時間排序。")
+    return embed
+
+
+class DrinkCollectionView(discord.ui.View):
+    def __init__(self, *, owner_id: int, guild: discord.Guild | None, target_user: discord.Member | discord.User) -> None:
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.guild = guild
+        self.target_user = target_user
+        self._add_rarity_buttons()
+
+    def _add_rarity_buttons(self) -> None:
+        button_styles = [
+            discord.ButtonStyle.secondary,
+            discord.ButtonStyle.primary,
+            discord.ButtonStyle.success,
+            discord.ButtonStyle.danger,
+        ]
+        for index, rarity in enumerate(list(RARITY_STYLE.keys())[:4]):
+            meta = RARITY_STYLE.get(rarity, {})
+            label = str(meta.get("label", rarity))[:80]
+            emoji = str(meta.get("emoji", "🍸"))
+            style = button_styles[index] if index < len(button_styles) else discord.ButtonStyle.secondary
+            self.add_item(DrinkCollectionRarityButton(rarity=rarity, label=label, emoji=emoji, style=style, row=0))
+
+        self.add_item(DrinkCollectionRecentButton(row=1))
+        self.add_item(DrinkCollectionSummaryButton(row=1))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("呢個酒單收藏面板只限發起者使用。", ephemeral=True)
+            return False
+        return True
+
+
+class DrinkCollectionRarityButton(discord.ui.Button):
+    def __init__(self, *, rarity: str, label: str, emoji: str, style: discord.ButtonStyle, row: int) -> None:
+        super().__init__(label=label, emoji=emoji, style=style, row=row)
+        self.rarity = rarity
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, DrinkCollectionView):
+            await interaction.response.send_message("❌ 酒單收藏面板狀態異常，請重新開啟。", ephemeral=True)
+            return
+
+        embed = build_drink_collection_rarity_embed(self.view.guild, self.view.target_user, self.rarity)
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+
+class DrinkCollectionRecentButton(discord.ui.Button):
+    def __init__(self, *, row: int) -> None:
+        super().__init__(label="最近解鎖", emoji="🕒", style=discord.ButtonStyle.secondary, row=row)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, DrinkCollectionView):
+            await interaction.response.send_message("❌ 酒單收藏面板狀態異常，請重新開啟。", ephemeral=True)
+            return
+
+        embed = build_drink_collection_recent_embed(self.view.guild, self.view.target_user)
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+
+class DrinkCollectionSummaryButton(discord.ui.Button):
+    def __init__(self, *, row: int) -> None:
+        super().__init__(label="總覽", emoji="🍾", style=discord.ButtonStyle.secondary, row=row)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, DrinkCollectionView):
+            await interaction.response.send_message("❌ 酒單收藏面板狀態異常，請重新開啟。", ephemeral=True)
+            return
+
+        embed = build_drink_collection_embed(self.view.guild, self.view.target_user)
+        await interaction.response.edit_message(embed=embed, view=self.view)
 
 
 class GiftDrinkCancelView(discord.ui.View):
@@ -630,6 +976,12 @@ class Drink(commands.Cog):
         embed = build_drink_stats_embed(interaction.guild, interaction.user)
         await send_or_followup(interaction, embed=embed, ephemeral=True)
 
+    async def collection_entry(self, interaction: discord.Interaction) -> None:
+        await self._record_usage(interaction, feature="drink_collection")
+        embed = build_drink_collection_embed(interaction.guild, interaction.user)
+        view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=interaction.user)
+        await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
     @app_commands.describe(to="收酒嘅人；留空即係自己叫酒")
@@ -643,6 +995,16 @@ class Drink(commands.Cog):
         target = user or interaction.user
         embed = build_drink_stats_embed(interaction.guild, target)
         await send_or_followup(interaction, embed=embed, ephemeral=True)
+
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="drink_collection", description="查看自己或指定成員的酒單收藏")
+    @app_commands.describe(user="要查看嘅成員；留空即係自己")
+    async def drink_collection(self, interaction: discord.Interaction, user: discord.Member | None = None):
+        target = user or interaction.user
+        await self._record_usage(interaction, feature="drink_collection")
+        embed = build_drink_collection_embed(interaction.guild, target)
+        view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=target)
+        await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
