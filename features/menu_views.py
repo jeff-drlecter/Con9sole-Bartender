@@ -8,6 +8,7 @@ import discord
 import config
 from core.safe_send import send_or_followup
 from data.menu_registry import MenuItem, get_menu_items
+from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
 
 INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
@@ -36,16 +37,18 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "confession": ["menu_entry"],
 }
 
-# These features manage their own cooldown inside their own cog.
-# Do NOT consume the generic Menu button cooldown before routing them.
-#
-# Important for drink_gift:
-# - opening the "tag someone" prompt must not consume cooldown
-# - cancel / timeout / invalid tag must not consume cooldown
-# - Drink cog applies cooldown only after a valid target is confirmed
+# These feature buttons have their own cooldown / state handling inside the target cog.
+# Do not consume generic menu cooldown before routing them.
 TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
     "drink",
     "drink_gift",
+}
+
+# Navigation buttons should never be blocked by cooldown.
+NO_COOLDOWN_ITEM_IDS = {
+    "home_menu",
+    "help",
+    "admin_tool",
 }
 
 
@@ -62,25 +65,23 @@ def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]
 
 
 async def _call_method_safely(method: Callable[..., Awaitable[None]], interaction: discord.Interaction) -> None:
-    """
-    Route menu button clicks into cog entrypoints.
-
-    Previous versions retried any TypeError with extra parameters. That could hide
-    real bugs from inside a method and accidentally call an entrypoint multiple
-    times. For menu registry methods, entrypoints should accept one Interaction.
-    """
+    # Menu registry entrypoints should accept exactly one Interaction.
+    # Do not retry TypeError with extra args; that hides real bugs and can double-run actions.
     await method(interaction)
 
 
 class RegistryButton(discord.ui.Button):
     def __init__(self, item: MenuItem):
         style = STYLE_MAP.get(item.style, discord.ButtonStyle.secondary)
+
         kwargs: dict[str, object] = {
             "label": item.label,
-            "emoji": item.emoji,
             "style": style,
             "row": item.row,
         }
+
+        if item.emoji:
+            kwargs["emoji"] = item.emoji
 
         if item.url:
             kwargs["url"] = item.url
@@ -141,10 +142,40 @@ class RegistryMenuView(BaseMenuView):
         for item in get_menu_items(layer):
             self.add_item(RegistryButton(item))
 
+    async def _send_home_menu_direct(self, interaction: discord.Interaction) -> None:
+        # Avoid routing through cogs.menu.open_home_menu_from_button here.
+        # Some deployed versions raise HTTPException when trying to send file attachments
+        # from old public button interactions. This direct path sends a clean ephemeral menu.
+        await self._record(interaction, "home_menu")
+
+        embed = build_home_menu_embed(interaction.user)
+        embed.set_thumbnail(url=None)
+
+        await send_or_followup(
+            interaction,
+            embed=embed,
+            view=HomeMenuView(self.cog),
+            ephemeral=True,
+        )
+
     async def handle_item(self, interaction: discord.Interaction, item: MenuItem) -> None:
-        # Generic menu cooldown is for navigation / general buttons only.
-        # Drink series cooldown is handled inside cogs.drink.
-        if item.id not in TARGET_MANAGED_COOLDOWN_ITEM_IDS:
+        if item.id == "home_menu":
+            try:
+                await self._send_home_menu_direct(interaction)
+            except discord.InteractionResponded:
+                pass
+            except Exception as exc:
+                if interaction.response.is_done():
+                    print(f"[Menu router suppressed] {item.id}: {type(exc).__name__}: {exc}")
+                    return
+                await send_or_followup(
+                    interaction,
+                    content=f"❌ 執行 `{item.id}` 時出錯：`{type(exc).__name__}`。",
+                    ephemeral=True,
+                )
+            return
+
+        if item.id not in TARGET_MANAGED_COOLDOWN_ITEM_IDS and item.id not in NO_COOLDOWN_ITEM_IDS:
             if not await self._enforce_cooldown(interaction):
                 return
 
@@ -205,7 +236,6 @@ class HomeMenuView(RegistryMenuView):
         self.add_item(
             discord.ui.Button(
                 label="IG Page",
-                emoji="",
                 style=discord.ButtonStyle.link,
                 url=INSTAGRAM_URL,
                 row=3,
@@ -214,7 +244,6 @@ class HomeMenuView(RegistryMenuView):
         self.add_item(
             discord.ui.Button(
                 label="Threads Page",
-                emoji="",
                 style=discord.ButtonStyle.link,
                 url=THREADS_URL,
                 row=3,
@@ -261,10 +290,7 @@ class HelpMenuView(BaseMenuView):
         row=0,
     )
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._enforce_cooldown(interaction):
-            return
-
-        await self.cog.open_home_menu_from_button(interaction)
+        await RegistryMenuView(self.cog, "quick")._send_home_menu_direct(interaction)
 
 
 # Backward-compatible aliases used by other cogs.
