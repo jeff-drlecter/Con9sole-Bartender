@@ -13,3 +13,11 @@ memory_mb = 256
 auto_rollback = true
 auto_stop_machines = false   # Bot 長駐
 auto_start_machines = true   # 有請求會自動啟動
+
+
+[mounts]
+  source = "con9sole_data"
+  destination = "/data"
+
+[env]
+  DRINK_STATE_PATH = "/data/drink_state.json"
