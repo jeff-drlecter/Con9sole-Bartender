@@ -1173,7 +1173,13 @@ class Drink(commands.Cog):
             ok = await self._enforce_gift_drink_cooldown(interaction)
             if not ok:
                 return
-            await self.do_drink(interaction, to, enforce_cooldown=False, feature="drink_gift")
+
+            await self.do_drink(
+                interaction,
+                to,
+                enforce_cooldown=False,
+                feature="drink_gift",
+            )
             return
 
         await self.do_drink(interaction, to, enforce_cooldown=True)
