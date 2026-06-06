@@ -3,13 +3,10 @@ from __future__ import annotations
 import asyncio
 import atexit
 import json
-import os
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 import random
-import sqlite3
 import time
 from typing import Deque, Dict, List
 
@@ -39,23 +36,27 @@ from features.drink_catalog import (
     rarity_label,
 )
 from features.drink_result import build_bartender_result_payload
+from features.drink_storage import (
+    DATA_DIR,
+    EVENT_GIFT_DRINK,
+    EVENT_SELF_DRINK,
+    count_distinct_drinks,
+    count_events,
+    fetch_collection_rarity_counts,
+    fetch_collection_rows,
+    format_member_ref,
+    format_recent_event,
+    init_drink_events_db,
+    recent_event,
+    record_drink_event,
+    top_member_id,
+)
 
 
-# Persistent storage
-# Fly.io volume should mount at /data. For local/dev, this safely falls back to repo data/.
-DATA_DIR = Path(os.getenv("DRINK_DATA_DIR", "/data"))
-if not DATA_DIR.exists():
-    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-STATS_DB = DATA_DIR / "community_stats.sqlite3"
-DRINK_STATE_PATH = Path(os.getenv("DRINK_STATE_PATH", str(DATA_DIR / "drink_state.json")))
+DRINK_STATE_PATH = DATA_DIR / "drink_state.json"
 
 GIFT_DRINK_TARGET_TIMEOUT_SECONDS = 60.0
 COLLECTION_PAGE_LIMIT = 12
-
-EVENT_SELF_DRINK = "self_drink"
-EVENT_GIFT_DRINK = "gift_drink"
 
 
 def _default_drink_state() -> dict[str, object]:
@@ -146,267 +147,6 @@ class GiftDrinkPending:
 PENDING_GIFT_DRINK_REQUESTS: dict[int, GiftDrinkPending] = {}
 
 
-def init_drink_events_db() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(STATS_DB) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS drink_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guild_id INTEGER,
-                event_type TEXT NOT NULL,
-                actor_id INTEGER NOT NULL,
-                target_id INTEGER NOT NULL,
-                drink_eng TEXT NOT NULL,
-                drink_zh TEXT NOT NULL,
-                rarity TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_drink_events_actor
-            ON drink_events(guild_id, actor_id)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_drink_events_target
-            ON drink_events(guild_id, target_id)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_drink_events_type
-            ON drink_events(guild_id, event_type)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_drink_events_created_at
-            ON drink_events(guild_id, created_at)
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_drink_events_user_collection
-            ON drink_events(guild_id, actor_id, target_id, drink_eng)
-            """
-        )
-
-
-def record_drink_event(
-    *,
-    guild_id: int | None,
-    event_type: str,
-    actor_id: int,
-    target_id: int,
-    drink: DrinkEntry,
-) -> None:
-    try:
-        init_drink_events_db()
-        with sqlite3.connect(STATS_DB) as conn:
-            conn.execute(
-                """
-                INSERT INTO drink_events (
-                    guild_id,
-                    event_type,
-                    actor_id,
-                    target_id,
-                    drink_eng,
-                    drink_zh,
-                    rarity,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    guild_id,
-                    event_type,
-                    actor_id,
-                    target_id,
-                    drink.eng,
-                    drink.zh,
-                    drink.rarity,
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-    except Exception:
-        # Stats failure should never block drink flow.
-        pass
-
-
-def _count_events(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
-    init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
-        row = conn.execute(
-            f"""
-            SELECT COUNT(*)
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND {where_sql}
-            """,
-            (guild_id, *params),
-        ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def _count_distinct_drinks(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
-    init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
-        row = conn.execute(
-            f"""
-            SELECT COUNT(DISTINCT drink_eng)
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND {where_sql}
-            """,
-            (guild_id, *params),
-        ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def _recent_event(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> sqlite3.Row | None:
-    init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
-        conn.row_factory = sqlite3.Row
-        return conn.execute(
-            f"""
-            SELECT event_type, actor_id, target_id, drink_eng, drink_zh, rarity, created_at
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND {where_sql}
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (guild_id, *params),
-        ).fetchone()
-
-
-def _top_member_id(
-    guild_id: int | None,
-    select_field: str,
-    where_sql: str,
-    params: tuple[object, ...],
-) -> tuple[int, int] | None:
-    init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
-        row = conn.execute(
-            f"""
-            SELECT {select_field} AS member_id, COUNT(*) AS total
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND {where_sql}
-            GROUP BY {select_field}
-            ORDER BY total DESC, member_id ASC
-            LIMIT 1
-            """,
-            (guild_id, *params),
-        ).fetchone()
-
-    if not row:
-        return None
-    return int(row[0]), int(row[1])
-
-
-def _fetch_collection_rows(
-    guild_id: int | None,
-    user_id: int,
-    *,
-    rarity: str | None = None,
-    limit: int | None = None,
-) -> list[sqlite3.Row]:
-    init_drink_events_db()
-
-    rarity_sql = ""
-    params: list[object] = [guild_id, user_id, user_id]
-    if rarity is not None:
-        rarity_sql = "AND rarity = ?"
-        params.append(rarity)
-
-    limit_sql = ""
-    if limit is not None:
-        limit_sql = "LIMIT ?"
-        params.append(limit)
-
-    with sqlite3.connect(STATS_DB) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            f"""
-            SELECT
-                drink_eng,
-                drink_zh,
-                rarity,
-                MAX(created_at) AS latest_at,
-                SUM(CASE WHEN event_type = ? AND actor_id = ? AND target_id = ? THEN 1 ELSE 0 END) AS self_count,
-                SUM(CASE WHEN event_type = ? AND actor_id = ? THEN 1 ELSE 0 END) AS given_count,
-                SUM(CASE WHEN event_type = ? AND target_id = ? THEN 1 ELSE 0 END) AS received_count
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND (actor_id = ? OR target_id = ?)
-            {rarity_sql}
-            GROUP BY drink_eng
-            ORDER BY latest_at DESC, drink_eng ASC
-            {limit_sql}
-            """,
-            (
-                EVENT_SELF_DRINK,
-                user_id,
-                user_id,
-                EVENT_GIFT_DRINK,
-                user_id,
-                EVENT_GIFT_DRINK,
-                user_id,
-                *params,
-            ),
-        ).fetchall()
-    return list(rows)
-
-
-def _fetch_collection_rarity_counts(guild_id: int | None, user_id: int) -> dict[str, int]:
-    init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
-        rows = conn.execute(
-            """
-            SELECT rarity, COUNT(*) AS total
-            FROM (
-                SELECT drink_eng, rarity
-                FROM drink_events
-                WHERE guild_id IS ?
-                AND (actor_id = ? OR target_id = ?)
-                GROUP BY drink_eng
-            )
-            GROUP BY rarity
-            """,
-            (guild_id, user_id, user_id),
-        ).fetchall()
-    return {str(row[0]): int(row[1]) for row in rows}
-
-
-def format_member_ref(guild: discord.Guild | None, user_id: int) -> str:
-    member = guild.get_member(user_id) if guild else None
-    return member.mention if member else f"<@{user_id}>"
-
-
-def format_recent_event(guild: discord.Guild | None, row: sqlite3.Row | None, *, user_id: int, kind: str) -> str:
-    if row is None:
-        return "暫時未有紀錄"
-
-    drink_text = f"**{row['drink_eng']}（{row['drink_zh']}）**"
-    rarity = row["rarity"]
-
-    if kind == "self":
-        return f"{drink_text}｜`{rarity}`"
-
-    if kind == "given":
-        target = format_member_ref(guild, int(row["target_id"]))
-        return f"{drink_text} → {target}｜`{rarity}`"
-
-    actor = format_member_ref(guild, int(row["actor_id"]))
-    return f"{drink_text} ← {actor}｜`{rarity}`"
-
-
 def get_drink_retry_after(user_id: int) -> float:
     last_used = DRINK_USER_COOLDOWNS.get(user_id, 0.0)
     elapsed = time.time() - last_used
@@ -494,47 +234,47 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
     guild_id = guild.id if guild else None
     user_id = user.id
 
-    self_count = _count_events(
+    self_count = count_events(
         guild_id,
         "event_type = ? AND actor_id = ? AND target_id = ?",
         (EVENT_SELF_DRINK, user_id, user_id),
     )
-    given_count = _count_events(
+    given_count = count_events(
         guild_id,
         "event_type = ? AND actor_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
-    received_count = _count_events(
+    received_count = count_events(
         guild_id,
         "event_type = ? AND target_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
     total_count = self_count + given_count + received_count
 
-    top_given = _top_member_id(
+    top_given = top_member_id(
         guild_id,
         "target_id",
         "event_type = ? AND actor_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
-    top_received = _top_member_id(
+    top_received = top_member_id(
         guild_id,
         "actor_id",
         "event_type = ? AND target_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
 
-    recent_self = _recent_event(
+    recent_self = recent_event(
         guild_id,
         "event_type = ? AND actor_id = ? AND target_id = ?",
         (EVENT_SELF_DRINK, user_id, user_id),
     )
-    recent_given = _recent_event(
+    recent_given = recent_event(
         guild_id,
         "event_type = ? AND actor_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
-    recent_received = _recent_event(
+    recent_received = recent_event(
         guild_id,
         "event_type = ? AND target_id = ?",
         (EVENT_GIFT_DRINK, user_id),
@@ -576,28 +316,28 @@ def build_drink_collection_embed(guild: discord.Guild | None, user: discord.Memb
     grouped_catalog = catalog_by_rarity()
     total_catalog = len(catalog)
 
-    all_rows = _fetch_collection_rows(guild_id, user_id)
+    all_rows = fetch_collection_rows(guild_id, user_id)
     unlocked_total = len(all_rows)
     progress = (unlocked_total / total_catalog * 100) if total_catalog else 0.0
     bar = progress_bar(unlocked_total, total_catalog)
 
-    self_unique = _count_distinct_drinks(
+    self_unique = count_distinct_drinks(
         guild_id,
         "event_type = ? AND actor_id = ? AND target_id = ?",
         (EVENT_SELF_DRINK, user_id, user_id),
     )
-    given_unique = _count_distinct_drinks(
+    given_unique = count_distinct_drinks(
         guild_id,
         "event_type = ? AND actor_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
-    received_unique = _count_distinct_drinks(
+    received_unique = count_distinct_drinks(
         guild_id,
         "event_type = ? AND target_id = ?",
         (EVENT_GIFT_DRINK, user_id),
     )
 
-    unlocked_by_rarity = _fetch_collection_rarity_counts(guild_id, user_id)
+    unlocked_by_rarity = fetch_collection_rarity_counts(guild_id, user_id)
     rarity_lines: list[str] = []
     for rarity, drinks in grouped_catalog.items():
         total = len(drinks)
@@ -638,7 +378,7 @@ def build_drink_collection_rarity_embed(
 
     grouped_catalog = catalog_by_rarity()
     total = len(grouped_catalog.get(rarity, []))
-    rows = _fetch_collection_rows(guild_id, user_id, rarity=rarity)
+    rows = fetch_collection_rows(guild_id, user_id, rarity=rarity)
     unlocked = len(rows)
     locked = max(0, total - unlocked)
 
@@ -672,7 +412,7 @@ def build_drink_collection_rarity_embed(
 def build_drink_collection_recent_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
     guild_id = guild.id if guild else None
     user_id = user.id
-    rows = _fetch_collection_rows(guild_id, user_id, limit=COLLECTION_PAGE_LIMIT)
+    rows = fetch_collection_rows(guild_id, user_id, limit=COLLECTION_PAGE_LIMIT)
 
     if rows:
         text = "\n".join(format_collection_row(row) for row in rows)
