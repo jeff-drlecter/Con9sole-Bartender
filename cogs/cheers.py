@@ -133,7 +133,7 @@ class Cheers(commands.Cog):
             except Exception:
                 pass
 
-    async def _enforce_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
+    async def _check_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
         # Admin / helpers 無視打氣 cooldown
         if is_admin_or_helper(interaction.user):
             return True
@@ -145,6 +145,14 @@ class Cheers(commands.Cog):
                 content=f"⏳ 打氣時間正在補充能量，請等 {retry_after:.1f} 秒後再試。",
                 ephemeral=True,
             )
+            return False
+
+        return True
+
+
+    async def _enforce_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
+        ok = await self._check_cheers_cooldown(interaction)
+        if not ok:
             return False
 
         touch_cheers_cooldown(interaction.user.id)
@@ -176,7 +184,10 @@ class Cheers(commands.Cog):
             )
             return None
 
-        ok = await self._enforce_cheers_cooldown(interaction)
+        # Opening the target prompt must NOT consume cooldown.
+        # Cancel / timeout / invalid target must NOT consume cooldown.
+        # Cooldown is consumed only when a valid target is confirmed and the cheer is actually sent.
+        ok = await self._check_cheers_cooldown(interaction)
         if not ok:
             return None
 
@@ -315,6 +326,8 @@ class Cheers(commands.Cog):
         target = await self._wait_for_cheer_target(interaction)
         if target is None:
             return
+
+        touch_cheers_cooldown(interaction.user.id)
 
         await self.do_cheers(
             interaction,
