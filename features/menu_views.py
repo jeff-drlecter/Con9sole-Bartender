@@ -40,6 +40,8 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
 # These feature buttons have their own cooldown / state handling inside the target cog.
 # Do not consume generic menu cooldown before routing them.
 TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
+    "cheers",
+    "cheers_target",
     "drink",
     "drink_gift",
 }
