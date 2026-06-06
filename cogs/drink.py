@@ -18,7 +18,6 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
-from cogs.menu import build_full_menu_view, build_menu_file
 from core.safe_send import send_or_followup
 from data.drink_data import (
     ALL_DRINKS,
@@ -29,8 +28,18 @@ from data.drink_data import (
     RARITY_STYLE,
     RECENT_HISTORY_LIMIT,
     SEASONAL_DRINKS,
-    TASTING_LINES,
 )
+from features.drink_catalog import (
+    build_tasting_note,
+    catalog_by_rarity,
+    drink_catalog,
+    format_collection_row,
+    progress_bar,
+    rarity_color,
+    rarity_label,
+)
+from features.drink_result import build_bartender_result_payload
+
 
 # Persistent storage
 # Fly.io volume should mount at /data. For local/dev, this safely falls back to repo data/.
@@ -301,28 +310,6 @@ def _top_member_id(
     return int(row[0]), int(row[1])
 
 
-def _drink_catalog() -> dict[str, DrinkEntry]:
-    catalog: dict[str, DrinkEntry] = {}
-    for drink in ALL_DRINKS:
-        catalog.setdefault(drink.eng, drink)
-
-    for pool in SEASONAL_DRINKS.values():
-        for drink in pool:
-            catalog.setdefault(drink.eng, drink)
-
-    return catalog
-
-
-def _catalog_by_rarity() -> dict[str, list[DrinkEntry]]:
-    grouped: dict[str, list[DrinkEntry]] = {rarity: [] for rarity in RARITY_STYLE.keys()}
-    for drink in _drink_catalog().values():
-        grouped.setdefault(drink.rarity, []).append(drink)
-
-    for drinks in grouped.values():
-        drinks.sort(key=lambda item: (item.eng.casefold(), item.zh.casefold()))
-    return grouped
-
-
 def _fetch_collection_rows(
     guild_id: int | None,
     user_id: int,
@@ -397,41 +384,6 @@ def _fetch_collection_rarity_counts(guild_id: int | None, user_id: int) -> dict[
     return {str(row[0]): int(row[1]) for row in rows}
 
 
-def _progress_bar(current: int, total: int, *, size: int = 10) -> str:
-    if total <= 0:
-        return "░" * size
-    filled = max(0, min(size, round((current / total) * size)))
-    return "█" * filled + "░" * (size - filled)
-
-
-def _rarity_label(rarity: str) -> str:
-    meta = RARITY_STYLE.get(rarity, {})
-    emoji = str(meta.get("emoji", "🍸"))
-    label = str(meta.get("label", rarity))
-    return f"{emoji} {label}"
-
-
-def _rarity_color(rarity: str) -> int:
-    meta = RARITY_STYLE.get(rarity, {})
-    try:
-        return int(meta.get("color", 0x2B2D31))
-    except Exception:
-        return 0x2B2D31
-
-
-def _format_collection_row(row: sqlite3.Row) -> str:
-    flags: list[str] = []
-    if int(row["self_count"] or 0) > 0:
-        flags.append("🍹")
-    if int(row["received_count"] or 0) > 0:
-        flags.append("🍷")
-    if int(row["given_count"] or 0) > 0:
-        flags.append("🥂")
-
-    flag_text = "".join(flags) or "✅"
-    return f"{flag_text} **{row['drink_eng']}（{row['drink_zh']}）**"
-
-
 def format_member_ref(guild: discord.Guild | None, user_id: int) -> str:
     member = guild.get_member(user_id) if guild else None
     return member.mention if member else f"<@{user_id}>"
@@ -453,11 +405,6 @@ def format_recent_event(guild: discord.Guild | None, row: sqlite3.Row | None, *,
 
     actor = format_member_ref(guild, int(row["actor_id"]))
     return f"{drink_text} ← {actor}｜`{rarity}`"
-
-
-def build_tasting_note(drink: DrinkEntry) -> str:
-    base = drink.desc.rstrip("。")
-    return f"{base}。{random.choice(TASTING_LINES)}"
 
 
 def get_drink_retry_after(user_id: int) -> float:
@@ -527,22 +474,6 @@ def current_seasonal_pool() -> List[DrinkEntry]:
         if month in months:
             return pool
     return []
-
-
-def build_result_payload(interaction: discord.Interaction, result_embed: discord.Embed) -> dict[str, object]:
-    """Compact result embed + bartender thumbnail + Quick Bar buttons."""
-    payload: dict[str, object] = {"embed": result_embed}
-
-    menu_view = build_full_menu_view(interaction)
-    if menu_view is not None:
-        payload["view"] = menu_view
-
-    menu_file = build_menu_file()
-    if menu_file is not None:
-        result_embed.set_thumbnail(url=f"attachment://{BARTENDER_ATTACHMENT_NAME}")
-        payload["file"] = menu_file
-
-    return payload
 
 
 def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
@@ -641,14 +572,14 @@ def build_drink_collection_embed(guild: discord.Guild | None, user: discord.Memb
     guild_id = guild.id if guild else None
     user_id = user.id
 
-    catalog = _drink_catalog()
-    catalog_by_rarity = _catalog_by_rarity()
+    catalog = drink_catalog()
+    grouped_catalog = catalog_by_rarity()
     total_catalog = len(catalog)
 
     all_rows = _fetch_collection_rows(guild_id, user_id)
     unlocked_total = len(all_rows)
     progress = (unlocked_total / total_catalog * 100) if total_catalog else 0.0
-    bar = _progress_bar(unlocked_total, total_catalog)
+    bar = progress_bar(unlocked_total, total_catalog)
 
     self_unique = _count_distinct_drinks(
         guild_id,
@@ -668,15 +599,15 @@ def build_drink_collection_embed(guild: discord.Guild | None, user: discord.Memb
 
     unlocked_by_rarity = _fetch_collection_rarity_counts(guild_id, user_id)
     rarity_lines: list[str] = []
-    for rarity, drinks in catalog_by_rarity.items():
+    for rarity, drinks in grouped_catalog.items():
         total = len(drinks)
         unlocked = unlocked_by_rarity.get(rarity, 0)
-        rarity_lines.append(f"{_rarity_label(rarity)}：`{unlocked}` / `{total}`")
+        rarity_lines.append(f"{rarity_label(rarity)}：`{unlocked}` / `{total}`")
 
     recent_rows = all_rows[:5]
     recent_text = "暫時未有解鎖紀錄"
     if recent_rows:
-        recent_text = "\n".join(_format_collection_row(row) for row in recent_rows)
+        recent_text = "\n".join(format_collection_row(row) for row in recent_rows)
 
     embed = discord.Embed(
         title=f"🍾 {user.display_name} 的酒單收藏",
@@ -705,15 +636,15 @@ def build_drink_collection_rarity_embed(
     guild_id = guild.id if guild else None
     user_id = user.id
 
-    catalog_by_rarity = _catalog_by_rarity()
-    total = len(catalog_by_rarity.get(rarity, []))
+    grouped_catalog = catalog_by_rarity()
+    total = len(grouped_catalog.get(rarity, []))
     rows = _fetch_collection_rows(guild_id, user_id, rarity=rarity)
     unlocked = len(rows)
     locked = max(0, total - unlocked)
 
     shown_rows = rows[:COLLECTION_PAGE_LIMIT]
     if shown_rows:
-        list_text = "\n".join(_format_collection_row(row) for row in shown_rows)
+        list_text = "\n".join(format_collection_row(row) for row in shown_rows)
         if unlocked > COLLECTION_PAGE_LIMIT:
             list_text += f"\n…仲有 `{unlocked - COLLECTION_PAGE_LIMIT}` 款已解鎖未顯示。"
     else:
@@ -722,16 +653,16 @@ def build_drink_collection_rarity_embed(
     hidden_text = f"❔ `{locked}` 款仍藏喺吧枱深處。" if locked else "✅ 呢個稀有度已全部解鎖。"
 
     embed = discord.Embed(
-        title=f"🍾 {user.display_name} 的{_rarity_label(rarity)}收藏",
+        title=f"🍾 {user.display_name} 的{rarity_label(rarity)}收藏",
         description=(
             f"**解鎖進度：** `{unlocked}` / `{total}`\n"
-            f"`{_progress_bar(unlocked, total)}`\n\n"
+            f"`{progress_bar(unlocked, total)}`\n\n"
             f"**已解鎖**\n"
             f"{list_text}\n\n"
             f"**未解鎖**\n"
             f"{hidden_text}"
         ),
-        color=_rarity_color(rarity),
+        color=rarity_color(rarity),
         timestamp=discord.utils.utcnow(),
     )
     embed.set_footer(text="Con9sole Bartender｜不顯示未解鎖酒名，保留探索感。")
@@ -744,7 +675,7 @@ def build_drink_collection_recent_embed(guild: discord.Guild | None, user: disco
     rows = _fetch_collection_rows(guild_id, user_id, limit=COLLECTION_PAGE_LIMIT)
 
     if rows:
-        text = "\n".join(_format_collection_row(row) for row in rows)
+        text = "\n".join(format_collection_row(row) for row in rows)
     else:
         text = "暫時未有解鎖紀錄。先去吧枱叫一杯，或者等朋友賜一杯酒俾你。"
 
@@ -1125,7 +1056,11 @@ class Drink(commands.Cog):
         )
         result_embed.set_footer(text="Con9sole Bartender｜⬅️ Menu 返回吧枱主頁")
 
-        send_kwargs = build_result_payload(interaction, result_embed)
+        send_kwargs = build_bartender_result_payload(
+            interaction,
+            result_embed,
+            attachment_name=BARTENDER_ATTACHMENT_NAME,
+        )
 
         if interaction.response.is_done():
             await interaction.followup.send(**send_kwargs)
