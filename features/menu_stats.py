@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,8 +10,16 @@ import discord
 import config
 
 MENU_COLOR = 0x2B2D31
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# Persistent storage:
+# Fly.io volume should mount at /data. For local/dev, safely fall back to repo data/.
+DATA_DIR = Path(os.getenv("DRINK_DATA_DIR", "/data"))
+if not DATA_DIR.exists():
+    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 STATS_DB = DATA_DIR / "community_stats.sqlite3"
+
 HK_TZ = timezone(timedelta(hours=8))
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 
@@ -143,6 +152,7 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
             """,
             params,
         ).fetchall()
+
     return [(str(row[0]), int(row[1])) for row in rows]
 
 
@@ -162,7 +172,11 @@ def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     with sqlite3.connect(STATS_DB) as conn:
-        row = conn.execute(f"SELECT COUNT(*) AS total FROM command_usage {where_sql}", params).fetchone()
+        row = conn.execute(
+            f"SELECT COUNT(*) AS total FROM command_usage {where_sql}",
+            params,
+        ).fetchone()
+
     return int(row[0]) if row else 0
 
 
@@ -175,12 +189,14 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
         emoji = FEATURE_EMOJIS.get(feature, "🔹")
         label = FEATURE_LABELS.get(feature, feature)
         lines.append(f"{emoji} **{label}**：`{total}` 次")
+
     return "\n".join(lines)
 
 
 def build_admin_stats_embed(*, guild_id: int | None, days: int | None, title_scope: str) -> discord.Embed:
     stats = get_stats(guild_id, days)
     total = get_total_usage(guild_id, days)
+
     top_feature = "暫時未有"
     if stats:
         top_key = stats[0][0]
