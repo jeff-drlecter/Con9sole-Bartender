@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 import discord
 from discord.ext import commands
 
+from features.menu_embeds import build_main_menu_embed
+from features.menu_views import MainMenuView
+
 STATE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 SWEEP_INTERVAL_SECONDS = 10 * 60  # 10 minutes
 
@@ -219,8 +222,6 @@ class CancelledTeamView(discord.ui.View):
             return
 
         try:
-            from cogs.menu import MainMenuView, build_main_menu_embed
-
             await interaction.response.send_message(
                 embed=build_main_menu_embed(interaction.user),
                 view=MainMenuView(menu_cog),
