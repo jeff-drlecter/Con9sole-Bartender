@@ -11,7 +11,6 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
-from cogs.menu import build_full_menu_view, build_menu_file
 from core.permissions import is_admin_or_helper
 from core.safe_send import send_or_followup
 from data.cheers_quotes import (
@@ -20,6 +19,8 @@ from data.cheers_quotes import (
     CHEERS_QUOTES,
     CheerQuote,
 )
+from features.menu_helpers import build_menu_file
+from features.menu_views import build_full_menu_view
 
 CHEERS_USER_COOLDOWNS: dict[int, float] = {}
 CHEER_TARGET_TIMEOUT_SECONDS = 60.0
