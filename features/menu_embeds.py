@@ -37,9 +37,8 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
         description=(
-            "吧枱燈光微暗，杯影喺木面上輕輕晃動。\n\n"
-            "酒保抬頭望向你，將餐牌推前半吋。\n\n"
-            "**「坐低啦。想做啲咩？」**"
+            f"歡迎回來，{user.mention}。\n\n"
+            "**你想做啲咩？**"
         ),
         color=MENU_COLOR,
     )
