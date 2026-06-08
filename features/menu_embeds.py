@@ -25,7 +25,7 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
         color=MENU_COLOR,
     )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{user.display_name}，今晚由我為你服務。")
+    embed.set_footer(text=f"Con9sole Bartender｜{user.display_name}，由我為你服務。")
     return embed
 
 
@@ -39,7 +39,7 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             "吧枱燈光微暗，杯影喺木面上輕輕晃動。\n\n"
             "酒保抬頭望向你，將餐牌推前半吋。\n\n"
-            "**「坐低啦。今晚想做啲咩？」**"
+            "**「坐低啦。想做啲咩？」**"
         ),
         color=MENU_COLOR,
     )
@@ -57,7 +57,7 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
         inline=False,
     )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜今晚由你開局。")
+    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜由你開局。")
     return embed
 
 
