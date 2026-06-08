@@ -71,6 +71,13 @@ async def _call_method_safely(method: Callable[..., Awaitable[None]], interactio
     await method(interaction)
 
 
+def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    text = getattr(exc, "text", None)
+    print(f"[{context}] HTTPException status={status} code={code} text={text!r}")
+
+
 class RegistryButton(discord.ui.Button):
     def __init__(self, item: MenuItem):
         style = STYLE_MAP.get(item.style, discord.ButtonStyle.secondary)
@@ -147,10 +154,23 @@ class RegistryMenuView(BaseMenuView):
         await self._record(interaction, "home_menu")
         embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
 
+        try:
+            await send_or_followup(
+                interaction,
+                embed=embed,
+                view=HomeMenuView(self.cog),
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException as exc:
+            _log_http_exception("home_menu full view", exc)
+
+        # Safety fallback: keep the main menu usable even if optional social / external buttons
+        # trigger a Discord component payload issue.
         await send_or_followup(
             interaction,
             embed=embed,
-            view=HomeMenuView(self.cog),
+            view=HomeMenuView(self.cog, include_social=False, include_external_links=False),
             ephemeral=True,
         )
 
@@ -226,13 +246,20 @@ class QuickBarView(RegistryMenuView):
 
 
 class HomeMenuView(RegistryMenuView):
-    def __init__(self, cog: object) -> None:
+    def __init__(
+        self,
+        cog: object,
+        *,
+        include_social: bool = True,
+        include_external_links: bool = True,
+    ) -> None:
         super().__init__(cog, "home")
 
-        self.add_item(InstagramPromptButton(row=3))
-        self.add_item(ThreadsPromptButton(row=3))
+        if include_social:
+            self.add_item(InstagramPromptButton(row=3))
+            self.add_item(ThreadsPromptButton(row=3))
 
-        if RULES_URL:
+        if include_external_links and RULES_URL:
             self.add_item(
                 discord.ui.Button(
                     label="Rules",
@@ -243,7 +270,7 @@ class HomeMenuView(RegistryMenuView):
                 )
             )
 
-        if HELP_URL:
+        if include_external_links and HELP_URL:
             self.add_item(
                 discord.ui.Button(
                     label="Help Channel",
