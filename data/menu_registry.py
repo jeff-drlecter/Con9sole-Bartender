@@ -126,12 +126,11 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 
 
 # Layer 2：私人主頁 / 功能總覽
-# Social link buttons are added dynamically in menu.py.
 # Desired Home layout:
 # row 0: core community tools
 # row 1: cheers / social-emotion / confession
 # row 2: bartender drink series
-# row 3: invite + IG Page + Threads Page
+# row 3: invite + IG + Threads
 # row 4: help + admin
 HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
@@ -246,14 +245,36 @@ HOME_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="invite",
-        label="生成邀請碼",
+        label="邀請",
         emoji="🔗",
         style="primary",
         layer="home",
         row=3,
         cog="Menu",
         method="create_invite_link_from_button",
-        description="7 日 / 10 次公開邀請連結",
+        description="取得社群邀請碼",
+    ),
+    MenuItem(
+        id="instagram",
+        label="IG",
+        emoji="📸",
+        style="secondary",
+        layer="home",
+        row=3,
+        cog="Menu",
+        method="open_instagram_from_button",
+        description="查看官方 Instagram",
+    ),
+    MenuItem(
+        id="threads",
+        label="Threads",
+        emoji="🧵",
+        style="secondary",
+        layer="home",
+        row=3,
+        cog="Menu",
+        method="open_threads_from_button",
+        description="查看官方 Threads",
     ),
     MenuItem(
         id="help",
@@ -281,8 +302,6 @@ HOME_MENU_ITEMS: list[MenuItem] = [
 ]
 
 
-# Admin Tool：精簡管理工具
-# 原則：第一格係返回上一層 / 主頁，其後先係管理操作。
 ADMIN_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="home_menu",
@@ -293,7 +312,6 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         row=0,
         cog="Menu",
         method="open_home_menu_from_button",
-        admin_only=True,
         description="返回吧枱主頁",
     ),
     MenuItem(
@@ -306,7 +324,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         cog="Menu",
         method="admin_stats_from_button",
         admin_only=True,
-        description="Community Bot 使用數據",
+        description="查看 Community Bot 使用數據",
     ),
     MenuItem(
         id="admin_reload",
@@ -321,7 +339,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         description="重載所有 cogs",
     ),
     MenuItem(
-        id="admin_role",
+        id="admin_roles",
         label="Role Tools",
         emoji="🎭",
         style="primary",
@@ -330,13 +348,13 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         cog="Menu",
         method="admin_role_tools_from_button",
         admin_only=True,
-        description="角色管理入口",
+        description="Select Menu 角色管理工具",
     ),
     MenuItem(
         id="admin_ping",
         label="Ping",
         emoji="🏓",
-        style="primary",
+        style="secondary",
         layer="admin",
         row=1,
         cog="Menu",
