@@ -36,8 +36,6 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "confession": ["menu_entry"],
 }
 
-# These feature buttons have their own cooldown / state handling inside the target cog.
-# Do not consume generic menu cooldown before routing them.
 TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
     "cheers",
     "cheers_target",
@@ -45,7 +43,6 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
     "drink_gift",
 }
 
-# Navigation / confirmation-entry buttons should never be blocked by generic menu cooldown.
 NO_COOLDOWN_ITEM_IDS = {
     "home_menu",
     "help",
@@ -71,8 +68,6 @@ def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]
 
 
 async def _call_method_safely(method: Callable[..., Awaitable[None]], interaction: discord.Interaction) -> None:
-    # Menu registry entrypoints should accept exactly one Interaction.
-    # Do not retry TypeError with extra args; that hides real bugs and can double-run actions.
     await method(interaction)
 
 
@@ -149,8 +144,6 @@ class RegistryMenuView(BaseMenuView):
             self.add_item(RegistryButton(item))
 
     async def _send_home_menu_direct(self, interaction: discord.Interaction) -> None:
-        # Avoid routing through cogs.menu.open_home_menu_from_button here.
-        # This direct path sends a clean ephemeral menu without attachment thumbnail.
         await self._record(interaction, "home_menu")
         embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
 
@@ -262,35 +255,25 @@ class HomeMenuView(RegistryMenuView):
             )
 
 
-class HelpMenuView(RegistryMenuView):
-    def __init__(self, cog: object) -> None:
-        super().__init__(cog, "quick")
-
-
 class AdminToolView(RegistryMenuView):
     def __init__(self, cog: object) -> None:
         super().__init__(cog, "admin")
 
 
-# Backwards-compatible exports for older cogs/features that still import these names.
-MainMenuView = HomeMenuView
+class HelpMenuView(QuickBarView):
+    """Backwards-compatible help view: show the normal Quick Bar under Help."""
+
+    pass
 
 
-def build_full_menu_view(source: discord.Interaction | object) -> QuickBarView | None:
-    """Return the Quick Bar view used under drink / cheers result embeds.
+class MainMenuView(HomeMenuView):
+    """Backwards-compatible alias for older cogs / fallback code."""
 
-    Older modules pass a Discord interaction into this helper.  During the menu
-    refactor the view classes were renamed, so this compatibility helper keeps
-    cheers/drink/team imports stable while still returning the current QuickBarView.
-    """
-    menu_cog = None
+    pass
 
-    if isinstance(source, discord.Interaction):
-        menu_cog = source.client.get_cog("Menu")
-    else:
-        menu_cog = source
 
+def build_full_menu_view(interaction: discord.Interaction) -> QuickBarView | None:
+    menu_cog = interaction.client.get_cog("Menu")
     if menu_cog is None:
         return None
-
     return QuickBarView(menu_cog)
