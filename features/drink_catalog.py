@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping
-from typing import Any
-
 import sqlite3
+from collections.abc import Mapping
+from datetime import datetime
+from typing import Any
 
 from data.drink_data import (
     ALL_DRINKS,
@@ -40,6 +40,35 @@ def catalog_by_rarity() -> dict[str, list[DrinkEntry]]:
     for drinks in grouped.values():
         drinks.sort(key=lambda item: (item.eng.casefold(), item.zh.casefold()))
     return grouped
+
+
+def current_seasonal_pool() -> list[DrinkEntry]:
+    month = datetime.now().month
+    for months, pool in SEASONAL_DRINKS.items():
+        if month in months:
+            return list(pool)
+    return []
+
+
+def pick_rarity() -> str:
+    labels = list(RARITY_STYLE.keys())
+    weights = [RARITY_STYLE[label]["weight"] for label in labels]
+    return random.choices(labels, weights=weights, k=1)[0]
+
+
+def build_pool_for_rarity(rarity: str) -> list[DrinkEntry]:
+    pool = [drink for drink in ALL_DRINKS if drink.rarity == rarity]
+    seasonal = [drink for drink in current_seasonal_pool() if drink.rarity == rarity]
+    return pool + seasonal
+
+
+def pick_weighted_drink(*, rarity: str, recent_drink_names: set[str]) -> DrinkEntry:
+    pool = build_pool_for_rarity(rarity)
+    if not pool:
+        pool = ALL_DRINKS + current_seasonal_pool()
+
+    weights = [1 if drink.eng in recent_drink_names else 4 for drink in pool]
+    return random.choices(pool, weights=weights, k=1)[0]
 
 
 def progress_bar(current: int, total: int, *, size: int = 10) -> str:
