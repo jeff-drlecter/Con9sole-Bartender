@@ -5,21 +5,21 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from core.safe_send import safe_message_kwargs, send_or_followup
+from core.safe_send import send_or_followup
 from features.admin_actions import (
     admin_ping_from_button as run_admin_ping_from_button,
     admin_reload_from_button as run_admin_reload_from_button,
     admin_vc_teardown_from_button as run_admin_vc_teardown_from_button,
 )
-from features.invite_tools import create_invite_link_from_button as run_create_invite_link_from_button
-from features.menu_embeds import (
-    build_admin_tool_embed,
-    build_help_embed,
-    build_home_menu_embed,
-    build_quick_bar_embed,
+from features.menu_actions import (
+    open_admin_tool_menu as run_open_admin_tool_menu,
+    open_help_menu as run_open_help_menu,
+    open_home_menu as run_open_home_menu,
+    open_invite_menu as run_open_invite_menu,
+    open_quick_bar_menu as run_open_quick_bar_menu,
+    send_mention_quick_bar as run_send_mention_quick_bar,
 )
 from features.menu_helpers import (
-    build_menu_file,
     can_use_admin,
     claim_mention_message,
     get_retry_after,
@@ -100,46 +100,19 @@ class Menu(commands.Cog):
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
             return
-        record_usage_sync("menu", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_quick_bar_embed(interaction.user),
-            view=QuickBarView(self),
-            ephemeral=True,
-            file=build_menu_file(),
-        )
+        await run_open_quick_bar_menu(self, interaction, ephemeral=True)
 
     async def open_home_menu_from_button(self, interaction: discord.Interaction) -> None:
-        record_usage_sync("home_menu", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_home_menu_embed(interaction.user),
-            view=HomeMenuView(self),
-            ephemeral=True,
-            file=build_menu_file(),
-        )
+        await run_open_home_menu(self, interaction)
 
     async def open_help_from_button(self, interaction: discord.Interaction) -> None:
-        record_usage_sync("help", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_help_embed(interaction.user),
-            view=HelpMenuView(self),
-            ephemeral=True,
-            file=build_menu_file(),
-        )
+        await run_open_help_menu(self, interaction)
 
     async def open_admin_tool_from_button(self, interaction: discord.Interaction) -> None:
-        record_usage_sync("admin_tool", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_admin_tool_embed(interaction.user),
-            view=AdminToolView(self),
-            ephemeral=True,
-        )
+        await run_open_admin_tool_menu(self, interaction)
 
     async def create_invite_link_from_button(self, interaction: discord.Interaction) -> None:
-        await run_create_invite_link_from_button(interaction, can_use_admin_func=can_use_admin)
+        await run_open_invite_menu(interaction)
 
     async def admin_stats_from_button(self, interaction: discord.Interaction) -> None:
         await safe_defer(interaction, ephemeral=True)
@@ -171,24 +144,7 @@ class Menu(commands.Cog):
         if not claim_mention_message(message.id):
             return
 
-        if not can_use_admin(message.author):
-            retry_after = get_retry_after(message.author.id)
-            if retry_after > 0:
-                return
-            touch_cooldown(message.author.id)
-
-        record_usage_sync("mention_menu", message.author.id, message.guild.id if message.guild else None)
-
-        try:
-            kwargs = safe_message_kwargs(
-                embed=build_quick_bar_embed(message.author),
-                view=QuickBarView(self),
-                file=build_menu_file(),
-            )
-            kwargs["mention_author"] = False
-            await message.reply(**kwargs)
-        except discord.HTTPException:
-            pass
+        await run_send_mention_quick_bar(self, message)
 
     async def cog_load(self) -> None:
         if self._views_registered:
@@ -224,26 +180,12 @@ class Menu(commands.Cog):
     async def menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
             return
-        record_usage_sync("menu", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_quick_bar_embed(interaction.user),
-            view=QuickBarView(self),
-            ephemeral=False,
-            file=build_menu_file(),
-        )
+        await run_open_quick_bar_menu(self, interaction, ephemeral=False)
 
     @app_commands.command(name="community_hub", description="顯示 Con9sole Bartender 主頁")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def community_hub(self, interaction: discord.Interaction) -> None:
-        record_usage_sync("home_menu", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_home_menu_embed(interaction.user),
-            view=HomeMenuView(self),
-            ephemeral=True,
-            file=build_menu_file(),
-        )
+        await run_open_home_menu(self, interaction)
 
     @app_commands.command(name="admin_stats", description="查看 Community Bot 使用數據")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
