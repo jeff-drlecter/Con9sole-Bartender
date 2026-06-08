@@ -186,6 +186,96 @@ def top_member_id(
     return int(row[0]), int(row[1])
 
 
+def count_self_drinks(guild_id: int | None, user_id: int) -> int:
+    return count_events(
+        guild_id,
+        "event_type = ? AND actor_id = ? AND target_id = ?",
+        (EVENT_SELF_DRINK, user_id, user_id),
+    )
+
+
+def count_given_drinks(guild_id: int | None, user_id: int) -> int:
+    return count_events(
+        guild_id,
+        "event_type = ? AND actor_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def count_received_drinks(guild_id: int | None, user_id: int) -> int:
+    return count_events(
+        guild_id,
+        "event_type = ? AND target_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def count_self_unique_drinks(guild_id: int | None, user_id: int) -> int:
+    return count_distinct_drinks(
+        guild_id,
+        "event_type = ? AND actor_id = ? AND target_id = ?",
+        (EVENT_SELF_DRINK, user_id, user_id),
+    )
+
+
+def count_given_unique_drinks(guild_id: int | None, user_id: int) -> int:
+    return count_distinct_drinks(
+        guild_id,
+        "event_type = ? AND actor_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def count_received_unique_drinks(guild_id: int | None, user_id: int) -> int:
+    return count_distinct_drinks(
+        guild_id,
+        "event_type = ? AND target_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def top_given_target(guild_id: int | None, user_id: int) -> tuple[int, int] | None:
+    return top_member_id(
+        guild_id,
+        "target_id",
+        "event_type = ? AND actor_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def top_received_actor(guild_id: int | None, user_id: int) -> tuple[int, int] | None:
+    return top_member_id(
+        guild_id,
+        "actor_id",
+        "event_type = ? AND target_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def recent_self_drink(guild_id: int | None, user_id: int) -> sqlite3.Row | None:
+    return recent_event(
+        guild_id,
+        "event_type = ? AND actor_id = ? AND target_id = ?",
+        (EVENT_SELF_DRINK, user_id, user_id),
+    )
+
+
+def recent_given_drink(guild_id: int | None, user_id: int) -> sqlite3.Row | None:
+    return recent_event(
+        guild_id,
+        "event_type = ? AND actor_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
+def recent_received_drink(guild_id: int | None, user_id: int) -> sqlite3.Row | None:
+    return recent_event(
+        guild_id,
+        "event_type = ? AND target_id = ?",
+        (EVENT_GIFT_DRINK, user_id),
+    )
+
+
 def fetch_collection_rows(
     guild_id: int | None,
     user_id: int,
