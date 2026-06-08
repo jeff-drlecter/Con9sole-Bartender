@@ -5,13 +5,12 @@ import asyncio
 import discord
 
 from data.drink_data import RARITY_STYLE
+from features.drink_constants import GIFT_DRINK_TARGET_TIMEOUT_SECONDS
 from features.drink_embeds import (
     build_drink_collection_embed,
     build_drink_collection_rarity_embed,
     build_drink_collection_recent_embed,
 )
-
-GIFT_DRINK_TARGET_TIMEOUT_SECONDS = 60.0
 
 
 class DrinkCollectionView(discord.ui.View):
