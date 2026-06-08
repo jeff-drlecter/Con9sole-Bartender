@@ -11,16 +11,21 @@ from features.drink_catalog import (
     rarity_label,
 )
 from features.drink_storage import (
-    EVENT_GIFT_DRINK,
-    EVENT_SELF_DRINK,
-    count_distinct_drinks,
-    count_events,
+    count_given_drinks,
+    count_given_unique_drinks,
+    count_received_drinks,
+    count_received_unique_drinks,
+    count_self_drinks,
+    count_self_unique_drinks,
     fetch_collection_rarity_counts,
     fetch_collection_rows,
     format_member_ref,
     format_recent_event,
-    recent_event,
-    top_member_id,
+    recent_given_drink,
+    recent_received_drink,
+    recent_self_drink,
+    top_given_target,
+    top_received_actor,
 )
 
 COLLECTION_PAGE_LIMIT = 12
@@ -44,51 +49,17 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
     guild_id = guild.id if guild else None
     user_id = user.id
 
-    self_count = count_events(
-        guild_id,
-        "event_type = ? AND actor_id = ? AND target_id = ?",
-        (EVENT_SELF_DRINK, user_id, user_id),
-    )
-    given_count = count_events(
-        guild_id,
-        "event_type = ? AND actor_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
-    received_count = count_events(
-        guild_id,
-        "event_type = ? AND target_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
+    self_count = count_self_drinks(guild_id, user_id)
+    given_count = count_given_drinks(guild_id, user_id)
+    received_count = count_received_drinks(guild_id, user_id)
     total_count = self_count + given_count + received_count
 
-    top_given = top_member_id(
-        guild_id,
-        "target_id",
-        "event_type = ? AND actor_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
-    top_received = top_member_id(
-        guild_id,
-        "actor_id",
-        "event_type = ? AND target_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
+    top_given = top_given_target(guild_id, user_id)
+    top_received = top_received_actor(guild_id, user_id)
 
-    recent_self = recent_event(
-        guild_id,
-        "event_type = ? AND actor_id = ? AND target_id = ?",
-        (EVENT_SELF_DRINK, user_id, user_id),
-    )
-    recent_given = recent_event(
-        guild_id,
-        "event_type = ? AND actor_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
-    recent_received = recent_event(
-        guild_id,
-        "event_type = ? AND target_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
+    recent_self = recent_self_drink(guild_id, user_id)
+    recent_given = recent_given_drink(guild_id, user_id)
+    recent_received = recent_received_drink(guild_id, user_id)
 
     top_given_text = "暫時未有紀錄"
     if top_given is not None:
@@ -131,21 +102,9 @@ def build_drink_collection_embed(guild: discord.Guild | None, user: discord.Memb
     progress = (unlocked_total / total_catalog * 100) if total_catalog else 0.0
     bar = progress_bar(unlocked_total, total_catalog)
 
-    self_unique = count_distinct_drinks(
-        guild_id,
-        "event_type = ? AND actor_id = ? AND target_id = ?",
-        (EVENT_SELF_DRINK, user_id, user_id),
-    )
-    given_unique = count_distinct_drinks(
-        guild_id,
-        "event_type = ? AND actor_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
-    received_unique = count_distinct_drinks(
-        guild_id,
-        "event_type = ? AND target_id = ?",
-        (EVENT_GIFT_DRINK, user_id),
-    )
+    self_unique = count_self_unique_drinks(guild_id, user_id)
+    given_unique = count_given_unique_drinks(guild_id, user_id)
+    received_unique = count_received_unique_drinks(guild_id, user_id)
 
     unlocked_by_rarity = fetch_collection_rarity_counts(guild_id, user_id)
     rarity_lines: list[str] = []
