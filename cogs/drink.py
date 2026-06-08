@@ -24,6 +24,7 @@ from data.drink_data import (
     SEASONAL_DRINKS,
 )
 from features.drink_catalog import build_tasting_note
+from features.drink_constants import GIFT_DRINK_TARGET_TIMEOUT_SECONDS
 from features.drink_embeds import (
     build_drink_collection_embed,
     build_drink_stats_embed,
@@ -45,7 +46,6 @@ from features.drink_storage import (
     record_drink_event,
 )
 from features.drink_views import (
-    GIFT_DRINK_TARGET_TIMEOUT_SECONDS,
     DrinkCollectionView,
     GiftDrinkCancelView,
 )
