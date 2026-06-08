@@ -56,7 +56,7 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
         inline=False,
     )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜由你開局。")
+    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜你揀，我跟。")
     return embed
 
 
@@ -75,9 +75,9 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "🥂 **賜酒**｜tag 一位成員，賜一杯酒給對方\n"
             "📊 **酒保紀錄**｜查看自己叫酒 / 賜酒 / 收到賜酒紀錄\n"
             "🍾 **酒單收藏**｜查看已解鎖酒款、稀有度進度與最近解鎖\n\n"
-            "🔗 **生成邀請碼**｜7 日有效、最多 10 次使用，每人 10 分鐘一次\n"
-            "📸 **IG Page**｜查看官方 Instagram\n"
-            "🧵 **Threads Page**｜查看官方 Threads\n\n"
+            "🔗 **邀請**｜確認後取得邀請碼；有現成可用連結時不會重複生成\n"
+            "📸 **IG**｜查看官方 Instagram\n"
+            "🧵 **Threads**｜查看官方 Threads\n\n"
             "ℹ️ **幫助**｜查看呢份使用說明\n"
             "🛠️ **Admin Tool**｜Admin / helpers 專用管理工具"
         ),
