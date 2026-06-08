@@ -33,7 +33,7 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
     return build_quick_bar_embed(user)
 
 
-def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
+def build_home_menu_embed(user: discord.abc.User, *, include_thumbnail: bool = True) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
         description=(
@@ -55,7 +55,8 @@ def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
         value="撳「幫助」會見到完整用法。",
         inline=False,
     )
-    apply_bartender_thumbnail(embed)
+    if include_thumbnail:
+        apply_bartender_thumbnail(embed)
     embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜你揀，我跟。")
     return embed
 
