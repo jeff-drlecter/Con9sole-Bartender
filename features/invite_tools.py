@@ -144,11 +144,7 @@ async def _find_reusable_invite(
 def build_invite_confirm_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🔗 邀請",
-        description=(
-            f"{user.mention}，是否生成邀請碼？\n\n"
-            "如果現有邀請碼仲有至少一日有效期，我會直接畀現有連結你。\n"
-            "如果冇，我會生成一個新邀請碼，有效期 `7 日`。"
-        ),
+        description=f"{user.mention}，是否生成邀請碼？",
         color=0x2B2D31,
     )
     embed.set_footer(text="Con9sole Bartender｜邀請碼會只傳畀你。")
@@ -233,10 +229,9 @@ async def _handle_invite_generation(
     existing_invite = await _find_reusable_invite(channel)
     if existing_invite is not None:
         await interaction.followup.send(
-            "🔗 **現有邀請碼仍然有效：**\n"
+            "🔗 **邀請碼：**\n"
             f"{existing_invite.url}\n\n"
-            f"剩餘有效期：`{_format_invite_expiry(existing_invite)}`\n"
-            "我冇生成新邀請碼。",
+            f"剩餘有效期：`{_format_invite_expiry(existing_invite)}`",
             ephemeral=True,
         )
         return
@@ -272,7 +267,7 @@ async def _handle_invite_generation(
         touch_invite_cooldown(interaction.user.id)
 
     await interaction.followup.send(
-        "🔗 **邀請碼已生成：**\n"
+        "🔗 **邀請碼：**\n"
         f"{invite.url}\n\n"
         "有效期：`7 日`\n"
         "使用次數：`最多 10 次`\n"
