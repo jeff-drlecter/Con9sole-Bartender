@@ -18,8 +18,10 @@ from features.menu_actions import (
     open_admin_tool_menu as run_open_admin_tool_menu,
     open_help_menu as run_open_help_menu,
     open_home_menu as run_open_home_menu,
+    open_instagram_menu as run_open_instagram_menu,
     open_invite_menu as run_open_invite_menu,
     open_quick_bar_menu as run_open_quick_bar_menu,
+    open_threads_menu as run_open_threads_menu,
     send_mention_quick_bar as run_send_mention_quick_bar,
 )
 from features.menu_helpers import (
@@ -54,11 +56,7 @@ class Menu(commands.Cog):
 
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
-            await send_or_followup(
-                interaction,
-                content=f"⏳ 請等 {retry_after:.1f} 秒後再用 /menu。",
-                ephemeral=True,
-            )
+            await send_or_followup(interaction, content=f"⏳ 請等 {retry_after:.1f} 秒後再用 /menu。", ephemeral=True)
             return False
 
         touch_cooldown(interaction.user.id)
@@ -70,11 +68,7 @@ class Menu(commands.Cog):
 
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
-            await send_or_followup(
-                interaction,
-                content=f"⏳ 請等 {retry_after:.1f} 秒後再撳。",
-                ephemeral=True,
-            )
+            await send_or_followup(interaction, content=f"⏳ 請等 {retry_after:.1f} 秒後再撳。", ephemeral=True)
             return False
 
         touch_cooldown(interaction.user.id)
@@ -86,18 +80,8 @@ class Menu(commands.Cog):
     async def execute_role_change_from_select(self, interaction: discord.Interaction, *, state: RoleActionState) -> None:
         await run_execute_role_change_from_select(interaction, state=state)
 
-    async def execute_role_list_for_member(
-        self,
-        interaction: discord.Interaction,
-        *,
-        member: discord.Member,
-        edit_existing: bool = True,
-    ) -> None:
-        await run_execute_role_list_for_member(
-            interaction,
-            member=member,
-            edit_existing=edit_existing,
-        )
+    async def execute_role_list_for_member(self, interaction: discord.Interaction, *, member: discord.Member, edit_existing: bool = True) -> None:
+        await run_execute_role_list_for_member(interaction, member=member, edit_existing=edit_existing)
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
@@ -115,6 +99,12 @@ class Menu(commands.Cog):
 
     async def create_invite_link_from_button(self, interaction: discord.Interaction) -> None:
         await run_open_invite_menu(interaction)
+
+    async def open_instagram_from_button(self, interaction: discord.Interaction) -> None:
+        await run_open_instagram_menu(interaction)
+
+    async def open_threads_from_button(self, interaction: discord.Interaction) -> None:
+        await run_open_threads_menu(interaction)
 
     async def admin_stats_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_stats_from_button(self, interaction)
@@ -136,7 +126,6 @@ class Menu(commands.Cog):
             return
         if not claim_mention_message(message.id):
             return
-
         await run_send_mention_quick_bar(self, message)
 
     async def cog_load(self) -> None:
@@ -151,21 +140,15 @@ class Menu(commands.Cog):
 
     @commands.Cog.listener("on_message")
     async def on_message_mention_menu(self, message: discord.Message) -> None:
-        if message.author.bot:
+        if message.author.bot or message.guild is None or self.bot.user is None:
             return
-        if message.guild is None:
-            return
-        if self.bot.user is None:
-            return
-
-        direct_mention = f"<@{self.bot.user.id}>" in message.content or f"<@!{self.bot.user.id}>" in message.content
+        bot_id = self.bot.user.id
+        direct_mention = f"<@{bot_id}>" in message.content or f"<@!{bot_id}>" in message.content
         if not direct_mention:
             return
-
-        cleaned = message.content.replace(f"<@{self.bot.user.id}>", "").replace(f"<@!{self.bot.user.id}>", "").strip()
+        cleaned = message.content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
         if cleaned:
             return
-
         await self.send_mention_menu(message)
 
     @app_commands.command(name="menu", description="顯示 Con9sole Bartender 快捷吧枱")
