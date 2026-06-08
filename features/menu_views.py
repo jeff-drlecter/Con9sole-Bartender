@@ -46,11 +46,16 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
     "drink_gift",
 }
 
-# Navigation buttons should never be blocked by cooldown.
+# Navigation / confirmation-entry buttons should never be blocked by generic menu cooldown.
 NO_COOLDOWN_ITEM_IDS = {
     "home_menu",
     "help",
     "admin_tool",
+    "invite",
+}
+
+LABEL_OVERRIDES: dict[str, str] = {
+    "invite": "邀請",
 }
 
 
@@ -77,7 +82,7 @@ class RegistryButton(discord.ui.Button):
         style = STYLE_MAP.get(item.style, discord.ButtonStyle.secondary)
 
         kwargs: dict[str, object] = {
-            "label": item.label,
+            "label": LABEL_OVERRIDES.get(item.id, item.label),
             "style": style,
             "row": item.row,
         }
@@ -237,7 +242,7 @@ class HomeMenuView(RegistryMenuView):
 
         self.add_item(
             discord.ui.Button(
-                label="IG Page",
+                label="IG",
                 style=discord.ButtonStyle.link,
                 url=INSTAGRAM_URL,
                 row=3,
@@ -245,7 +250,7 @@ class HomeMenuView(RegistryMenuView):
         )
         self.add_item(
             discord.ui.Button(
-                label="Threads Page",
+                label="Threads",
                 style=discord.ButtonStyle.link,
                 url=THREADS_URL,
                 row=3,
