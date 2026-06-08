@@ -12,20 +12,23 @@ def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
         description=(
-            "**「歡迎光臨，要點什麼？」**\n\n"
-            "👥 **組隊**｜召集隊友\n"
-            "🎧 **小隊 call**｜建立臨時語音房\n"
-            "🎛️ **控制**｜管理目前小隊 call\n\n"
-            "🎉 **打氣**｜為大家補充能量\n"
-            "🙌 **幫人打氣**｜送一句打氣給其他成員\n"
-            "🍹 **調酒**｜酒保特選\n"
-            "🥂 **賜酒**｜賜一杯酒給其他成員\n\n"
-            "⬅️ **Menu**｜進入吧枱主頁"
+            f"歡迎回來，{user.mention}。\n\n"
+            "**想快速做啲咩？**"
         ),
         color=MENU_COLOR,
     )
+    embed.add_field(
+        name="⚡ Quick Bar",
+        value="常用功能已放喺下面。想睇完整入口，可以撳「Menu」。",
+        inline=False,
+    )
+    embed.add_field(
+        name="📖 第一次嚟？",
+        value="入主頁後撳「幫助」會見到完整用法。",
+        inline=False,
+    )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{user.display_name}，由我為你服務。")
+    embed.set_footer(text=f"Con9sole Bartender｜{user.display_name}，你揀，我跟。")
     return embed
 
 
