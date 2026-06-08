@@ -9,6 +9,9 @@ from core.safe_send import send_or_followup
 from features.admin_actions import (
     admin_ping_from_button as run_admin_ping_from_button,
     admin_reload_from_button as run_admin_reload_from_button,
+    admin_role_tools_from_button as run_admin_role_tools_from_button,
+    admin_stats_command as run_admin_stats_command,
+    admin_stats_from_button as run_admin_stats_from_button,
     admin_vc_teardown_from_button as run_admin_vc_teardown_from_button,
 )
 from features.menu_actions import (
@@ -23,17 +26,16 @@ from features.menu_helpers import (
     can_use_admin,
     claim_mention_message,
     get_retry_after,
-    safe_defer,
     touch_cooldown,
 )
-from features.menu_stats import build_admin_stats_embed, init_stats_db, record_usage_sync
+from features.menu_stats import init_stats_db, record_usage_sync
 from features.menu_views import (
     AdminToolView,
     HelpMenuView,
     HomeMenuView,
     QuickBarView,
 )
-from features.role_tools import RoleActionState, RoleToolsView, build_role_tools_embed
+from features.role_tools import RoleActionState, RoleToolsView
 from features.role_tools_actions import (
     execute_role_change_from_select as run_execute_role_change_from_select,
     execute_role_list_for_member as run_execute_role_list_for_member,
@@ -115,22 +117,13 @@ class Menu(commands.Cog):
         await run_open_invite_menu(interaction)
 
     async def admin_stats_from_button(self, interaction: discord.Interaction) -> None:
-        await safe_defer(interaction, ephemeral=True)
-        record_usage_sync("admin_stats", interaction.user.id, interaction.guild_id)
-        embed = build_admin_stats_embed(guild_id=interaction.guild_id, days=7, title_scope="本週")
-        await send_or_followup(interaction, embed=embed, view=AdminToolView(self), ephemeral=True)
+        await run_admin_stats_from_button(self, interaction)
 
     async def admin_reload_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_reload_from_button(interaction)
 
     async def admin_role_tools_from_button(self, interaction: discord.Interaction) -> None:
-        record_usage_sync("admin_role", interaction.user.id, interaction.guild_id)
-        await send_or_followup(
-            interaction,
-            embed=build_role_tools_embed(interaction.user),
-            view=RoleToolsView(self),
-            ephemeral=True,
-        )
+        await run_admin_role_tools_from_button(self, interaction)
 
     async def admin_ping_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_ping_from_button(interaction)
@@ -198,28 +191,7 @@ class Menu(commands.Cog):
         ]
     )
     async def admin_stats(self, interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
-        if not can_use_admin(interaction.user):
-            await send_or_followup(
-                interaction,
-                content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以查看統計。",
-                ephemeral=True,
-            )
-            return
-
-        record_usage_sync("admin_stats", interaction.user.id, interaction.guild_id)
-
-        if scope.value == "today":
-            days: int | None = 1
-            title_scope = "今日"
-        elif scope.value == "week":
-            days = 7
-            title_scope = "本週"
-        else:
-            days = None
-            title_scope = "全部"
-
-        embed = build_admin_stats_embed(guild_id=interaction.guild_id, days=days, title_scope=title_scope)
-        await send_or_followup(interaction, embed=embed, ephemeral=False)
+        await run_admin_stats_command(interaction, scope_value=scope.value)
 
 
 async def setup(bot: commands.Bot) -> None:
