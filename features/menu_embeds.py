@@ -35,29 +35,29 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
 
 def build_home_menu_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
-        title="🍸 Bartender Home",
+        title="🍸 Con9sole Bartender",
         description=(
-            f"**{COMMUNITY_NAME} 吧枱主頁**\n\n"
-            "👥 **組隊** — 召集隊友\n"
-            "🎧 **小隊 call** — 建立臨時語音房\n"
-            "🎛️ **小隊 call 控制** — 管理目前身處的小隊 call\n\n"
-            "🎉 **打氣** — 為大家補充能量\n"
-            "🙌 **幫人打氣** — 送一句打氣給其他成員\n"
-            "🕯️ **無名告白** — 匿名投稿\n\n"
-            "🍹 **調酒** — 酒保特選\n"
-            "🥂 **賜酒** — 賜一杯酒給其他成員\n"
-            "📊 **酒保紀錄** — 查看自己的酒保互動\n"
-            "🍾 **酒單收藏** — 查看酒款收藏進度\n\n"
-            "🔗 **生成邀請碼** — 7 日 / 10 次公開邀請連結\n"
-            "📸 **IG Page** — 官方 Instagram\n"
-            "🧵 **Threads Page** — 官方 Threads\n\n"
-            "ℹ️ **幫助** — 使用說明\n"
-            "🛠️ **Admin Tool** — 管理工具"
+            "吧枱燈光微暗，杯影喺木面上輕輕晃動。\n\n"
+            "酒保抬頭望向你，將餐牌推前半吋。\n\n"
+            "**「坐低啦。今晚想做啲咩？」**"
         ),
         color=MENU_COLOR,
     )
+    embed.add_field(
+        name="🥃 今日吧枱",
+        value=(
+            "酒單已備好，小隊頻道亦開住燈。\n"
+            "想飲、想組隊、想講低一句，都可以直接落單。"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="📖 第一次嚟？",
+        value="撳「幫助」會見到完整用法。",
+        inline=False,
+    )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text="Con9sole Bartender｜選好服務後，直接撳下面按鈕。")
+    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜今晚由你開局。")
     return embed
 
 
