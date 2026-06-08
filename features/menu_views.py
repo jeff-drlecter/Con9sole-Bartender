@@ -10,7 +10,6 @@ from core.safe_send import send_or_followup
 from data.menu_registry import MenuItem, get_menu_items
 from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
-from features.social_tools import InstagramPromptButton, ThreadsPromptButton
 
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
@@ -48,6 +47,8 @@ NO_COOLDOWN_ITEM_IDS = {
     "help",
     "admin_tool",
     "invite",
+    "instagram",
+    "threads",
 }
 
 LABEL_OVERRIDES: dict[str, str] = {
@@ -165,12 +166,10 @@ class RegistryMenuView(BaseMenuView):
         except discord.HTTPException as exc:
             _log_http_exception("home_menu full view", exc)
 
-        # Safety fallback: keep the main menu usable even if optional social / external buttons
-        # trigger a Discord component payload issue.
         await send_or_followup(
             interaction,
             embed=embed,
-            view=HomeMenuView(self.cog, include_social=False, include_external_links=False),
+            view=HomeMenuView(self.cog, include_external_links=False),
             ephemeral=True,
         )
 
@@ -250,14 +249,9 @@ class HomeMenuView(RegistryMenuView):
         self,
         cog: object,
         *,
-        include_social: bool = True,
         include_external_links: bool = True,
     ) -> None:
         super().__init__(cog, "home")
-
-        if include_social:
-            self.add_item(InstagramPromptButton(row=3))
-            self.add_item(ThreadsPromptButton(row=3))
 
         if include_external_links and RULES_URL:
             self.add_item(
