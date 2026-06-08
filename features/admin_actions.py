@@ -5,7 +5,10 @@ import inspect
 import discord
 
 from core.safe_send import send_or_followup
-from features.menu_stats import record_usage_sync
+from features.menu_helpers import can_use_admin
+from features.menu_stats import build_admin_stats_embed, record_usage_sync
+from features.menu_views import AdminToolView
+from features.role_tools import RoleToolsView, build_role_tools_embed
 
 
 async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> None:
@@ -15,6 +18,38 @@ async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True
         await interaction.response.defer(ephemeral=ephemeral, thinking=True)
     except discord.HTTPException:
         pass
+
+
+async def admin_stats_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    await safe_defer(interaction, ephemeral=True)
+    record_usage_sync("admin_stats", interaction.user.id, interaction.guild_id)
+    embed = build_admin_stats_embed(guild_id=interaction.guild_id, days=7, title_scope="本週")
+    await send_or_followup(interaction, embed=embed, view=AdminToolView(menu_cog), ephemeral=True)
+
+
+async def admin_stats_command(interaction: discord.Interaction, *, scope_value: str) -> None:
+    if not can_use_admin(interaction.user):
+        await send_or_followup(
+            interaction,
+            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以查看統計。",
+            ephemeral=True,
+        )
+        return
+
+    record_usage_sync("admin_stats", interaction.user.id, interaction.guild_id)
+
+    if scope_value == "today":
+        days: int | None = 1
+        title_scope = "今日"
+    elif scope_value == "week":
+        days = 7
+        title_scope = "本週"
+    else:
+        days = None
+        title_scope = "全部"
+
+    embed = build_admin_stats_embed(guild_id=interaction.guild_id, days=days, title_scope=title_scope)
+    await send_or_followup(interaction, embed=embed, ephemeral=False)
 
 
 async def admin_reload_from_button(interaction: discord.Interaction) -> None:
@@ -68,6 +103,16 @@ async def admin_reload_from_button(interaction: discord.Interaction) -> None:
             content=f"❌ Reload button 執行失敗：`{type(exc).__name__}`：{exc}",
             ephemeral=True,
         )
+
+
+async def admin_role_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    record_usage_sync("admin_role", interaction.user.id, interaction.guild_id)
+    await send_or_followup(
+        interaction,
+        embed=build_role_tools_embed(interaction.user),
+        view=RoleToolsView(menu_cog),
+        ephemeral=True,
+    )
 
 
 async def admin_ping_from_button(interaction: discord.Interaction) -> None:
