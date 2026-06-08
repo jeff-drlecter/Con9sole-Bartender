@@ -10,6 +10,7 @@ from features.drink_catalog import (
     rarity_color,
     rarity_label,
 )
+from features.drink_constants import COLLECTION_PAGE_LIMIT
 from features.drink_storage import (
     count_given_drinks,
     count_given_unique_drinks,
@@ -27,8 +28,6 @@ from features.drink_storage import (
     top_given_target,
     top_received_actor,
 )
-
-COLLECTION_PAGE_LIMIT = 12
 
 
 def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
