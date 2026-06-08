@@ -8,7 +8,8 @@ import config
 from core.safe_send import send_or_followup
 from features.menu_stats import record_usage_sync
 
-DEFAULT_INVITE_URL = "https://discord.gg/QNbSTTkn83"
+DEFAULT_INVITE_CODE = "QNbSTTkn83"
+DEFAULT_INVITE_URL = f"https://discord.gg/{DEFAULT_INVITE_CODE}"
 FIXED_INVITE_URL = str(
     getattr(
         config,
@@ -65,7 +66,7 @@ class InviteFormatView(discord.ui.View):
             if isinstance(item, discord.ui.Button):
                 item.disabled = True
 
-    async def _finish_with_invite(self, interaction: discord.Interaction, *, as_markdown_link: bool) -> None:
+    async def _finish_with_invite(self, interaction: discord.Interaction, *, as_full_link: bool) -> None:
         if self.done:
             await interaction.response.send_message("呢個邀請請求已經處理咗。", ephemeral=True)
             return
@@ -74,28 +75,28 @@ class InviteFormatView(discord.ui.View):
         self._disable_buttons()
         record_usage_sync("invite", interaction.user.id, interaction.guild_id)
 
-        if as_markdown_link:
+        if as_full_link:
             content = (
                 "🔗 **邀請連結：**\n"
-                f"[加入 Con9sole Community]({FIXED_INVITE_URL})"
+                f"{FIXED_INVITE_URL}"
             )
         else:
             invite_code = _invite_code_from_url(FIXED_INVITE_URL)
             content = (
-                "🔗 **邀請碼：**\n"
+                "#️⃣ **純邀請碼：**\n"
                 f"`{invite_code}`"
             )
 
         await interaction.response.edit_message(content=content, embed=None, view=self)
         self.stop()
 
-    @discord.ui.button(label="超連結", emoji="🔗", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="完整連結", emoji="🔗", style=discord.ButtonStyle.primary)
     async def hyperlink_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._finish_with_invite(interaction, as_markdown_link=True)
+        await self._finish_with_invite(interaction, as_full_link=True)
 
     @discord.ui.button(label="純邀請碼", emoji="#️⃣", style=discord.ButtonStyle.secondary)
     async def code_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self._finish_with_invite(interaction, as_markdown_link=False)
+        await self._finish_with_invite(interaction, as_full_link=False)
 
     @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
