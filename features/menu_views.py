@@ -10,9 +10,8 @@ from core.safe_send import send_or_followup
 from data.menu_registry import MenuItem, get_menu_items
 from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
+from features.social_tools import InstagramPromptButton, ThreadsPromptButton
 
-INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
-THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://threads.net/con9sole")
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
@@ -240,22 +239,8 @@ class HomeMenuView(RegistryMenuView):
     def __init__(self, cog: object) -> None:
         super().__init__(cog, "home")
 
-        self.add_item(
-            discord.ui.Button(
-                label="IG",
-                style=discord.ButtonStyle.link,
-                url=INSTAGRAM_URL,
-                row=3,
-            )
-        )
-        self.add_item(
-            discord.ui.Button(
-                label="Threads",
-                style=discord.ButtonStyle.link,
-                url=THREADS_URL,
-                row=3,
-            )
-        )
+        self.add_item(InstagramPromptButton(row=3))
+        self.add_item(ThreadsPromptButton(row=3))
 
         if RULES_URL:
             self.add_item(
