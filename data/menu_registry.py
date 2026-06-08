@@ -32,7 +32,7 @@ class MenuItem:
 
 # Layer 1：公開 / 快捷吧枱
 # Quick Bar 會出喺 drink / cheers / main menu 下方。
-# 原則：第一格進入主頁，其後係主要即用功能。
+# Layout：row 0 兩個入口、row 1 兩個小隊 call、row 2 四個即用功能。
 QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="home_menu",
@@ -62,7 +62,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         emoji="🎧",
         style="primary",
         layer="quick",
-        row=0,
+        row=1,
         cog="TempVC",
         method="menu_entry",
         description="建立臨時語音房",
@@ -73,7 +73,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         emoji="🎛️",
         style="primary",
         layer="quick",
-        row=0,
+        row=1,
         cog="TempVC",
         method="open_control_panel_from_menu",
         description="管理目前身處的小隊 call",
@@ -84,7 +84,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         emoji="🎉",
         style="success",
         layer="quick",
-        row=1,
+        row=2,
         cog="Cheers",
         method="menu_entry",
         description="打氣時間",
@@ -95,7 +95,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         emoji="🙌",
         style="primary",
         layer="quick",
-        row=1,
+        row=2,
         cog="Cheers",
         method="cheer_for_member_entry",
         description="幫人打氣",
@@ -106,7 +106,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         emoji="🍹",
         style="success",
         layer="quick",
-        row=1,
+        row=2,
         cog="Drink",
         method="menu_entry",
         description="調酒",
@@ -117,7 +117,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
         emoji="🥂",
         style="primary",
         layer="quick",
-        row=1,
+        row=2,
         cog="Drink",
         method="gift_drink_entry",
         description="賜酒",
