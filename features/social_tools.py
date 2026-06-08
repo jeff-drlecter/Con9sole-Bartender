@@ -79,7 +79,13 @@ class SocialPromptButton(discord.ui.Button):
         feature_key: str,
         row: int,
     ) -> None:
-        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.secondary, row=row)
+        super().__init__(
+            label=label,
+            emoji=emoji,
+            style=discord.ButtonStyle.secondary,
+            row=row,
+            custom_id=f"bartender:home:social:{feature_key}",
+        )
         self.platform_label = platform_label
         self.url = url
         self.feature_key = feature_key
