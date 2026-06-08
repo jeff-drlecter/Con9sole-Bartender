@@ -68,7 +68,52 @@ def build_social_confirm_embed(user: discord.abc.User, *, platform_label: str) -
     return embed
 
 
+async def open_social_link_prompt(
+    interaction: discord.Interaction,
+    *,
+    platform_label: str,
+    url: str,
+    feature_key: str,
+) -> None:
+    record_usage_sync(feature_key, interaction.user.id, interaction.guild_id)
+    await send_or_followup(
+        interaction,
+        embed=build_social_confirm_embed(interaction.user, platform_label=platform_label),
+        view=SocialLinkConfirmView(
+            owner_id=interaction.user.id,
+            platform_label=platform_label,
+            url=url,
+            feature_key=feature_key,
+        ),
+        ephemeral=True,
+    )
+
+
+async def open_instagram_from_button(interaction: discord.Interaction) -> None:
+    await open_social_link_prompt(
+        interaction,
+        platform_label="Instagram",
+        url=INSTAGRAM_URL,
+        feature_key="instagram",
+    )
+
+
+async def open_threads_from_button(interaction: discord.Interaction) -> None:
+    await open_social_link_prompt(
+        interaction,
+        platform_label="Threads",
+        url=THREADS_URL,
+        feature_key="threads",
+    )
+
+
 class SocialPromptButton(discord.ui.Button):
+    """Backward-compatible button class.
+
+    Home menu social buttons now live in data.menu_registry and are routed through
+    Menu methods. This class remains available for old imports / fallback code.
+    """
+
     def __init__(
         self,
         *,
@@ -91,17 +136,11 @@ class SocialPromptButton(discord.ui.Button):
         self.feature_key = feature_key
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        record_usage_sync(self.feature_key, interaction.user.id, interaction.guild_id)
-        await send_or_followup(
+        await open_social_link_prompt(
             interaction,
-            embed=build_social_confirm_embed(interaction.user, platform_label=self.platform_label),
-            view=SocialLinkConfirmView(
-                owner_id=interaction.user.id,
-                platform_label=self.platform_label,
-                url=self.url,
-                feature_key=self.feature_key,
-            ),
-            ephemeral=True,
+            platform_label=self.platform_label,
+            url=self.url,
+            feature_key=self.feature_key,
         )
 
 
