@@ -15,6 +15,13 @@ from features.menu_stats import record_usage_sync
 from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
 
 
+def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    text = getattr(exc, "text", None)
+    print(f"[{context}] HTTPException status={status} code={code} text={text!r}")
+
+
 async def open_quick_bar_menu(
     cog: object,
     interaction: discord.Interaction,
@@ -33,12 +40,23 @@ async def open_quick_bar_menu(
 
 async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
     record_usage_sync("home_menu", interaction.user.id, interaction.guild_id)
+    try:
+        await send_or_followup(
+            interaction,
+            embed=build_home_menu_embed(interaction.user),
+            view=HomeMenuView(cog),
+            ephemeral=True,
+            file=build_menu_file(),
+        )
+        return
+    except discord.HTTPException as exc:
+        _log_http_exception("slash home_menu full view", exc)
+
     await send_or_followup(
         interaction,
-        embed=build_home_menu_embed(interaction.user),
-        view=HomeMenuView(cog),
+        embed=build_home_menu_embed(interaction.user, include_thumbnail=False),
+        view=HomeMenuView(cog, include_social=False, include_external_links=False),
         ephemeral=True,
-        file=build_menu_file(),
     )
 
 
