@@ -3,13 +3,11 @@ from __future__ import annotations
 import atexit
 import json
 import time
-from pathlib import Path
-from typing import Any
 
 from data.drink_data import DRINK_COOLDOWN_SECONDS
 from features.drink_storage import DATA_DIR
 
-DRINK_STATE_PATH = Path(DATA_DIR / "drink_state.json")
+DRINK_STATE_PATH = DATA_DIR / "drink_state.json"
 
 
 def _default_drink_state() -> dict[str, object]:
