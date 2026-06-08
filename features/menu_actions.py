@@ -13,6 +13,10 @@ from features.menu_embeds import (
 from features.menu_helpers import build_menu_file, can_use_admin, get_retry_after, touch_cooldown
 from features.menu_stats import record_usage_sync
 from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
+from features.social_tools import (
+    open_instagram_from_button as run_open_instagram_from_button,
+    open_threads_from_button as run_open_threads_from_button,
+)
 
 
 def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
@@ -55,7 +59,7 @@ async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
     await send_or_followup(
         interaction,
         embed=build_home_menu_embed(interaction.user, include_thumbnail=False),
-        view=HomeMenuView(cog, include_social=False, include_external_links=False),
+        view=HomeMenuView(cog, include_external_links=False),
         ephemeral=True,
     )
 
@@ -83,6 +87,14 @@ async def open_admin_tool_menu(cog: object, interaction: discord.Interaction) ->
 
 async def open_invite_menu(interaction: discord.Interaction) -> None:
     await run_create_invite_link_from_button(interaction, can_use_admin_func=can_use_admin)
+
+
+async def open_instagram_menu(interaction: discord.Interaction) -> None:
+    await run_open_instagram_from_button(interaction)
+
+
+async def open_threads_menu(interaction: discord.Interaction) -> None:
+    await run_open_threads_from_button(interaction)
 
 
 async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
