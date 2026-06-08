@@ -1,0 +1,4 @@
+from __future__ import annotations
+
+GIFT_DRINK_TARGET_TIMEOUT_SECONDS = 60.0
+COLLECTION_PAGE_LIMIT = 12
