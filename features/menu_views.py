@@ -154,8 +154,7 @@ class RegistryMenuView(BaseMenuView):
         # from old public button interactions. This direct path sends a clean ephemeral menu.
         await self._record(interaction, "home_menu")
 
-        embed = build_home_menu_embed(interaction.user)
-        embed.set_thumbnail(url=None)
+        embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
 
         await send_or_followup(
             interaction,
@@ -265,43 +264,11 @@ class HomeMenuView(RegistryMenuView):
             )
 
 
+class HelpMenuView(RegistryMenuView):
+    def __init__(self, cog: object) -> None:
+        super().__init__(cog, "quick")
+
+
 class AdminToolView(RegistryMenuView):
     def __init__(self, cog: object) -> None:
         super().__init__(cog, "admin")
-
-
-class HelpMenuView(BaseMenuView):
-    def __init__(self, cog: object) -> None:
-        super().__init__(cog, timeout=None)
-
-    @discord.ui.button(
-        label="Menu",
-        emoji="⬅️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="bartender:help:home",
-        row=0,
-    )
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await RegistryMenuView(self.cog, "quick")._send_home_menu_direct(interaction)
-
-
-# Backward-compatible aliases used by other cogs.
-MainMenuView = QuickBarView
-CommunityHubView = HomeMenuView
-MenuEntryView = QuickBarView
-
-
-def build_menu_entry_view(interaction: discord.Interaction) -> discord.ui.View | None:
-    menu_cog = interaction.client.get_cog("Menu")
-    if menu_cog is None:
-        return None
-
-    return QuickBarView(menu_cog)
-
-
-def build_full_menu_view(interaction: discord.Interaction) -> discord.ui.View | None:
-    menu_cog = interaction.client.get_cog("Menu")
-    if menu_cog is None:
-        return None
-
-    return QuickBarView(menu_cog)
