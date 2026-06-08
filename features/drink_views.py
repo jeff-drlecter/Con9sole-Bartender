@@ -6,7 +6,6 @@ import discord
 
 from data.drink_data import RARITY_STYLE
 from features.drink_embeds import (
-    COLLECTION_PAGE_LIMIT,
     build_drink_collection_embed,
     build_drink_collection_rarity_embed,
     build_drink_collection_recent_embed,
