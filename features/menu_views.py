@@ -150,10 +150,8 @@ class RegistryMenuView(BaseMenuView):
 
     async def _send_home_menu_direct(self, interaction: discord.Interaction) -> None:
         # Avoid routing through cogs.menu.open_home_menu_from_button here.
-        # Some deployed versions raise HTTPException when trying to send file attachments
-        # from old public button interactions. This direct path sends a clean ephemeral menu.
+        # This direct path sends a clean ephemeral menu without attachment thumbnail.
         await self._record(interaction, "home_menu")
-
         embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
 
         await send_or_followup(
@@ -272,3 +270,27 @@ class HelpMenuView(RegistryMenuView):
 class AdminToolView(RegistryMenuView):
     def __init__(self, cog: object) -> None:
         super().__init__(cog, "admin")
+
+
+# Backwards-compatible exports for older cogs/features that still import these names.
+MainMenuView = HomeMenuView
+
+
+def build_full_menu_view(source: discord.Interaction | object) -> QuickBarView | None:
+    """Return the Quick Bar view used under drink / cheers result embeds.
+
+    Older modules pass a Discord interaction into this helper.  During the menu
+    refactor the view classes were renamed, so this compatibility helper keeps
+    cheers/drink/team imports stable while still returning the current QuickBarView.
+    """
+    menu_cog = None
+
+    if isinstance(source, discord.Interaction):
+        menu_cog = source.client.get_cog("Menu")
+    else:
+        menu_cog = source
+
+    if menu_cog is None:
+        return None
+
+    return QuickBarView(menu_cog)
