@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import random
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Deque, Dict, List
+from typing import Deque, Dict
 
 import discord
 from discord import app_commands
@@ -15,15 +13,17 @@ from discord.ext import commands
 from config import GUILD_ID
 from core.safe_send import send_or_followup
 from data.drink_data import (
-    ALL_DRINKS,
     BARTENDER_ATTACHMENT_NAME,
     DrinkEntry,
     ICON_MAP,
     RARITY_STYLE,
     RECENT_HISTORY_LIMIT,
-    SEASONAL_DRINKS,
 )
-from features.drink_catalog import build_tasting_note
+from features.drink_catalog import (
+    build_tasting_note,
+    pick_rarity,
+    pick_weighted_drink,
+)
 from features.drink_constants import GIFT_DRINK_TARGET_TIMEOUT_SECONDS
 from features.drink_embeds import (
     build_drink_collection_embed,
@@ -71,14 +71,6 @@ def cleanup_pending_gift_requests() -> None:
         pending = PENDING_GIFT_DRINK_REQUESTS.pop(user_id, None)
         if pending is not None and not pending.cancel_event.is_set():
             pending.cancel_event.set()
-
-
-def current_seasonal_pool() -> List[DrinkEntry]:
-    month = datetime.now().month
-    for months, pool in SEASONAL_DRINKS.items():
-        if month in months:
-            return pool
-    return []
 
 
 class Drink(commands.Cog):
@@ -136,25 +128,10 @@ class Drink(commands.Cog):
         touch_gift_drink_cooldown(interaction.user.id)
         return True
 
-    def _pick_rarity(self) -> str:
-        labels = list(RARITY_STYLE.keys())
-        weights = [RARITY_STYLE[label]["weight"] for label in labels]
-        return random.choices(labels, weights=weights, k=1)[0]
-
-    def _build_pool_for_rarity(self, rarity: str) -> List[DrinkEntry]:
-        pool = [drink for drink in ALL_DRINKS if drink.rarity == rarity]
-        seasonal = [drink for drink in current_seasonal_pool() if drink.rarity == rarity]
-        return pool + seasonal
-
     def _pick_unique_drink(self, user_id: int, rarity: str) -> DrinkEntry:
-        pool = self._build_pool_for_rarity(rarity)
-        if not pool:
-            pool = ALL_DRINKS + current_seasonal_pool()
-
         recent = set(self.user_recent_draws[user_id])
-        weights = [1 if drink.eng in recent else 4 for drink in pool]
+        chosen = pick_weighted_drink(rarity=rarity, recent_drink_names=recent)
 
-        chosen = random.choices(pool, weights=weights, k=1)[0]
         self.user_recent_draws[user_id].append(chosen.eng)
         save_recent_draws(user_id, list(self.user_recent_draws[user_id]))
 
@@ -302,7 +279,7 @@ class Drink(commands.Cog):
 
         await self._record_usage(interaction, feature=usage_feature)
 
-        rarity = self._pick_rarity()
+        rarity = pick_rarity()
         drink = self._pick_unique_drink(interaction.user.id, rarity)
 
         record_drink_event(
