@@ -16,14 +16,11 @@ from features.menu_embeds import (
     build_admin_tool_embed,
     build_help_embed,
     build_home_menu_embed,
-    build_main_menu_embed,
     build_quick_bar_embed,
 )
 from features.menu_helpers import (
-    MENU_COLOR,
     build_menu_file,
     can_use_admin,
-    can_use_admin_stats,
     claim_mention_message,
     get_retry_after,
     safe_defer,
@@ -32,21 +29,14 @@ from features.menu_helpers import (
 from features.menu_stats import build_admin_stats_embed, init_stats_db, record_usage_sync
 from features.menu_views import (
     AdminToolView,
-    CommunityHubView,
     HelpMenuView,
     HomeMenuView,
-    MainMenuView,
-    MenuEntryView,
     QuickBarView,
-    build_full_menu_view,
-    build_menu_entry_view,
 )
-from features.role_tools import (
-    RoleActionState,
-    RoleToolsView,
-    build_role_tools_embed,
-    get_member_from_state,
-    get_role_from_state,
+from features.role_tools import RoleActionState, RoleToolsView, build_role_tools_embed
+from features.role_tools_actions import (
+    execute_role_change_from_select as run_execute_role_change_from_select,
+    execute_role_list_for_member as run_execute_role_list_for_member,
 )
 
 
@@ -92,62 +82,7 @@ class Menu(commands.Cog):
         record_usage_sync(feature, user_id, guild_id)
 
     async def execute_role_change_from_select(self, interaction: discord.Interaction, *, state: RoleActionState) -> None:
-        if not interaction.guild:
-            await interaction.response.edit_message(content="⚠️ 呢個工具只可以喺伺服器內使用。", embed=None, view=None)
-            return
-        if not can_use_admin(interaction.user):
-            await interaction.response.edit_message(content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", embed=None, view=None)
-            return
-
-        role_cog = interaction.client.get_cog("RoleManager")
-        if role_cog is None or not hasattr(role_cog, "_apply_role_change"):
-            await interaction.response.edit_message(content="❌ RoleManager cog 未載入，請先 `/reload role`。", embed=None, view=None)
-            return
-
-        apply_role = get_role_from_state(interaction.guild, state.apply_role_id)
-        if apply_role is None:
-            await interaction.response.edit_message(content="❌ 要處理嘅角色已不存在。", embed=None, view=None)
-            return
-
-        target_member: discord.Member | None = None
-        target_role: discord.Role | None = None
-
-        if state.target_kind == "member":
-            target_member = get_member_from_state(interaction.guild, state.target_member_id)
-            if target_member is None and state.target_member_id is not None:
-                try:
-                    target_member = await interaction.guild.fetch_member(state.target_member_id)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    target_member = None
-            if target_member is None:
-                await interaction.response.edit_message(content="❌ 目標成員已不存在，或 Bot 無法讀取該成員。", embed=None, view=None)
-                return
-        else:
-            target_role = get_role_from_state(interaction.guild, state.target_role_id)
-            if target_role is None:
-                await interaction.response.edit_message(content="❌ 目標角色群組已不存在。", embed=None, view=None)
-                return
-
-        feature = "admin_role_grant" if state.mode == "add" else "admin_role_revoke"
-        record_usage_sync(feature, interaction.user.id, interaction.guild_id)
-
-        try:
-            await role_cog._apply_role_change(  # type: ignore[attr-defined]
-                interaction,
-                role_id=str(apply_role.id),
-                target_member=target_member,
-                target_role=target_role,
-                include_bots=state.include_bots,
-                mode=state.mode,
-            )
-        except discord.InteractionResponded:
-            return
-        except Exception as exc:
-            await send_or_followup(
-                interaction,
-                content=f"⚠️ Role Tools 執行失敗：`{type(exc).__name__}`：{exc}",
-                ephemeral=True,
-            )
+        await run_execute_role_change_from_select(interaction, state=state)
 
     async def execute_role_list_for_member(
         self,
@@ -156,59 +91,11 @@ class Menu(commands.Cog):
         member: discord.Member,
         edit_existing: bool = True,
     ) -> None:
-        if not interaction.guild:
-            if edit_existing:
-                await interaction.response.edit_message(content="⚠️ 呢個工具只可以喺伺服器內使用。", embed=None, view=None)
-            else:
-                await interaction.response.send_message("⚠️ 呢個工具只可以喺伺服器內使用。", ephemeral=True)
-            return
-        if not can_use_admin(interaction.user):
-            if edit_existing:
-                await interaction.response.edit_message(content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", embed=None, view=None)
-            else:
-                await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
-            return
-
-        roles = [role for role in member.roles if not role.is_default()]
-        roles.sort(key=lambda role: role.position, reverse=True)
-        record_usage_sync("admin_role_list", interaction.user.id, interaction.guild_id)
-
-        if not roles:
-            content = f"ℹ️ {member.mention} 沒有任何自訂角色。"
-            if edit_existing:
-                await interaction.response.edit_message(content=content, embed=None, view=None)
-            else:
-                await interaction.response.send_message(content, ephemeral=True)
-            return
-
-        lines = [f"{role.mention} (ID: `{role.id}`)" for role in roles]
-        chunks: list[str] = []
-        current: list[str] = []
-        current_len = 0
-        for line in lines:
-            if current_len + len(line) + 1 > 3800:
-                chunks.append("\n".join(current))
-                current = []
-                current_len = 0
-            current.append(line)
-            current_len += len(line) + 1
-        if current:
-            chunks.append("\n".join(current))
-
-        embed = discord.Embed(
-            title=f"📋 {member.display_name} 的角色（高→低）",
-            description=chunks[0],
-            color=MENU_COLOR,
+        await run_execute_role_list_for_member(
+            interaction,
+            member=member,
+            edit_existing=edit_existing,
         )
-        embed.set_footer(text=f"共有 {len(roles)} 個角色")
-
-        if edit_existing:
-            await interaction.response.edit_message(content=None, embed=embed, view=None)
-        else:
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        for chunk in chunks[1:]:
-            await interaction.followup.send(chunk, ephemeral=True)
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
