@@ -362,6 +362,12 @@ class Drink(commands.Cog):
         view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=interaction.user)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
+    async def leaderboard_entry(self, interaction: discord.Interaction) -> None:
+        await self._record_usage(interaction, feature="drink_leaderboard")
+        embed = build_drink_leaderboard_embed(interaction.guild, requested_by=interaction.user)
+        view = DrinkLeaderboardView(guild=interaction.guild, requested_by=interaction.user)
+        await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
     @app_commands.describe(to="收酒嘅人；留空即係自己叫酒")
