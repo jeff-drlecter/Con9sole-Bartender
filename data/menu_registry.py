@@ -130,7 +130,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 # row 0: core community tools
 # row 1: cheers / social-emotion / confession
 # row 2: bartender drink series
-# row 3: invite + IG + Threads
+# row 3: daily bar + invite + IG + Threads
 # row 4: help + admin
 HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
@@ -253,6 +253,17 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         cog="Drink",
         method="leaderboard_entry",
         description="查看酒保排行榜",
+    ),
+    MenuItem(
+        id="daily_bar",
+        label="今日任務",
+        emoji="📅",
+        style="secondary",
+        layer="home",
+        row=3,
+        cog="DailyBar",
+        method="menu_entry",
+        description="查看今日吧枱任務",
     ),
     MenuItem(
         id="invite",
