@@ -19,6 +19,7 @@ from data.cheers_quotes import (
     CHEERS_QUOTES,
     CheerQuote,
 )
+from features.daily_bar import complete_daily_bar_task
 from features.menu_helpers import build_menu_file
 from features.menu_views import build_full_menu_view
 
@@ -126,13 +127,20 @@ class Cheers(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    async def _record_usage(self, interaction: discord.Interaction) -> None:
+    async def _record_usage(self, interaction: discord.Interaction, feature: str) -> None:
         menu_cog = self.bot.get_cog("Menu")
         if menu_cog and hasattr(menu_cog, "record_usage"):
             try:
-                await menu_cog.record_usage("cheers", interaction.user.id, interaction.guild_id)
+                await menu_cog.record_usage(feature, interaction.user.id, interaction.guild_id)
             except Exception:
                 pass
+
+    def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
+        complete_daily_bar_task(
+            guild_id=interaction.guild_id,
+            user_id=interaction.user.id,
+            feature_key=feature,
+        )
 
     async def _check_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
         # Admin / helpers 無視打氣 cooldown
@@ -149,7 +157,6 @@ class Cheers(commands.Cog):
             return False
 
         return True
-
 
     async def _enforce_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
         ok = await self._check_cheers_cooldown(interaction)
@@ -185,9 +192,6 @@ class Cheers(commands.Cog):
             )
             return None
 
-        # Opening the target prompt must NOT consume cooldown.
-        # Cancel / timeout / invalid target must NOT consume cooldown.
-        # Cooldown is consumed only when a valid target is confirmed and the cheer is actually sent.
         ok = await self._check_cheers_cooldown(interaction)
         if not ok:
             return None
@@ -289,7 +293,9 @@ class Cheers(commands.Cog):
             if not ok:
                 return
 
-        await self._record_usage(interaction)
+        usage_feature = "cheers_target" if to and to.id != interaction.user.id else "cheers"
+        await self._record_usage(interaction, usage_feature)
+        self._complete_daily_bar(interaction, usage_feature)
 
         quote = pick_quote()
         header = self._build_header_line(interaction, to)
