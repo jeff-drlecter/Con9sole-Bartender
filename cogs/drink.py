@@ -30,6 +30,10 @@ from features.drink_embeds import (
     build_drink_stats_embed,
     build_gift_prompt_embed,
 )
+from features.drink_leaderboard import (
+    DrinkLeaderboardView,
+    build_drink_leaderboard_embed,
+)
 from features.drink_result import build_bartender_result_payload
 from features.drink_state import (
     get_drink_retry_after,
@@ -394,6 +398,14 @@ class Drink(commands.Cog):
         embed = build_drink_collection_embed(interaction.guild, target)
         view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=target)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    @app_commands.command(name="drink_leaderboard", description="查看酒保排行榜")
+    async def drink_leaderboard(self, interaction: discord.Interaction) -> None:
+        await self._record_usage(interaction, feature="drink_leaderboard")
+        embed = build_drink_leaderboard_embed(interaction.guild, requested_by=interaction.user)
+        view = DrinkLeaderboardView(guild=interaction.guild, requested_by=interaction.user)
+        await send_or_followup(interaction, embed=embed, view=view, ephemeral=False)
 
 
 async def setup(bot: commands.Bot) -> None:
