@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Awaitable, Callable
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -74,19 +72,19 @@ class DailyBar(commands.Cog):
             except Exception:
                 pass
 
-    async def _send_daily_bar(self, interaction: discord.Interaction, *, ephemeral: bool) -> None:
+    async def _send_daily_bar(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction)
         embed = build_daily_bar_embed(interaction.guild_id, user=interaction.user)
         view = DailyBarView(guild_id=interaction.guild_id, user_id=interaction.user.id)
-        await send_or_followup(interaction, embed=embed, view=view, ephemeral=ephemeral)
+        await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
-        await self._send_daily_bar(interaction, ephemeral=True)
+        await self._send_daily_bar(interaction)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="daily_bar", description="View today's bar task")
     async def daily_bar(self, interaction: discord.Interaction) -> None:
-        await self._send_daily_bar(interaction, ephemeral=False)
+        await self._send_daily_bar(interaction)
 
 
 async def setup(bot: commands.Bot) -> None:
