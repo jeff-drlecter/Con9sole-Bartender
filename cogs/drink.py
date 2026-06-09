@@ -101,12 +101,22 @@ class Drink(commands.Cog):
             except Exception:
                 pass
 
-    def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
-        complete_daily_bar_task(
+    async def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
+        completed = complete_daily_bar_task(
             guild_id=interaction.guild_id,
             user_id=interaction.user.id,
             feature_key=feature,
         )
+        if not completed:
+            return
+
+        try:
+            await interaction.followup.send(
+                "📅 每日任務已完成！多謝你參與。",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
 
     async def _check_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         retry_after = get_drink_retry_after(interaction.user.id)
@@ -297,7 +307,6 @@ class Drink(commands.Cog):
             target_id=to.id if is_gift and to is not None else interaction.user.id,
             drink=drink,
         )
-        self._complete_daily_bar(interaction, usage_feature)
 
         rarity_meta = RARITY_STYLE[drink.rarity]
         header = self._build_header_line(interaction, to, drink)
@@ -334,6 +343,8 @@ class Drink(commands.Cog):
         else:
             await interaction.response.send_message(**send_kwargs)
 
+        await self._complete_daily_bar(interaction, usage_feature)
+
     async def menu_entry(self, interaction: discord.Interaction) -> None:
         await self.do_drink(interaction, enforce_cooldown=True)
 
@@ -357,10 +368,10 @@ class Drink(commands.Cog):
 
     async def collection_entry(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction, feature="drink_collection")
-        self._complete_daily_bar(interaction, "drink_collection")
         embed = build_drink_collection_embed(interaction.guild, interaction.user)
         view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=interaction.user)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+        await self._complete_daily_bar(interaction, "drink_collection")
 
     async def leaderboard_entry(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction, feature="drink_leaderboard")
@@ -401,11 +412,11 @@ class Drink(commands.Cog):
     async def drink_collection(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
         target = user or interaction.user
         await self._record_usage(interaction, feature="drink_collection")
-        if target.id == interaction.user.id:
-            self._complete_daily_bar(interaction, "drink_collection")
         embed = build_drink_collection_embed(interaction.guild, target)
         view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=target)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+        if target.id == interaction.user.id:
+            await self._complete_daily_bar(interaction, "drink_collection")
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink_leaderboard", description="查看酒保排行榜")
