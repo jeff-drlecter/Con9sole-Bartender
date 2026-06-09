@@ -35,21 +35,21 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
     ),
     DailyBarTask(
         emoji="🎉",
-        title="打一口氣",
+        title="打一次氣",
         description="喺吧枱送出一句打氣說話。",
         method="喺 Quick Bar 撳 🎉，或者用打氣功能。",
-        note="適合每日第一個暖場互動。",
+        note="每日一句，輕輕鬆鬆暖下場。",
     ),
     DailyBarTask(
         emoji="🙌",
         title="幫一位成員打氣",
         description="tag 一位成員，送一句打氣畀對方。",
         method="喺 Quick Bar 撳 🙌，再跟提示 tag 成員。",
-        note="今日嘅吧枱氣氛，由你開局。",
+        note="見到邊個需要加油，就順手撐一撐佢。",
     ),
     DailyBarTask(
         emoji="🍾",
-        title="翻開酒單收藏",
+        title="打開酒單收藏",
         description="睇下你最近解鎖咗咩酒款。",
         method="用 `/drink_collection`，或者喺主目錄撳「酒單收藏」。",
         note="收藏榜同酒保紀錄會隨住叫酒慢慢豐富。",
@@ -83,7 +83,7 @@ def build_daily_bar_embed(
         title="📅 今日吧枱任務",
         description=(
             f"歡迎回來，{user.mention}。\n\n"
-            "今日吧枱已經開局。\n"
+            "今日有個細任務畀你。\n"
             "任務每日刷新，同一日全 server 會見到同一個任務。"
         ),
         color=DAILY_BAR_COLOR,
