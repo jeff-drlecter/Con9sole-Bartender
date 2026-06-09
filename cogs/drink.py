@@ -19,6 +19,7 @@ from data.drink_data import (
     RARITY_STYLE,
     RECENT_HISTORY_LIMIT,
 )
+from features.daily_bar import complete_daily_bar_task
 from features.drink_catalog import (
     build_tasting_note,
     pick_rarity,
@@ -100,6 +101,13 @@ class Drink(commands.Cog):
             except Exception:
                 pass
 
+    def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
+        complete_daily_bar_task(
+            guild_id=interaction.guild_id,
+            user_id=interaction.user.id,
+            feature_key=feature,
+        )
+
     async def _check_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         retry_after = get_drink_retry_after(interaction.user.id)
         if retry_after > 0:
@@ -171,10 +179,6 @@ class Drink(commands.Cog):
             )
             return None
 
-        # Opening the gift prompt must NOT consume cooldown.
-        # Cancel / timeout / invalid target must NOT consume cooldown.
-        # Gift cooldown is separate from self-drink cooldown.
-        # Cooldown is consumed only when a valid target is confirmed and the drink is actually sent.
         ok = await self._check_gift_drink_cooldown(interaction)
         if not ok:
             return None
@@ -293,6 +297,7 @@ class Drink(commands.Cog):
             target_id=to.id if is_gift and to is not None else interaction.user.id,
             drink=drink,
         )
+        self._complete_daily_bar(interaction, usage_feature)
 
         rarity_meta = RARITY_STYLE[drink.rarity]
         header = self._build_header_line(interaction, to, drink)
@@ -333,12 +338,6 @@ class Drink(commands.Cog):
         await self.do_drink(interaction, enforce_cooldown=True)
 
     async def gift_drink_entry(self, interaction: discord.Interaction) -> None:
-        # Menu gift flow:
-        # 1. Open prompt without consuming cooldown.
-        # 2. Cancel / timeout / invalid tag does not consume cooldown.
-        # 3. Gift cooldown is separate from self-drink cooldown.
-        # 4. A valid target consumes gift cooldown only.
-        # 5. do_drink(... enforce_cooldown=False) prevents self-drink cooldown from blocking gifts.
         target = await self._wait_for_gift_target(interaction)
         if target is None:
             return
@@ -358,6 +357,7 @@ class Drink(commands.Cog):
 
     async def collection_entry(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction, feature="drink_collection")
+        self._complete_daily_bar(interaction, "drink_collection")
         embed = build_drink_collection_embed(interaction.guild, interaction.user)
         view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=interaction.user)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
@@ -401,6 +401,8 @@ class Drink(commands.Cog):
     async def drink_collection(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
         target = user or interaction.user
         await self._record_usage(interaction, feature="drink_collection")
+        if target.id == interaction.user.id:
+            self._complete_daily_bar(interaction, "drink_collection")
         embed = build_drink_collection_embed(interaction.guild, target)
         view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=target)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
