@@ -65,7 +65,6 @@ def pick_quote() -> CheerQuote:
 
 
 def build_result_payload(interaction: discord.Interaction, result_embed: discord.Embed) -> dict[str, object]:
-    """Compact result embed + bartender thumbnail + Quick Bar buttons."""
     payload: dict[str, object] = {"embed": result_embed}
 
     menu_view = build_full_menu_view(interaction)
@@ -135,15 +134,24 @@ class Cheers(commands.Cog):
             except Exception:
                 pass
 
-    def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
-        complete_daily_bar_task(
+    async def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
+        completed = complete_daily_bar_task(
             guild_id=interaction.guild_id,
             user_id=interaction.user.id,
             feature_key=feature,
         )
+        if not completed:
+            return
+
+        try:
+            await interaction.followup.send(
+                "📅 每日任務已完成！多謝你參與。",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
 
     async def _check_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
-        # Admin / helpers 無視打氣 cooldown
         if is_admin_or_helper(interaction.user):
             return True
 
@@ -295,7 +303,6 @@ class Cheers(commands.Cog):
 
         usage_feature = "cheers_target" if to and to.id != interaction.user.id else "cheers"
         await self._record_usage(interaction, usage_feature)
-        self._complete_daily_bar(interaction, usage_feature)
 
         quote = pick_quote()
         header = self._build_header_line(interaction, to)
@@ -325,6 +332,8 @@ class Cheers(commands.Cog):
             await interaction.followup.send(**send_kwargs)
         else:
             await interaction.response.send_message(**send_kwargs)
+
+        await self._complete_daily_bar(interaction, usage_feature)
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
         await self.do_cheers(interaction, enforce_cooldown=True)
