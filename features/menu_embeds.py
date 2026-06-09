@@ -41,26 +41,24 @@ def build_home_menu_embed(user: discord.abc.User, *, include_thumbnail: bool = T
         title="🍸 Con9sole Bartender",
         description=(
             f"歡迎回來，{user.mention}。\n\n"
-            "**你想做啲咩？**"
+            "完整餐牌已打開。\n"
+            "**你想由邊度開始？**"
         ),
         color=MENU_COLOR,
     )
     embed.add_field(
-        name="🥃 今日吧枱",
-        value=(
-            "酒單已備好，小隊頻道亦開住燈。\n"
-            "想飲、想組隊、想講低一句，都可以直接落單。"
-        ),
+        name="🥃 吧枱服務",
+        value="組隊、開 call、打氣、調酒、匿名投稿，都可以喺下面落單。",
         inline=False,
     )
     embed.add_field(
-        name="📖 第一次嚟？",
+        name="📖 唔肯定撳邊個？",
         value="撳「幫助」會見到完整用法。",
         inline=False,
     )
     if include_thumbnail:
         apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜你揀，我跟。")
+    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜慢慢揀，我喺度。")
     return embed
 
 
