@@ -244,6 +244,17 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         description="查看酒款收藏進度",
     ),
     MenuItem(
+        id="drink_leaderboard",
+        label="排行榜",
+        emoji="🏆",
+        style="secondary",
+        layer="home",
+        row=2,
+        cog="Drink",
+        method="leaderboard_entry",
+        description="查看酒保排行榜",
+    ),
+    MenuItem(
         id="invite",
         label="邀請",
         emoji="🔗",
