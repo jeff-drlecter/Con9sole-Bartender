@@ -32,6 +32,7 @@ COG_METHOD_FALLBACKS: dict[str, list[str]] = {
     "drink_gift": ["gift_drink_entry"],
     "drink_stats": ["stats_entry"],
     "drink_collection": ["collection_entry"],
+    "drink_leaderboard": ["leaderboard_entry"],
     "confession": ["menu_entry"],
 }
 
@@ -49,6 +50,9 @@ NO_COOLDOWN_ITEM_IDS = {
     "invite",
     "instagram",
     "threads",
+    "drink_stats",
+    "drink_collection",
+    "drink_leaderboard",
 }
 
 LABEL_OVERRIDES: dict[str, str] = {
