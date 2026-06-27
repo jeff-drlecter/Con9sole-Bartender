@@ -176,7 +176,7 @@ async def add_game_version(
     )
 
     try:
-        await new_forum.edit(position=source_forum.position + 1)
+        await new_forum.edit(position=source_forum.position)
     except Exception:
         pass
 
