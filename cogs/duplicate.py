@@ -58,7 +58,6 @@ def _build_text_kwargs(src: discord.TextChannel) -> Dict[str, Any]:
     if slowmode is not None:
         kwargs["rate_limit_per_user"] = slowmode
 
-    # default_auto_archive_duration 可能視版本而定
     da = _safe_get(src, "default_auto_archive_duration")
     if da is not None:
         kwargs["default_auto_archive_duration"] = da
@@ -80,7 +79,6 @@ def _build_voice_kwargs(src: discord.VoiceChannel) -> Dict[str, Any]:
     if rtc_region is not None:
         kwargs["rtc_region"] = rtc_region
 
-    # video_quality_mode 可能視版本而定
     vqm = _safe_get(src, "video_quality_mode")
     if vqm is not None:
         kwargs["video_quality_mode"] = vqm
@@ -116,7 +114,6 @@ def _build_forum_kwargs(src: discord.ForumChannel) -> Dict[str, Any]:
     if slowmode is not None:
         kwargs["rate_limit_per_user"] = slowmode
 
-    # Forum defaults（視版本/權限而定）
     default_sort_order = _safe_get(src, "default_sort_order")
     if default_sort_order is not None:
         kwargs["default_sort_order"] = default_sort_order
@@ -125,7 +122,6 @@ def _build_forum_kwargs(src: discord.ForumChannel) -> Dict[str, Any]:
     if default_layout is not None:
         kwargs["default_layout"] = default_layout
 
-    # default_reaction_emoji 是 PartialEmoji / str / None
     dre = _safe_get(src, "default_reaction_emoji")
     if dre is not None:
         kwargs["default_reaction_emoji"] = dre
@@ -141,13 +137,104 @@ def _build_forum_kwargs(src: discord.ForumChannel) -> Dict[str, Any]:
     return kwargs
 
 
+def _clone_forum_overwrites(
+    source_forum: discord.ForumChannel,
+    *,
+    source_role: discord.Role,
+    new_role: discord.Role,
+) -> dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
+    """Clone source forum overwrites and replace source_role with new_role."""
+    overwrites: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {}
+
+    for target, overwrite in source_forum.overwrites.items():
+        if isinstance(target, discord.Role) and target.id == source_role.id:
+            continue
+        overwrites[target] = overwrite
+
+    source_role_overwrite = source_forum.overwrites_for(source_role)
+    if source_role_overwrite.is_empty():
+        raise RuntimeError(
+            f"來源角色 `{source_role.name}` 喺來源 Forum 冇獨立權限設定，無法安全映射到新角色。"
+        )
+
+    overwrites[new_role] = source_role_overwrite
+    return overwrites
+
+
+async def duplicate_forum_in_same_category(
+    guild: discord.Guild,
+    *,
+    source_forum: discord.ForumChannel,
+    source_role: discord.Role,
+    new_forum_name: str,
+    new_role_name: str,
+) -> str:
+    if source_forum.guild.id != guild.id:
+        raise RuntimeError("來源 Forum 唔屬於目前伺服器。")
+
+    if source_role.guild.id != guild.id:
+        raise RuntimeError("來源角色唔屬於目前伺服器。")
+
+    if source_forum.category is None:
+        raise RuntimeError("來源 Forum 冇所屬 Category，無法建立同 Category Forum。")
+
+    forum_name = new_forum_name.strip()
+    role_name = new_role_name.strip()
+    if not forum_name:
+        raise RuntimeError("新 Forum 名稱唔可以留空。")
+    if not role_name:
+        raise RuntimeError("新角色名稱唔可以留空。")
+
+    existing_forum = discord.utils.get(guild.forums, name=forum_name)
+    if existing_forum is not None:
+        raise RuntimeError(f"已經有一個 Forum 叫 `{forum_name}`。")
+
+    new_role = discord.utils.get(guild.roles, name=role_name)
+    if new_role is None:
+        new_role = await guild.create_role(
+            name=role_name,
+            hoist=False,
+            mentionable=True,
+            reason=f"Create role for duplicated forum from {source_forum.name}",
+        )
+
+    overwrites = _clone_forum_overwrites(
+        source_forum,
+        source_role=source_role,
+        new_role=new_role,
+    )
+
+    kwargs = _build_forum_kwargs(source_forum)
+    new_forum = await guild.create_forum(
+        forum_name,
+        category=source_forum.category,
+        overwrites=overwrites,
+        reason=f"Duplicate forum settings from {source_forum.name}",
+        **kwargs,
+    )
+
+    try:
+        await new_forum.edit(position=source_forum.position + 1)
+    except Exception:
+        pass
+
+    try:
+        await copy_forum_tags(source_forum, new_forum)
+    except Exception as exc:
+        print(f"⚠️ copy_forum_tags 失敗：{exc}")
+
+    return (
+        f"已喺 `#{source_forum.category.name}` 建立 `#{new_forum.name}`；"
+        f"新角色：`{new_role.name}`；權限由 `#{source_forum.name}` 複製，"
+        f"並將 `{source_role.name}` 映射成 `{new_role.name}`。"
+    )
+
+
 # ---------- 分區複製（完全跟 template 結構；權限改為 game role + admin 私密） ----------
 
 async def duplicate_section(client: discord.Client, guild: discord.Guild, game_name: str) -> str:
-    # 1) 取得 template category（最新一刻）
     template_cat = await _get_template_category(client, guild)
 
-    # 2) 讀取 template 子頻道（最新一刻）
     all_chans = await guild.fetch_channels()
     template_children = [
         c for c in all_chans
@@ -160,7 +247,6 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
         f"▶️ 模板分區：#{template_cat.name}（{template_cat.id}） 子頻道：{len(template_children)}"
     )
 
-    # 3) 建立（或重用）遊戲 role
     role_name = config.ROLE_NAME_PATTERN.format(game=game_name)
     new_role = discord.utils.get(guild.roles, name=role_name)
     if not new_role:
@@ -174,12 +260,9 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
 
     admins = _admin_roles(guild)
 
-    # 4) 建立新 category（命名沿用既有 pattern）
     cat_name = config.CATEGORY_NAME_PATTERN.format(game=game_name)
     new_cat = await guild.create_category(name=cat_name, reason="Create new game section")
 
-    # 5) 權限：每個分區依然私密，只放 game role + admin
-    # （不 clone template permissions；但會 clone 其他設定到 channel level）
     private_overwrites = make_private_overwrites(guild, [new_role], admins)
     await new_cat.edit(overwrites=private_overwrites)
 
@@ -187,14 +270,12 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
 
     created_forum: Optional[discord.ForumChannel] = None
 
-    # 6) 逐個複製 template channels（Forum/Text/Voice/Stage），名稱/順序跟足 template
     for ch in template_children:
         ow = private_overwrites
 
         if isinstance(ch, discord.TextChannel):
             kwargs = _build_text_kwargs(ch)
             created = await guild.create_text_channel(ch.name, category=new_cat, overwrites=ow, **kwargs)
-            # position
             try:
                 await created.edit(position=ch.position)
             except Exception:
@@ -224,7 +305,6 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
             except Exception:
                 pass
 
-    # 7) Forum tags：以 template 內第一個 forum 作 source（唔需要固定 TEMPLATE_FORUM_ID）
     if created_forum:
         tag_src = next((c for c in template_children if isinstance(c, discord.ForumChannel)), None)
         if isinstance(tag_src, discord.ForumChannel):
@@ -233,8 +313,6 @@ async def duplicate_section(client: discord.Client, guild: discord.Guild, game_n
             except Exception as e:
                 print(f"⚠️ copy_forum_tags 失敗：{e}")
 
-    # 8) （可選）Fallback channels：如果你 config.FALLBACK_CHANNELS 有設定，仍然會補齊
-    # 你要「完全跟 template」的話，建議把 FALLBACK_CHANNELS 設成空。
     fallback = getattr(config, "FALLBACK_CHANNELS", {}) or {}
     if fallback:
         names_in_cat = {
@@ -282,6 +360,48 @@ class Duplicate(commands.Cog):
             await inter.followup.send(f"✅ {msg}", ephemeral=True)
         except Exception as e:
             await inter.followup.send(f"❌ 出錯：{e}", ephemeral=True)
+
+    @app_commands.command(
+        name="duplicate_forum",
+        description="喺來源 Forum 同一個 Category 建立新 Forum，複製設定、tags 同權限並映射新角色",
+    )
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        source_forum="要複製嘅來源 Forum，例如 gta-v-專區",
+        source_role="來源 Forum 內要被新角色取代嘅角色，例如 gta-v-player",
+        new_forum_name="新 Forum 名稱，例如 gta-vi-專區",
+        new_role_name="新角色名稱，例如 gta-vi-player",
+    )
+    async def duplicate_forum_cmd(
+        self,
+        inter: discord.Interaction,
+        source_forum: discord.ForumChannel,
+        source_role: discord.Role,
+        new_forum_name: str,
+        new_role_name: str,
+    ) -> None:
+        if inter.guild_id != config.GUILD_ID:
+            await inter.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
+            return
+
+        if not user_is_section_admin(inter):
+            await inter.response.send_message("需要 Administrator 權限。", ephemeral=True)
+            return
+
+        await inter.response.defer(ephemeral=True)
+        try:
+            msg = await duplicate_forum_in_same_category(
+                inter.guild,  # type: ignore[arg-type]
+                source_forum=source_forum,
+                source_role=source_role,
+                new_forum_name=new_forum_name,
+                new_role_name=new_role_name,
+            )
+            await inter.followup.send(f"✅ {msg}", ephemeral=True)
+        except Exception as exc:
+            await inter.followup.send(f"❌ 出錯：{exc}", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
