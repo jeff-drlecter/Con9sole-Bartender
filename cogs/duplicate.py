@@ -44,7 +44,6 @@ def _safe_get(obj: object, attr: str, default=None):
 
 
 def _build_text_kwargs(src: discord.TextChannel) -> Dict[str, Any]:
-    # 只複製「設定」，唔複製權限（權限由 make_private_overwrites 決定）
     kwargs: Dict[str, Any] = {}
     topic = _safe_get(src, "topic")
     if topic is not None:
@@ -143,7 +142,6 @@ def _clone_forum_overwrites(
     source_role: discord.Role,
     new_role: discord.Role,
 ) -> dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
-    """Clone source forum overwrites and replace source_role with new_role."""
     overwrites: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {}
 
     for target, overwrite in source_forum.overwrites.items():
@@ -230,7 +228,7 @@ async def duplicate_forum_in_same_category(
     )
 
 
-# ---------- 分區複製（完全跟 template 結構；權限改為 game role + admin 私密） ----------
+# ---------- 分區複製 ----------
 
 async def duplicate_section(client: discord.Client, guild: discord.Guild, game_name: str) -> str:
     template_cat = await _get_template_category(client, guild)
@@ -341,14 +339,14 @@ class Duplicate(commands.Cog):
         self.bot = bot
 
     @app_commands.command(
-        name="duplicate",
-        description="複製模板分區（完全跟最新 Template 結構），建立新遊戲分區（私密：game role + admin）",
+        name="add_new_game",
+        description="建立全新遊戲 Category、角色及模板頻道",
     )
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(gamename="新遊戲名稱（例如：Delta Force）")
-    async def duplicate_cmd(self, inter: discord.Interaction, gamename: str):
+    @app_commands.describe(gamename="新遊戲名稱，例如 delta-force")
+    async def add_new_game_cmd(self, inter: discord.Interaction, gamename: str):
         if inter.guild_id != config.GUILD_ID:
             return await inter.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
         if not user_is_section_admin(inter):
@@ -362,19 +360,19 @@ class Duplicate(commands.Cog):
             await inter.followup.send(f"❌ 出錯：{e}", ephemeral=True)
 
     @app_commands.command(
-        name="duplicate_forum",
-        description="喺來源 Forum 同一個 Category 建立新 Forum，複製設定、tags 同權限並映射新角色",
+        name="add_game_version",
+        description="喺現有遊戲系列 Category 內新增另一個版本 Forum 及角色",
     )
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
-        source_forum="要複製嘅來源 Forum，例如 gta-v-專區",
-        source_role="來源 Forum 內要被新角色取代嘅角色，例如 gta-v-player",
-        new_forum_name="新 Forum 名稱，例如 gta-vi-專區",
-        new_role_name="新角色名稱，例如 gta-vi-player",
+        source_forum="來源版本 Forum，例如 gta-v-專區",
+        source_role="來源版本角色，例如 gta-v-player",
+        new_forum_name="新版本 Forum 名稱，例如 gta-vi-專區",
+        new_role_name="新版本角色名稱，例如 gta-vi-player",
     )
-    async def duplicate_forum_cmd(
+    async def add_game_version_cmd(
         self,
         inter: discord.Interaction,
         source_forum: discord.ForumChannel,
