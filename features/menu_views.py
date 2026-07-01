@@ -14,6 +14,31 @@ from features.menu_helpers import can_use_admin
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
 
+PUBLIC_DISCUSSION_ROLE_IDS = set(getattr(config, "PUBLIC_DISCUSSION_ROLE_IDS", []) or [])
+PUBLIC_DISCUSSION_ROLE_NAMES = {
+    str(name).strip().casefold()
+    for name in (getattr(config, "PUBLIC_DISCUSSION_ROLE_NAMES", ["off-topic"]) or [])
+    if str(name).strip()
+}
+PUBLIC_DISCUSSION_FORUM_IDS = set(getattr(config, "PUBLIC_DISCUSSION_FORUM_IDS", []) or [])
+PUBLIC_DISCUSSION_FORUM_NAMES = {
+    str(name).strip().casefold()
+    for name in (
+        getattr(
+            config,
+            "PUBLIC_DISCUSSION_FORUM_NAMES",
+            [
+                "（其他）集中討論區",
+                "(其他) 集中討論區",
+                "其他集中討論區",
+                "公海集中討論區",
+            ],
+        )
+        or []
+    )
+    if str(name).strip()
+}
+
 STYLE_MAP: dict[str, discord.ButtonStyle] = {
     "primary": discord.ButtonStyle.primary,
     "secondary": discord.ButtonStyle.secondary,
@@ -83,6 +108,113 @@ def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
     code = getattr(exc, "code", None)
     text = getattr(exc, "text", None)
     print(f"[{context}] HTTPException status={status} code={code} text={text!r}")
+
+
+def _has_public_discussion_role(member: discord.Member) -> bool:
+    for role in member.roles:
+        if role.id in PUBLIC_DISCUSSION_ROLE_IDS:
+            return True
+        if role.name.strip().casefold() in PUBLIC_DISCUSSION_ROLE_NAMES:
+            return True
+    return False
+
+
+def _find_public_discussion_forum(
+    guild: discord.Guild,
+    member: discord.Member,
+) -> discord.ForumChannel | None:
+    visible_forums = [forum for forum in guild.forums if forum.permissions_for(member).view_channel]
+
+    for forum in visible_forums:
+        if forum.id in PUBLIC_DISCUSSION_FORUM_IDS:
+            return forum
+
+    for forum in visible_forums:
+        if forum.name.strip().casefold() in PUBLIC_DISCUSSION_FORUM_NAMES:
+            return forum
+
+    for forum in visible_forums:
+        forum_name = forum.name.casefold()
+        category_name = forum.category.name.casefold() if forum.category else ""
+        if "集中討論區" in forum_name and (
+            "其他" in forum_name
+            or "公海" in forum_name
+            or "其他" in category_name
+            or "公海" in category_name
+        ):
+            return forum
+
+    return None
+
+
+class PublicDiscussionView(discord.ui.View):
+    def __init__(self, forum: discord.ForumChannel) -> None:
+        super().__init__(timeout=180)
+        self.add_item(
+            discord.ui.Button(
+                label="前往公海集中討論區",
+                emoji="🌊",
+                style=discord.ButtonStyle.link,
+                url=forum.jump_url,
+            )
+        )
+
+
+class PublicExploreButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(
+            label="探索公海",
+            emoji="🌊",
+            style=discord.ButtonStyle.secondary,
+            custom_id="bartender:home:public_explore",
+            row=3,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await send_or_followup(
+                interaction,
+                content="❌ 此功能只可在伺服器內使用。",
+                ephemeral=True,
+            )
+            return
+
+        if not _has_public_discussion_role(interaction.user):
+            await send_or_followup(
+                interaction,
+                content=(
+                    "🌊 **公海討論區**\n\n"
+                    "公海區只會向已選擇相關身份的成員顯示。\n"
+                    "請先前往 <id:customize>，選擇「想關注遊戲以外的公海討論／吹水區」，"
+                    "完成後即可瀏覽及參與相關話題。"
+                ),
+                ephemeral=True,
+            )
+            return
+
+        forum = _find_public_discussion_forum(interaction.guild, interaction.user)
+        if forum is None:
+            await send_or_followup(
+                interaction,
+                content=(
+                    "🌊 你已具備公海身份，但暫時找不到可瀏覽的公海集中討論區。\n"
+                    "請確認身份設定，或向管理員查詢。"
+                ),
+                ephemeral=True,
+            )
+            return
+
+        await send_or_followup(
+            interaction,
+            content=(
+                "🌊 **公海討論區**\n\n"
+                "除了遊戲專區外，你亦可以在公海瀏覽不同主題、關注感興趣的內容，"
+                "或開設新帖分享寵物、飲食、音樂、電影等話題。\n\n"
+                f"前往 {forum.mention} 看看吧。"
+            ),
+            view=PublicDiscussionView(forum),
+            ephemeral=True,
+        )
 
 
 class RegistryButton(discord.ui.Button):
@@ -202,7 +334,6 @@ class RegistryMenuView(BaseMenuView):
 
         if item.admin_only and not await self._require_admin(interaction):
             return
-
         if item.cog is None:
             await send_or_followup(
                 interaction,
@@ -258,6 +389,7 @@ class HomeMenuView(RegistryMenuView):
         include_external_links: bool = True,
     ) -> None:
         super().__init__(cog, "home")
+        self.add_item(PublicExploreButton())
 
         if include_external_links and RULES_URL:
             self.add_item(
