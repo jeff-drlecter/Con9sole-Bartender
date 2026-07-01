@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 import discord
 
 import config
@@ -7,28 +9,39 @@ from features.menu_helpers import MENU_COLOR, apply_bartender_thumbnail
 
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 
+PUBLIC_DISCUSSION_TIPS = (
+    "想關注或分享寵物大小事？",
+    "想分享最近聽到的音樂？",
+    "想討論正在追看的電視劇？",
+    "想分享電影、飲食或生活話題？",
+)
+
+
+def _public_discussion_tip() -> str:
+    return random.choice(PUBLIC_DISCUSSION_TIPS)
+
 
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🍸 Con9sole Bartender",
         description=(
             f"歡迎回來，{user.mention}。\n\n"
-            "**想快速做啲咩？**"
+            "**想快速做些甚麼？**"
         ),
         color=MENU_COLOR,
     )
     embed.add_field(
         name="⚡ Quick Bar",
-        value="常用功能已放喺下面。想睇完整入口，可以撳「Menu」。",
+        value="常用功能已放在下面。想查看完整入口，可以按「Menu」。",
         inline=False,
     )
     embed.add_field(
-        name="📖 第一次嚟？",
-        value="入主頁後撳「幫助」會見到完整用法。",
+        name="🌊 探索公海區",
+        value="進入「Menu」後按「探索公海」，即可了解如何瀏覽及參與遊戲以外的話題。",
         inline=False,
     )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{user.display_name}，你揀，我跟。")
+    embed.set_footer(text=f"💡 {_public_discussion_tip()} 前往 Menu → 探索公海看看吧。")
     return embed
 
 
@@ -42,23 +55,28 @@ def build_home_menu_embed(user: discord.abc.User, *, include_thumbnail: bool = T
         description=(
             f"歡迎回來，{user.mention}。\n\n"
             "完整餐牌已打開。\n"
-            "**你想由邊度開始？**"
+            "**你想由哪裏開始？**"
         ),
         color=MENU_COLOR,
     )
     embed.add_field(
         name="🥃 吧枱服務",
-        value="組隊、開 call、打氣、調酒、匿名投稿，都可以喺下面落單。",
+        value="組隊、開 call、打氣、調酒、匿名投稿，都可以在下面使用。",
         inline=False,
     )
     embed.add_field(
-        name="📖 唔肯定撳邊個？",
-        value="撳「幫助」會見到完整用法。",
+        name="🌊 探索公海區",
+        value="按「探索公海」瀏覽遊戲以外的公開話題，或了解如何開放相關討論區。",
+        inline=False,
+    )
+    embed.add_field(
+        name="📖 不確定應按哪一個？",
+        value="按「幫助」查看完整用法。",
         inline=False,
     )
     if include_thumbnail:
         apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"Con9sole Bartender｜{COMMUNITY_NAME}｜慢慢揀，我喺度。")
+    embed.set_footer(text=f"💡 {_public_discussion_tip()} 可由「探索公海」開始。")
     return embed
 
 
@@ -79,16 +97,17 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "🍾 **酒單收藏**｜查看已解鎖酒款、稀有度進度與最近解鎖\n"
             "🏆 **酒保排行榜**｜查看叫酒 / 賜酒 / 收酒 / 收藏榜\n"
             "📅 **今日任務**｜查看每日吧枱任務\n\n"
+            "🌊 **探索公海**｜瀏覽遊戲以外的公開話題，或前往身份設定開放公海區\n"
             "🔗 **邀請**｜取得社群邀請碼\n"
             "📸 **IG**｜查看官方 Instagram\n"
             "🧵 **Threads**｜查看官方 Threads\n\n"
-            "ℹ️ **幫助**｜查看呢份使用說明\n"
+            "ℹ️ **幫助**｜查看這份使用說明\n"
             "🛠️ **Admin Tool**｜Admin / helpers 專用管理工具"
         ),
         color=MENU_COLOR,
     )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text="Con9sole Bartender｜⬅️ Menu 返回吧枱主頁")
+    embed.set_footer(text="⬅️ Menu 返回吧枱主頁")
     return embed
 
 
@@ -106,5 +125,5 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
         ),
         color=MENU_COLOR,
     )
-    embed.set_footer(text="Con9sole Bartender｜Admin 工具只限授權成員使用。")
+    embed.set_footer(text="Admin 工具只限授權成員使用。")
     return embed
