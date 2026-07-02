@@ -1,13 +1,18 @@
 from __future__ import annotations
+
 from typing import Union
+
 import discord
 from discord.ext import commands
 
 import config
-from utils import emb, send_log, role_mention_safe
+from utils import emb, role_mention_safe, send_log
 
-# ---------- Mention helper (mobile/desktop clickable) ----------
-async def mention_or_id(guild: discord.Guild, user_or_id: Union[int, discord.abc.User, discord.Member, None]) -> str:
+
+async def mention_or_id(
+    guild: discord.Guild,
+    user_or_id: Union[int, discord.abc.User, discord.Member, None],
+) -> str:
     if user_or_id is None:
         return "（未知成員）"
     if isinstance(user_or_id, discord.Member):
@@ -23,9 +28,7 @@ async def mention_or_id(guild: discord.Guild, user_or_id: Union[int, discord.abc
     if member is None:
         try:
             member = await guild.fetch_member(uid)
-        except discord.NotFound:
-            member = None
-        except discord.HTTPException:
+        except (discord.NotFound, discord.HTTPException):
             member = None
     return member.mention if member else f"User ID: {uid}"
 
@@ -36,67 +39,83 @@ class WelcomeLog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        # Public welcome message (member is present; regular mention is safe)
         try:
             channel = member.guild.get_channel(config.WELCOME_CHANNEL_ID)
             if isinstance(channel, discord.TextChannel):
-                rules_ch = member.guild.get_channel(config.RULES_CHANNEL_ID)
-                guide_ch = member.guild.get_channel(config.GUIDE_CHANNEL_ID)
-                support_ch = member.guild.get_channel(config.SUPPORT_CHANNEL_ID)
-
-                msg = (
-                    f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
-                    f"📜 請先細心閱讀 {rules_ch.mention if isinstance(rules_ch, discord.TextChannel) else '#rules'}\n"
-                    f"📝 組別分派會根據你揀嘅答案，如需更改請查看 {guide_ch.mention if isinstance(guide_ch, discord.TextChannel) else '#教學'}\n"
-                    f"💬 如果有任何疑問，請到 {support_ch.mention if isinstance(support_ch, discord.TextChannel) else '#支援'} 講聲 **hi**，會有專人協助你。\n\n"
-                    f"最後 🙌 喺呢度同大家打一聲招呼啦！\n👉 你想我哋點稱呼你？"
+                rules_channel = member.guild.get_channel(config.RULES_CHANNEL_ID)
+                rules_mention = (
+                    rules_channel.mention
+                    if isinstance(rules_channel, discord.TextChannel)
+                    else "#rules"
                 )
-                await channel.send(msg)
-        except Exception:
-            pass
+                bot_mention = self.bot.user.mention if self.bot.user else "@Con9sole-Bartender"
 
-        # Private log (ensure mobile-clickable mention)
-        mtxt = await mention_or_id(member.guild, member)
-        await send_log(member.guild, emb("Member Join", f"👋 {mtxt} 加入伺服器。", 0x57F287))
+                message = (
+                    f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
+                    f"📜 請先前往 {rules_mention} 閱讀伺服器規則，了解基本守則及使用方式。\n\n"
+                    "🎭 如想尋找遊戲專區、加入相關身份組，或瀏覽遊戲以外的公海話題，"
+                    "可前往 <id:customize> 選擇合適的身份。\n\n"
+                    "🌊 除了遊戲內容外，也歡迎在公海集中討論區開設新帖，"
+                    "分享寵物、飲食、音樂、電影等不同話題。\n\n"
+                    f"🍸 如不確定應從哪裏開始，或想查看伺服器功能，可直接提及 {bot_mention}。"
+                )
+                await channel.send(message)
+        except Exception as exc:
+            print(f"[welcome_log] 發送歡迎訊息失敗：{type(exc).__name__}: {exc}")
+
+        member_text = await mention_or_id(member.guild, member)
+        await send_log(member.guild, emb("Member Join", f"👋 {member_text} 加入伺服器。", 0x57F287))
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
-        mtxt = await mention_or_id(member.guild, member)
-        await send_log(member.guild, emb("Member Leave", f"👋 {mtxt} 離開伺服器。", 0xED4245))
+        member_text = await mention_or_id(member.guild, member)
+        await send_log(member.guild, emb("Member Leave", f"👋 {member_text} 離開伺服器。", 0xED4245))
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         if before.nick != after.nick:
-            mtxt = await mention_or_id(after.guild, after)
-            desc = (
-                f"🪪 {mtxt} 暱稱變更：\n"
-                f"**Before**：{before.nick or '（無）'}\n**After**：{after.nick or '（無）'}"
+            member_text = await mention_or_id(after.guild, after)
+            description = (
+                f"🪪 {member_text} 暱稱變更：\n"
+                f"**Before**：{before.nick or '（無）'}\n"
+                f"**After**：{after.nick or '（無）'}"
             )
-            await send_log(after.guild, emb("Nickname Change", desc, 0x5865F2))
+            await send_log(after.guild, emb("Nickname Change", description, 0x5865F2))
 
-        before_ids = {r.id for r in before.roles}
-        after_ids = {r.id for r in after.roles}
-        added_roles = [r for r in after.roles if r.id not in before_ids and r.name != "@everyone"]
-        removed_roles = [r for r in before.roles if r.id not in after_ids and r.name != "@everyone"]
+        before_ids = {role.id for role in before.roles}
+        after_ids = {role.id for role in after.roles}
+        added_roles = [
+            role for role in after.roles
+            if role.id not in before_ids and role.name != "@everyone"
+        ]
+        removed_roles = [
+            role for role in before.roles
+            if role.id not in after_ids and role.name != "@everyone"
+        ]
 
         if added_roles:
-            mtxt = await mention_or_id(after.guild, after)
-            txt = "➕ " + mtxt + " 新增角色： " + ", ".join(role_mention_safe(r) for r in added_roles)
-            await send_log(after.guild, emb("Member Role Add", txt, 0x57F287))
+            member_text = await mention_or_id(after.guild, after)
+            text = "➕ " + member_text + " 新增角色： " + ", ".join(
+                role_mention_safe(role) for role in added_roles
+            )
+            await send_log(after.guild, emb("Member Role Add", text, 0x57F287))
+
         if removed_roles:
-            mtxt = await mention_or_id(after.guild, after)
-            txt = "➖ " + mtxt + " 移除角色： " + ", ".join(role_mention_safe(r) for r in removed_roles)
-            await send_log(after.guild, emb("Member Role Remove", txt, 0xED4245))
+            member_text = await mention_or_id(after.guild, after)
+            text = "➖ " + member_text + " 移除角色： " + ", ".join(
+                role_mention_safe(role) for role in removed_roles
+            )
+            await send_log(after.guild, emb("Member Role Remove", text, 0xED4245))
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User):
-        mtxt = await mention_or_id(guild, user)
-        await send_log(guild, emb("Member Ban", f"🔨 封鎖：{mtxt}", 0xED4245))
+        member_text = await mention_or_id(guild, user)
+        await send_log(guild, emb("Member Ban", f"🔨 封鎖：{member_text}", 0xED4245))
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
-        mtxt = await mention_or_id(guild, user)
-        await send_log(guild, emb("Member Unban", f"🕊️ 解除封鎖：{mtxt}", 0x57F287))
+        member_text = await mention_or_id(guild, user)
+        await send_log(guild, emb("Member Unban", f"🕊️ 解除封鎖：{member_text}", 0x57F287))
 
 
 async def setup(bot: commands.Bot):
