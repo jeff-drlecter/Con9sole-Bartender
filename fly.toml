@@ -21,3 +21,4 @@ auto_start_machines = true   # 有請求會自動啟動
 
 [env]
   DRINK_STATE_PATH = "/data/drink_state.json"
+  ACTIVITY_REMINDER_PATH = "/data/activity_reminders.json"
