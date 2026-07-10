@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -8,6 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
+
+from core.sqlite_storage import connect_sqlite, enable_wal
+
+log = logging.getLogger("con9sole-bartender.daily-bar")
 
 DAILY_BAR_COLOR = 0xD6A85C
 
@@ -75,7 +80,8 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
 
 def init_daily_bar_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
+        enable_wal(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_bar_completions (
@@ -120,7 +126,7 @@ def get_daily_bar_completion(
 ) -> sqlite3.Row | None:
     init_daily_bar_db()
     day = _current_date(now=now)
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             """
@@ -149,7 +155,7 @@ def complete_daily_bar_task(
     init_daily_bar_db()
     day = current.date().isoformat()
     try:
-        with sqlite3.connect(STATS_DB) as conn:
+        with connect_sqlite(STATS_DB) as conn:
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO daily_bar_completions (
@@ -165,6 +171,12 @@ def complete_daily_bar_task(
             )
         return cursor.rowcount > 0
     except Exception:
+        log.exception(
+            "Failed to complete daily bar task: guild=%s user=%s feature=%s",
+            guild_id,
+            user_id,
+            feature_key,
+        )
         return False
 
 

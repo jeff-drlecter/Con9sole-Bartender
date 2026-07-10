@@ -12,6 +12,7 @@ from features.drink_storage import (
     STATS_DB,
     init_drink_events_db,
 )
+from core.sqlite_storage import connect_sqlite
 
 LeaderboardKind = Literal["self", "given", "received", "collection"]
 
@@ -59,7 +60,7 @@ LEADERBOARD_META: dict[LeaderboardKind, dict[str, str]] = {
 
 def _fetch_rows(sql: str, params: tuple[object, ...]) -> list[LeaderboardEntry]:
     init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         rows = conn.execute(sql, params).fetchall()
     return [LeaderboardEntry(member_id=int(row[0]), total=int(row[1])) for row in rows]
 
