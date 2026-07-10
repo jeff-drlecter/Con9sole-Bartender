@@ -1,30 +1,19 @@
 from __future__ import annotations
 
-import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 
 import discord
 
 from core.sqlite_storage import connect_sqlite, enable_wal
+from core.storage_paths import DATA_DIR, STATS_DB
 from data.drink_data import DrinkEntry
 
 log = logging.getLogger("con9sole-bartender.drink.storage")
 
 EVENT_SELF_DRINK = "self_drink"
 EVENT_GIFT_DRINK = "gift_drink"
-
-# Persistent storage:
-# Fly.io volume should mount at /data. For local/dev, safely fall back to repo data/.
-DATA_DIR = Path(os.getenv("DRINK_DATA_DIR", "/data"))
-if not DATA_DIR.exists():
-    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-STATS_DB = DATA_DIR / "community_stats.sqlite3"
-
 
 def init_drink_events_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)

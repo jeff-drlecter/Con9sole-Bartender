@@ -1,28 +1,18 @@
 from __future__ import annotations
 
-import os
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import discord
 
 import config
 from core.sqlite_storage import connect_sqlite, enable_wal
+from core.storage_paths import DATA_DIR, STATS_DB
 
 log = logging.getLogger("con9sole-bartender.menu.stats")
 
 MENU_COLOR = 0x2B2D31
-
-# Persistent storage:
-# Fly.io volume should mount at /data. For local/dev, safely fall back to repo data/.
-DATA_DIR = Path(os.getenv("DRINK_DATA_DIR", "/data"))
-if not DATA_DIR.exists():
-    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-STATS_DB = DATA_DIR / "community_stats.sqlite3"
 
 HK_TZ = timezone(timedelta(hours=8))
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
