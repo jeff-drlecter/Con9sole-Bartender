@@ -17,6 +17,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Validate Python source
+        run: python -m compileall -q .
+
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@v1
 

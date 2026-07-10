@@ -182,8 +182,13 @@ class ActivityReminder(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-        self.data_dir = "data"
-        self.data_file = os.path.join(self.data_dir, "activity_reminders.json")
+        # Store reminders on the Fly.io volume by default so deploys/restarts do not erase them.
+        # Local development can override this with ACTIVITY_REMINDER_PATH.
+        self.data_file = os.getenv(
+            "ACTIVITY_REMINDER_PATH",
+            "/data/activity_reminders.json",
+        )
+        self.data_dir = os.path.dirname(self.data_file) or "."
 
         self.activities: Dict[str, Activity] = {}
         # sent_cache key: f"{activity_id}|{schedule_idx}|{yyyy-mm-dd}|{kind}"
