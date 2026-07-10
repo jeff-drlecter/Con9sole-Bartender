@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import atexit
-import json
+import logging
 import time
 
 from data.drink_data import DRINK_COOLDOWN_SECONDS
+from core.json_storage import atomic_write_json, load_json_object
 from features.drink_storage import DATA_DIR
+
+log = logging.getLogger("con9sole-bartender.drink.state")
 
 DRINK_STATE_PATH = DATA_DIR / "drink_state.json"
 
@@ -20,21 +23,12 @@ def _default_drink_state() -> dict[str, object]:
 
 
 def _load_drink_state() -> dict[str, object]:
-    try:
-        if not DRINK_STATE_PATH.exists():
-            return _default_drink_state()
-
-        raw = json.loads(DRINK_STATE_PATH.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return _default_drink_state()
-
-        raw.setdefault("version", 2)
-        raw.setdefault("cooldowns", {})
-        raw.setdefault("gift_cooldowns", {})
-        raw.setdefault("recent_drinks", {})
-        return raw
-    except Exception:
-        return _default_drink_state()
+    raw = load_json_object(DRINK_STATE_PATH, _default_drink_state)
+    raw.setdefault("version", 2)
+    raw.setdefault("cooldowns", {})
+    raw.setdefault("gift_cooldowns", {})
+    raw.setdefault("recent_drinks", {})
+    return raw
 
 
 _DRINK_STATE: dict[str, object] = _load_drink_state()
@@ -66,12 +60,9 @@ def state_recent_drinks() -> dict[str, list[str]]:
 
 def save_drink_state() -> None:
     try:
-        DRINK_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = DRINK_STATE_PATH.with_suffix(DRINK_STATE_PATH.suffix + ".tmp")
-        tmp.write_text(json.dumps(_DRINK_STATE, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(DRINK_STATE_PATH)
+        atomic_write_json(DRINK_STATE_PATH, _DRINK_STATE)
     except Exception:
-        pass
+        log.exception("Failed to persist drink state: path=%s", DRINK_STATE_PATH)
 
 
 DRINK_USER_COOLDOWNS: dict[int, float] = {
