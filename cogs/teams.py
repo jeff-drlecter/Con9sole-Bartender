@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -9,6 +10,8 @@ from discord.ext import commands
 
 from features.menu_embeds import build_main_menu_embed
 from features.menu_views import MainMenuView
+
+log = logging.getLogger("con9sole-bartender.teams")
 
 STATE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 SWEEP_INTERVAL_SECONDS = 10 * 60  # 10 minutes
@@ -83,7 +86,7 @@ class Teams(commands.Cog):
             except asyncio.CancelledError:
                 break
             except Exception:
-                pass
+                log.exception("Team state sweeper failed")
 
     async def open_team_menu(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(

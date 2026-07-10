@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Awaitable, Callable
 
 import discord
@@ -10,6 +11,8 @@ from core.safe_send import send_or_followup
 from data.menu_registry import MenuItem, get_menu_items
 from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
+
+log = logging.getLogger("con9sole-bartender.menu.views")
 
 RULES_URL = getattr(config, "RULES_URL", None)
 HELP_URL = getattr(config, "HELP_URL", None)
@@ -107,7 +110,7 @@ def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
     status = getattr(exc, "status", None)
     code = getattr(exc, "code", None)
     text = getattr(exc, "text", None)
-    print(f"[{context}] HTTPException status={status} code={code} text={text!r}")
+    log.warning("%s: Discord HTTP error status=%s code=%s text=%r", context, status, code, text)
 
 
 def _has_public_discussion_role(member: discord.Member) -> bool:
@@ -320,7 +323,7 @@ class RegistryMenuView(BaseMenuView):
                 pass
             except Exception as exc:
                 if interaction.response.is_done():
-                    print(f"[Menu router suppressed] {item.id}: {type(exc).__name__}: {exc}")
+                    log.exception("Menu item failed after interaction response: item=%s", item.id)
                     return
                 await send_or_followup(
                     interaction,
@@ -367,7 +370,7 @@ class RegistryMenuView(BaseMenuView):
             pass
         except Exception as exc:
             if interaction.response.is_done():
-                print(f"[Menu router suppressed] {item.id}: {type(exc).__name__}: {exc}")
+                log.exception("Menu item failed after interaction response: item=%s", item.id)
                 return
 
             await send_or_followup(
