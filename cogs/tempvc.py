@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import Dict, Optional, Union
@@ -17,11 +18,15 @@ from utils import (
     voice_arrow,
     is_temp_vc_id,
     set_delete_task,
+    clear_delete_task,
     cancel_delete_task,
+    cancel_all_delete_tasks,
     track_temp_vc,
     untrack_temp_vc,
     bootstrap_track_temp_vcs,
 )
+
+log = logging.getLogger("con9sole-bartender.tempvc")
 
 VC_LIMIT_USER_COOLDOWNS: dict[int, float] = {}
 VC_LIMIT_CHANNEL_COOLDOWNS: dict[int, float] = {}
@@ -277,7 +282,7 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
 
     async def _task() -> None:
         try:
-            print(f"⏳ Temp VC 倒數開始（{timeout:.0f}s）：#{channel.name} id={ch_id}")
+            log.debug("Temp VC deletion countdown started: channel=%s timeout=%s", ch_id, timeout)
             await asyncio.sleep(timeout)
 
             guild = channel.guild
@@ -286,31 +291,31 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
                 try:
                     fresh = await guild.fetch_channel(ch_id)
                 except discord.NotFound:
-                    print(f"目標已不存在（可能已手動刪）：id={ch_id}")
+                    log.info("Temp VC already deleted before countdown completed: channel=%s", ch_id)
                     return
-                except Exception as exc:
-                    print(f"⚠️ 取 channel 失敗 id={ch_id}：{exc!r}")
+                except Exception:
+                    log.exception("Failed to fetch temp VC during deletion: channel=%s", ch_id)
                     return
 
             if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0 and is_temp_vc_id(ch_id):
-                print(f"自動刪除空房：#{fresh.name}（id={ch_id}）")
+                log.info("Deleting empty temp VC: channel=%s name=%s", ch_id, fresh.name)
                 untrack_temp_vc(ch_id)
                 try:
                     await fresh.delete(reason="Temp VC idle timeout")
                 except discord.Forbidden:
-                    print("❌ 沒有權限刪除語音房（請檢查 Bot 角色是否有『管理頻道』）。")
-                except Exception as exc:
-                    print(f"❌ 刪除語音房失敗：{exc!r}")
+                    log.error("Missing permission to delete temp VC: channel=%s", ch_id)
+                except Exception:
+                    log.exception("Failed to delete temp VC: channel=%s", ch_id)
             else:
-                print(f"取消刪除：房間有人或已不是 temp（id={ch_id}）")
+                log.debug("Skipped temp VC deletion because it is occupied or untracked: channel=%s", ch_id)
 
         except asyncio.CancelledError:
-            print(f"倒數已取消（有人進入/房間不再空）id={ch_id}")
+            log.debug("Temp VC deletion countdown cancelled: channel=%s", ch_id)
             raise
-        except Exception as exc:
-            print(f"⚠️ 倒數 task 發生例外 id={ch_id}：{exc!r}")
+        except Exception:
+            log.exception("Temp VC deletion countdown failed: channel=%s", ch_id)
         finally:
-            cancel_delete_task(ch_id)
+            clear_delete_task(ch_id, asyncio.current_task())
 
     cancel_delete_task(ch_id)
     set_delete_task(ch_id, asyncio.create_task(_task()))
@@ -745,6 +750,7 @@ class TempVC(commands.Cog):
     def cog_unload(self) -> None:
         if self._sweeper_task and not self._sweeper_task.done():
             self._sweeper_task.cancel()
+        cancel_all_delete_tasks()
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
         """Unified entrypoint for data/menu_registry.py."""
@@ -801,21 +807,21 @@ class TempVC(commands.Cog):
             **kwargs,
         )
         track_temp_vc(ch.id)
-        print(f"✅ 建立 Temp VC：#{ch.name}（id={ch.id}）於 {category.name if category else '根目錄'}")
+        log.info("Created temp VC: channel=%s name=%s category=%s", ch.id, ch.name, category.id if category else None)
         await schedule_delete_if_empty(ch, force=False)
         return ch
 
     async def _teardown_temp_vc(self, target: discord.VoiceChannel) -> None:
         untrack_temp_vc(target.id)
         cancel_delete_task(target.id)
-        print(f"手動刪除 Temp VC：#{target.name}（id={target.id}）")
+        log.info("Deleting temp VC manually: channel=%s name=%s", target.id, target.name)
         await target.delete(reason="Manual teardown temp VC")
 
     async def get_all_temp_vcs(self, guild: discord.Guild) -> list[discord.VoiceChannel]:
         try:
             await bootstrap_track_temp_vcs(guild, name_prefixes=_get_name_prefixes())
-        except Exception as exc:
-            print(f"[TempVC admin list] bootstrap failed: {exc!r}")
+        except Exception:
+            log.exception("Failed to bootstrap temp VC admin list")
 
         channels = [
             ch
@@ -1002,23 +1008,23 @@ class TempVC(commands.Cog):
                 **kwargs,
             )
         except discord.Forbidden:
-            print("❌ 建立自動 temp VC 失敗：缺少管理頻道權限")
+            log.error("Missing permission to create automatic temp VC: member=%s", member.id)
             return None
-        except Exception as exc:
-            print(f"❌ 建立自動 temp VC 失敗：{exc!r}")
+        except Exception:
+            log.exception("Failed to create automatic temp VC: member=%s", member.id)
             return None
 
         track_temp_vc(ch.id)
-        print(f"✅ 自動建立 Temp VC：#{ch.name}（id={ch.id}） for user={member.id} from hub=#{source_channel.name}")
+        log.info("Created automatic temp VC: channel=%s member=%s hub=%s", ch.id, member.id, source_channel.id)
 
         try:
             await member.move_to(ch, reason="Moved to newly auto-created temp VC")
         except discord.Forbidden:
-            print("❌ Move member 失敗：缺少 Move Members 權限")
+            log.error("Missing permission to move member into temp VC: member=%s channel=%s", member.id, ch.id)
             await schedule_delete_if_empty(ch, force=False)
             return ch
-        except Exception as exc:
-            print(f"❌ Move member 去 temp VC 失敗：{exc!r}")
+        except Exception:
+            log.exception("Failed to move member into temp VC: member=%s channel=%s", member.id, ch.id)
             await schedule_delete_if_empty(ch, force=False)
             return ch
 
@@ -1042,21 +1048,21 @@ class TempVC(commands.Cog):
                             ch = await guild.fetch_channel(cid)
                         except discord.NotFound:
                             continue
-                        except Exception as exc:
-                            print(f"[TempVC bootstrap] fetch_channel 失敗 cid={cid}：{exc!r}")
+                        except Exception:
+                            log.exception("Failed to fetch temp VC during bootstrap: channel=%s", cid)
                             continue
 
                     if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id):
                         await schedule_delete_if_empty(ch, force=True)
-            except Exception as exc:
-                print(f"[TempVC bootstrap] {guild.name} 失敗：{exc!r}")
+            except Exception:
+                log.exception("Temp VC bootstrap failed: guild=%s", guild.id)
 
         interval = _get_sweep_interval_seconds()
         if interval > 0:
             self._sweeper_task = asyncio.create_task(self._sweeper_loop(interval))
-            print(f"[TempVC] safety sweeper started (interval={interval:.0f}s)")
+            log.info("Temp VC safety sweeper started: interval=%s", interval)
         else:
-            print("[TempVC] safety sweeper disabled (TEMP_VC_SWEEP_SECONDS <= 0)")
+            log.info("Temp VC safety sweeper disabled")
 
     async def _sweeper_loop(self, interval: float) -> None:
         await self.bot.wait_until_ready()
@@ -1079,12 +1085,12 @@ class TempVC(commands.Cog):
 
                             if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id) and len(ch.members) == 0:
                                 await schedule_delete_if_empty(ch, force=True)
-                    except Exception as exc:
-                        print(f"[TempVC sweeper] {guild.name} sweep 失敗：{exc!r}")
+                    except Exception:
+                        log.exception("Temp VC sweep failed: guild=%s", guild.id)
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
-                print(f"[TempVC sweeper] loop exception: {exc!r}")
+            except Exception:
+                log.exception("Temp VC sweeper loop failed")
 
     @commands.Cog.listener()
     async def on_voice_state_update(
