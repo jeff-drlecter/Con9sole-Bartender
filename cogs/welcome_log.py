@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Union
 
 import discord
@@ -7,6 +8,8 @@ from discord.ext import commands
 
 import config
 from utils import emb, role_mention_safe, send_log
+
+log = logging.getLogger("con9sole-bartender.welcome")
 
 
 async def mention_or_id(
@@ -61,7 +64,7 @@ class WelcomeLog(commands.Cog):
                 )
                 await channel.send(message)
         except Exception as exc:
-            print(f"[welcome_log] 發送歡迎訊息失敗：{type(exc).__name__}: {exc}")
+            log.exception("Failed to send welcome message: member=%s guild=%s", member.id, member.guild.id)
 
         member_text = await mention_or_id(member.guild, member)
         await send_log(member.guild, emb("Member Join", f"👋 {member_text} 加入伺服器。", 0x57F287))

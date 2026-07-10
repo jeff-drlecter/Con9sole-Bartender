@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import discord
 
 from core.safe_send import safe_message_kwargs, send_or_followup
@@ -18,12 +20,14 @@ from features.social_tools import (
     open_threads_from_button as run_open_threads_from_button,
 )
 
+log = logging.getLogger("con9sole-bartender.menu.actions")
+
 
 def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
     status = getattr(exc, "status", None)
     code = getattr(exc, "code", None)
     text = getattr(exc, "text", None)
-    print(f"[{context}] HTTPException status={status} code={code} text={text!r}")
+    log.warning("%s: Discord HTTP error status=%s code=%s text=%r", context, status, code, text)
 
 
 async def open_quick_bar_menu(
@@ -118,4 +122,4 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
         kwargs["mention_author"] = False
         await message.reply(**kwargs)
     except discord.HTTPException:
-        pass
+        log.exception("Failed to send mention quick-bar menu: message=%s", message.id)

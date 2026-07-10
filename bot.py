@@ -11,9 +11,10 @@ from discord.ext import commands
 
 import config
 from core.app_command_errors import handle_app_command_error
+from core.logging_config import configure_logging
 
 # ---------- Logging ----------
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 log = logging.getLogger("con9sole-bartender")
 
 # ---------- Intents ----------

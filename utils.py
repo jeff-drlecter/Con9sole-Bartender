@@ -3,7 +3,10 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Iterable
 import asyncio
 import contextlib
+import logging
 import discord
+
+log = logging.getLogger("con9sole-bartender.utils")
 
 # 可選：如果你喺 config 入面未必有呢啲，就保持可選導入
 try:  # noqa: SIM105
@@ -27,10 +30,10 @@ async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
 
     - 先用 cache `guild.get_channel`，失敗再 `fetch_channel`。
     - 強制允許 **user mentions**，以確保手機/桌面都可點擊打開用戶卡。
-    - 出錯唔會影響主流程，只 print 提示。
+    - 出錯唔會影響主流程，只記錄提示。
     """
     if not LOG_CHANNEL_ID:
-        print("[send_log] LOG_CHANNEL_ID 未設置，略過發送。")
+        log.warning("LOG_CHANNEL_ID is not configured; skipping Discord audit log")
         return
 
     ch = guild.get_channel(LOG_CHANNEL_ID)
@@ -48,10 +51,10 @@ async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
                     everyone=False,
                 ),
             )
-        except Exception as e:  # pragma: no cover
-            print(f"[send_log] 發送失敗：{e}")
+        except Exception:  # pragma: no cover
+            log.exception("Failed to send Discord audit log to channel=%s", LOG_CHANNEL_ID)
     else:
-        print(f"[send_log] 找唔到有效文字頻道：LOG_CHANNEL_ID={LOG_CHANNEL_ID}")
+        log.warning("Discord audit channel is unavailable: channel=%s", LOG_CHANNEL_ID)
 
 
 # =============================
@@ -107,7 +110,7 @@ async def copy_forum_tags(src_forum: discord.ForumChannel, dst_forum: discord.Fo
     """
     tags = src_forum.available_tags
     if not tags:
-        print("   （Tag）來源沒有可用標籤，略過。")
+        log.info("Source forum has no tags; nothing to copy")
         return
 
     new_tags: List[discord.ForumTag] = []
@@ -119,7 +122,7 @@ async def copy_forum_tags(src_forum: discord.ForumChannel, dst_forum: discord.Fo
             new_tags.append(discord.ForumTag(name=t.name, moderated=t.moderated))
 
     await dst_forum.edit(available_tags=new_tags, reason="Clone forum tags")
-    print(f"   ✅ 已複製 Forum Tags：{len(new_tags)}")
+    log.info("Copied %s forum tags to channel=%s", len(new_tags), dst_forum.id)
 
 
 # =============================
@@ -146,7 +149,7 @@ def set_delete_task(channel_id: int, task: asyncio.Task) -> None:
     old = _PENDING_DELETE_TASKS.pop(channel_id, None)
     if old and not old.done():
         old.cancel()
-        print(f"🛑 取消舊的自動刪除任務：{channel_id}")
+        log.debug("Cancelled previous temp VC deletion task: channel=%s", channel_id)
     _PENDING_DELETE_TASKS[channel_id] = task
 
 
@@ -154,7 +157,7 @@ def cancel_delete_task(channel_id: int) -> None:
     task = _PENDING_DELETE_TASKS.pop(channel_id, None)
     if task and not task.done():
         task.cancel()
-        print(f"🛑 已取消自動刪除任務：{channel_id}")
+        log.debug("Cancelled temp VC deletion task: channel=%s", channel_id)
 
 
 async def schedule_delete_if_empty(
@@ -172,13 +175,13 @@ async def schedule_delete_if_empty(
         try:
             await asyncio.sleep(idle_seconds)
             if len(channel.members) == 0 and is_temp_vc_id(channel.id):
-                print(f"🧹 自動刪除空房：#{channel.name}（id={channel.id}）")
+                log.info("Deleting empty temp VC: channel=%s name=%s", channel.id, channel.name)
                 untrack_temp_vc(channel.id)
                 await channel.delete(reason=reason)
         except asyncio.CancelledError:  # 被重設/取消
             pass
-        except Exception as e:  # pragma: no cover
-            print(f"[schedule_delete_if_empty] 任務錯誤：{e}")
+        except Exception:  # pragma: no cover
+            log.exception("Temp VC deletion task failed: channel=%s", channel.id)
 
     if len(channel.members) == 0:
         set_delete_task(channel.id, asyncio.create_task(_task()))
@@ -206,7 +209,7 @@ async def bootstrap_track_temp_vcs(
         except Exception:  # 極端情況：名稱是 None
             continue
     if tracked:
-        print(f"🔁 啟動追蹤 Temp VC：{len(tracked)} → {tracked[:5]}{'...' if len(tracked) > 5 else ''}")
+        log.info("Restored tracking for %s temp VCs: sample=%s", len(tracked), tracked[:5])
     return tracked
 
 
@@ -216,7 +219,7 @@ def cancel_all_delete_tasks() -> None:
         if not task.done():
             task.cancel()
     _PENDING_DELETE_TASKS.clear()
-    print("🧯 已清空所有自動刪除任務。")
+    log.info("Cancelled all pending temp VC deletion tasks")
 
 
 # --------- Helpers ---------
