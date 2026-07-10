@@ -6,9 +6,11 @@ import os
 import pathlib
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.app_command_errors import handle_app_command_error
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -23,11 +25,21 @@ intents.voice_states = True      # 語音房事件
 intents.message_content = True   # tag bot 出 menu / 讀 message content
 
 
+class Con9soleCommandTree(app_commands.CommandTree):
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: app_commands.AppCommandError,
+    ) -> None:
+        await handle_app_command_error(interaction, error)
+
+
 class Bot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(
             command_prefix=commands.when_mentioned_or("/"),
             intents=intents,
+            tree_cls=Con9soleCommandTree,
         )
 
     async def setup_hook(self) -> None:
