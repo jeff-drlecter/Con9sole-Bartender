@@ -168,15 +168,42 @@ class TwitchRelay(commands.Cog):
         )
 
         self._connect_task = asyncio.create_task(self.twitch_bot.connect())
+        self._connect_task.add_done_callback(self._log_connect_task_result)
         log.info("🔌 啟動統一 Twitch 連線：%s", ",".join(initial))
 
-    def cog_unload(self) -> None:
-        """Stop background Twitch work when this cog is reloaded or unloaded."""
-        if self._connect_task and not self._connect_task.done():
-            self._connect_task.cancel()
+    @staticmethod
+    def _log_connect_task_result(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        if error is not None:
+            log.error(
+                "Twitch connection task stopped unexpectedly",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
-        if self.twitch_bot is not None:
-            asyncio.create_task(self.twitch_bot.close())
+    async def cog_unload(self) -> None:
+        """Close Twitch and await background-task cleanup before a reload."""
+        twitch_bot = self.twitch_bot
+        self.twitch_bot = None
+
+        if twitch_bot is not None:
+            try:
+                await twitch_bot.close()
+            except Exception:
+                log.exception("Failed to close Twitch client during cog unload")
+
+        task = self._connect_task
+        self._connect_task = None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     # ========== Discord → Twitch ==========
     @commands.Cog.listener("on_message")
