@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import Dict, Optional, Union
 
@@ -12,6 +11,22 @@ from discord.ext import commands
 
 import config
 from core.permissions import is_admin_or_helper
+from features.tempvc_settings import (
+    format_seconds,
+    get_auto_vc_user_limit,
+    get_hub_channel_name,
+    get_name_prefixes,
+    get_sweep_interval_seconds,
+    get_temp_channel_base_name,
+    get_timeout_seconds,
+    get_vc_limit_channel_cooldown_seconds,
+    get_vc_limit_max,
+    get_vc_limit_min,
+    get_vc_limit_user_cooldown_seconds,
+    next_temp_channel_name,
+    normalize_limit,
+    parse_manual_limit,
+)
 from utils import (
     emb,
     send_log,
@@ -126,100 +141,6 @@ def user_bypasses_vc_limit_cooldown(member: discord.Member) -> bool:
     return bool(perms.administrator or perms.manage_channels or is_admin_or_helper(member))
 
 
-def _get_timeout_seconds() -> float:
-    try:
-        return float(getattr(config, "TEMP_VC_EMPTY_SECONDS", 120))
-    except Exception:
-        return 120.0
-
-
-def _get_sweep_interval_seconds() -> float:
-    try:
-        return float(getattr(config, "TEMP_VC_SWEEP_SECONDS", 300))
-    except Exception:
-        return 300.0
-
-
-def _get_name_prefixes() -> list[str]:
-    return [getattr(config, "TEMP_VC_PREFIX", "小隊call •")]
-
-
-def _get_hub_channel_name() -> str:
-    return str(getattr(config, "TEMP_VC_HUB_NAME", "開call")).strip() or "開call"
-
-
-def _get_temp_channel_base_name() -> str:
-    return str(getattr(config, "TEMP_VC_PREFIX", "小隊call •")).strip() or "小隊call •"
-
-
-def _get_auto_vc_user_limit() -> Optional[int]:
-    value = getattr(config, "TEMP_VC_DEFAULT_USER_LIMIT", None)
-    if value in (None, "", 0, "0"):
-        return None
-
-    try:
-        return max(1, min(99, int(value)))
-    except Exception:
-        return None
-
-
-def _get_vc_limit_user_cooldown_seconds() -> float:
-    try:
-        return float(getattr(config, "VC_LIMIT_USER_COOLDOWN_SECONDS", 30))
-    except Exception:
-        return 30.0
-
-
-def _get_vc_limit_channel_cooldown_seconds() -> float:
-    try:
-        return float(getattr(config, "VC_LIMIT_CHANNEL_COOLDOWN_SECONDS", 30))
-    except Exception:
-        return 30.0
-
-
-def _get_vc_limit_min() -> int:
-    try:
-        return max(1, int(getattr(config, "VC_LIMIT_MIN", 1)))
-    except Exception:
-        return 1
-
-
-def _get_vc_limit_max() -> int:
-    try:
-        return min(99, max(_get_vc_limit_min(), int(getattr(config, "VC_LIMIT_MAX", 99))))
-    except Exception:
-        return 99
-
-
-def _normalize_limit(limit: Optional[int] | str, *, default: int = 32) -> int:
-    if limit in (None, "", 0, "0"):
-        return default
-
-    try:
-        return max(1, min(99, int(limit)))
-    except Exception:
-        return default
-
-
-def _parse_manual_limit(value: str) -> int | None:
-    value = value.strip()
-    if not value:
-        return None
-
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
-def _format_seconds(seconds: float) -> str:
-    seconds_int = max(0, int(seconds + 0.999))
-    minutes, sec = divmod(seconds_int, 60)
-    if minutes <= 0:
-        return f"{sec} 秒"
-    return f"{minutes} 分 {sec} 秒"
-
-
 def _category_from_ctx_channel(
     ch: Optional[discord.abc.GuildChannel],
 ) -> Optional[discord.CategoryChannel]:
@@ -240,37 +161,17 @@ def _category_from_ctx_channel(
 def _is_hub_channel(channel: Optional[discord.abc.GuildChannel]) -> bool:
     if not isinstance(channel, discord.VoiceChannel):
         return False
-    return channel.name.strip() == _get_hub_channel_name()
-
-
-def _normalize_temp_base_for_match() -> str:
-    return _get_temp_channel_base_name().strip()
+    return channel.name.strip() == get_hub_channel_name()
 
 
 def _next_temp_channel_name_in_category(category: Optional[discord.CategoryChannel], guild: discord.Guild) -> str:
-    base = _normalize_temp_base_for_match()
-    pattern = re.compile(rf"^{re.escape(base)}\s+(\d+)$")
-    used_numbers: set[int] = set()
-
     channels = category.channels if category else guild.channels
-    for ch in channels:
-        if not isinstance(ch, discord.VoiceChannel):
-            continue
-        match = pattern.fullmatch(ch.name.strip())
-        if match:
-            try:
-                used_numbers.add(int(match.group(1)))
-            except ValueError:
-                pass
-
-    n = 1
-    while n in used_numbers:
-        n += 1
-    return f"{base} {n}"
+    names = [channel.name for channel in channels if isinstance(channel, discord.VoiceChannel)]
+    return next_temp_channel_name(names)
 
 
 async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool = False) -> None:
-    timeout = _get_timeout_seconds()
+    timeout = get_timeout_seconds()
     ch_id = channel.id
 
     if not is_temp_vc_id(ch_id):
@@ -400,7 +301,7 @@ class TempVCLimitSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(self.view, TempVCLimitView):
             return
-        limit = _normalize_limit(self.values[0], default=32)
+        limit = normalize_limit(self.values[0], default=32)
         await self.view.create_with_limit(interaction, limit)
 
 
@@ -503,7 +404,7 @@ class ChangeLimitModal(discord.ui.Modal, title="修改小隊 call 人數上限")
         self.channel_id = channel_id
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        limit = _parse_manual_limit(str(self.new_limit.value))
+        limit = parse_manual_limit(str(self.new_limit.value))
         await self.cog.apply_vc_limit_from_modal(interaction, self.channel_id, limit)
 
 
@@ -794,11 +695,11 @@ class TempVC(commands.Cog):
         name: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> discord.VoiceChannel:
-        base = _get_temp_channel_base_name()
+        base = get_temp_channel_base_name()
         vc_name = f"{base} {name.strip()}" if name and name.strip() else _next_temp_channel_name_in_category(category, guild)
 
         kwargs: Dict[str, object] = {"bitrate": guild.bitrate_limit}
-        kwargs["user_limit"] = _normalize_limit(limit, default=32)
+        kwargs["user_limit"] = normalize_limit(limit, default=32)
 
         ch = await guild.create_voice_channel(
             vc_name,
@@ -819,7 +720,7 @@ class TempVC(commands.Cog):
 
     async def get_all_temp_vcs(self, guild: discord.Guild) -> list[discord.VoiceChannel]:
         try:
-            await bootstrap_track_temp_vcs(guild, name_prefixes=_get_name_prefixes())
+            await bootstrap_track_temp_vcs(guild, name_prefixes=get_name_prefixes())
         except Exception:
             log.exception("Failed to bootstrap temp VC admin list")
 
@@ -879,8 +780,8 @@ class TempVC(commands.Cog):
             )
             return
 
-        min_limit = _get_vc_limit_min()
-        max_limit = _get_vc_limit_max()
+        min_limit = get_vc_limit_min()
+        max_limit = get_vc_limit_max()
         if new_limit is None or new_limit < min_limit or new_limit > max_limit:
             await interaction.response.send_message(
                 f"❌ 請輸入 `{min_limit}` 至 `{max_limit}` 之間嘅人數上限。",
@@ -909,13 +810,13 @@ class TempVC(commands.Cog):
             user_last = VC_LIMIT_USER_COOLDOWNS.get(member.id, 0.0)
             channel_last = VC_LIMIT_CHANNEL_COOLDOWNS.get(channel.id, 0.0)
 
-            user_retry = _get_vc_limit_user_cooldown_seconds() - (now - user_last)
-            channel_retry = _get_vc_limit_channel_cooldown_seconds() - (now - channel_last)
+            user_retry = get_vc_limit_user_cooldown_seconds() - (now - user_last)
+            channel_retry = get_vc_limit_channel_cooldown_seconds() - (now - channel_last)
             retry = max(user_retry, channel_retry)
 
             if retry > 0:
                 await interaction.response.send_message(
-                    f"⏳ 呢個功能剛剛使用過，請等 `{_format_seconds(retry)}` 後再試。",
+                    f"⏳ 呢個功能剛剛使用過，請等 `{format_seconds(retry)}` 後再試。",
                     ephemeral=True,
                 )
                 return
@@ -996,7 +897,7 @@ class TempVC(commands.Cog):
         vc_name = _next_temp_channel_name_in_category(category, guild)
         kwargs: Dict[str, object] = {"bitrate": guild.bitrate_limit}
 
-        default_limit = _get_auto_vc_user_limit()
+        default_limit = get_auto_vc_user_limit()
         if default_limit is not None:
             kwargs["user_limit"] = default_limit
 
@@ -1040,7 +941,7 @@ class TempVC(commands.Cog):
 
         for guild in self.bot.guilds:
             try:
-                ids = await bootstrap_track_temp_vcs(guild, name_prefixes=_get_name_prefixes())
+                ids = await bootstrap_track_temp_vcs(guild, name_prefixes=get_name_prefixes())
                 for cid in ids:
                     ch = guild.get_channel(cid)
                     if ch is None:
@@ -1057,7 +958,7 @@ class TempVC(commands.Cog):
             except Exception:
                 log.exception("Temp VC bootstrap failed: guild=%s", guild.id)
 
-        interval = _get_sweep_interval_seconds()
+        interval = get_sweep_interval_seconds()
         if interval > 0:
             self._sweeper_task = asyncio.create_task(self._sweeper_loop(interval))
             log.info("Temp VC safety sweeper started: interval=%s", interval)
@@ -1072,7 +973,7 @@ class TempVC(commands.Cog):
                 await asyncio.sleep(interval)
                 for guild in self.bot.guilds:
                     try:
-                        ids = await bootstrap_track_temp_vcs(guild, name_prefixes=_get_name_prefixes())
+                        ids = await bootstrap_track_temp_vcs(guild, name_prefixes=get_name_prefixes())
                         for cid in ids:
                             ch = guild.get_channel(cid)
                             if ch is None:
@@ -1149,7 +1050,7 @@ class TempVC(commands.Cog):
         category = _category_from_ctx_channel(inter.channel)
         await inter.response.defer(ephemeral=False)
 
-        final_limit = _normalize_limit(limit, default=32)
+        final_limit = normalize_limit(limit, default=32)
         ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=final_limit)
         await inter.followup.send(_build_created_message(ch, final_limit), view=TempVCControlView(self, channel_id=ch.id))
 
