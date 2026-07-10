@@ -160,6 +160,13 @@ def cancel_delete_task(channel_id: int) -> None:
         log.debug("Cancelled temp VC deletion task: channel=%s", channel_id)
 
 
+def clear_delete_task(channel_id: int, task: asyncio.Task | None = None) -> None:
+    """Forget a completed task without cancelling it or a newer replacement."""
+    tracked = _PENDING_DELETE_TASKS.get(channel_id)
+    if tracked is not None and (task is None or tracked is task):
+        _PENDING_DELETE_TASKS.pop(channel_id, None)
+
+
 async def schedule_delete_if_empty(
     channel: discord.VoiceChannel,
     *,
@@ -182,6 +189,8 @@ async def schedule_delete_if_empty(
             pass
         except Exception:  # pragma: no cover
             log.exception("Temp VC deletion task failed: channel=%s", channel.id)
+        finally:
+            clear_delete_task(channel.id, asyncio.current_task())
 
     if len(channel.members) == 0:
         set_delete_task(channel.id, asyncio.create_task(_task()))
