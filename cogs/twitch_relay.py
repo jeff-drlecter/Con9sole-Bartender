@@ -77,6 +77,8 @@ class TwitchRelay(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.twitch_bot: Optional[twitch_commands.Bot] = None
+        self._connect_task: Optional[asyncio.Task] = None
         self.d2t_map: Dict[int, str] = {}
         self.t2d_map: Dict[str, int] = {}
 
@@ -165,9 +167,16 @@ class TwitchRelay(commands.Cog):
             initial_channels=initial or None
         )
 
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.twitch_bot.connect())
+        self._connect_task = asyncio.create_task(self.twitch_bot.connect())
         log.info("🔌 啟動統一 Twitch 連線：%s", ",".join(initial))
+
+    def cog_unload(self) -> None:
+        """Stop background Twitch work when this cog is reloaded or unloaded."""
+        if self._connect_task and not self._connect_task.done():
+            self._connect_task.cancel()
+
+        if self.twitch_bot is not None:
+            asyncio.create_task(self.twitch_bot.close())
 
     # ========== Discord → Twitch ==========
     @commands.Cog.listener("on_message")
