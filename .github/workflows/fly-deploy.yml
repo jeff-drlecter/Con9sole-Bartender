@@ -44,3 +44,8 @@ jobs:
         run: |
           # Remote builder 唔得就自動 fallback 本地
           flyctl deploy --remote-only || flyctl deploy --local-only
+
+      - name: Verify Fly.io machine status
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl status --app con9sole-bartender
