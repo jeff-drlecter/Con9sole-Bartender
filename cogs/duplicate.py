@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import discord
@@ -8,6 +9,8 @@ from discord.ext import commands
 
 import config
 from utils import copy_forum_tags, make_private_overwrites
+
+log = logging.getLogger("con9sole-bartender.duplicate")
 
 
 def user_is_section_admin(interaction: discord.Interaction) -> bool:
@@ -178,12 +181,12 @@ async def add_game_version(
     try:
         await new_forum.edit(position=source_forum.position)
     except Exception:
-        pass
+        log.exception("Failed to position cloned forum: forum=%s", new_forum.id)
 
     try:
         await copy_forum_tags(source_forum, new_forum)
-    except Exception as exc:
-        print(f"⚠️ copy_forum_tags 失敗：{exc}")
+    except Exception:
+        log.exception("Failed to copy tags to cloned forum: forum=%s", new_forum.id)
 
     return (
         f"已喺 `#{source_forum.category.name}` 建立 `#{new_forum.name}`；"
@@ -275,13 +278,13 @@ async def add_new_game(
         try:
             await created.edit(position=source.position)
         except Exception:
-            pass
+            log.exception("Failed to position duplicated channel: channel=%s", created.id)
 
     if first_source_forum is not None and created_forum is not None:
         try:
             await copy_forum_tags(first_source_forum, created_forum)
-        except Exception as exc:
-            print(f"⚠️ copy_forum_tags 失敗：{exc}")
+        except Exception:
+            log.exception("Failed to copy tags to duplicated forum: forum=%s", created_forum.id)
 
     fallback = getattr(config, "FALLBACK_CHANNELS", {}) or {}
     if fallback:

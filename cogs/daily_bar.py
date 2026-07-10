@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -11,6 +13,8 @@ from features.daily_bar import (
     get_daily_bar_completion,
     get_daily_bar_task,
 )
+
+log = logging.getLogger("con9sole-bartender.daily-bar.cog")
 
 
 TASK_ACTIONS: dict[str, tuple[str, str]] = {
@@ -70,7 +74,7 @@ class DailyBar(commands.Cog):
             try:
                 await menu_cog.record_usage("daily_bar", interaction.user.id, interaction.guild_id)
             except Exception:
-                pass
+                log.exception("Failed to record daily-bar usage: user=%s", interaction.user.id)
 
     async def _send_daily_bar(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction)
