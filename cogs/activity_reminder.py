@@ -6,7 +6,7 @@
 # - Persistent storage in JSON (no DB)
 
 import asyncio
-import json
+import logging
 import os
 import re
 from dataclasses import dataclass, asdict
@@ -18,6 +18,9 @@ from discord.ext import commands, tasks
 from discord import app_commands
 
 import config
+from core.json_storage import atomic_write_json, load_json_object
+
+log = logging.getLogger("con9sole-bartender.activity-reminder")
 
 # --------- Settings ---------
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
@@ -211,11 +214,10 @@ class ActivityReminder(commands.Cog):
             self._save()
             return
 
-        try:
-            with open(self.data_file, "r", encoding="utf-8") as f:
-                raw = json.load(f) or {}
-        except Exception:
-            raw = {}
+        raw = load_json_object(
+            self.data_file,
+            lambda: {"activities": [], "sent_cache": {}},
+        )
 
         self.activities = {}
         for a in raw.get("activities", []):
@@ -253,8 +255,7 @@ class ActivityReminder(commands.Cog):
             ],
             "sent_cache": self.sent_cache,
         }
-        with open(self.data_file, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False, indent=2)
+        atomic_write_json(self.data_file, raw)
 
     def _prune_cache(self, days: int = 3):
         # keep only recent days
