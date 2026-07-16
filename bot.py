@@ -11,6 +11,7 @@ from discord.ext import commands
 
 import config
 from core.app_command_errors import handle_app_command_error
+from core.config_validation import validate_config
 from core.logging_config import configure_logging
 
 # ---------- Logging ----------
@@ -44,6 +45,9 @@ class Bot(commands.Bot):
         )
 
     async def setup_hook(self) -> None:
+        for warning in validate_config():
+            log.warning("Configuration issue: %s", warning)
+
         # 自動載入 cogs：只掃真 .py，避免 .py.old / .bak
         import cogs  # 以已安裝 package 取目錄，避免 cwd 不同
 
