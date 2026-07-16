@@ -4,6 +4,5 @@
 .venv
 __pycache__
 *.pyc
-data
 tests
 fly.toml
