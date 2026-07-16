@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 import discord
 
 import config
+from core.sqlite_storage import connect_sqlite, enable_wal
+
+log = logging.getLogger("con9sole-bartender.menu.stats")
 
 MENU_COLOR = 0x2B2D31
 
@@ -84,7 +88,8 @@ FEATURE_EMOJIS: dict[str, str] = {
 
 def init_stats_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
+        enable_wal(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS command_usage (
@@ -114,7 +119,7 @@ def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | 
     try:
         init_stats_db()
         now = datetime.now(timezone.utc).isoformat()
-        with sqlite3.connect(STATS_DB) as conn:
+        with connect_sqlite(STATS_DB) as conn:
             conn.execute(
                 """
                 INSERT INTO command_usage (feature, user_id, guild_id, used_at)
@@ -123,7 +128,12 @@ def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | 
                 (feature.lower().strip(), user_id, guild_id, now),
             )
     except Exception:
-        pass
+        log.exception(
+            "Failed to record menu usage: feature=%s user=%s guild=%s",
+            feature,
+            user_id,
+            guild_id,
+        )
 
 
 def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, int]]:
@@ -141,7 +151,7 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
         params.append(since.isoformat())
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         rows = conn.execute(
             f"""
             SELECT feature, COUNT(*) AS total
@@ -171,7 +181,7 @@ def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
         params.append(since.isoformat())
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         row = conn.execute(
             f"SELECT COUNT(*) AS total FROM command_usage {where_sql}",
             params,

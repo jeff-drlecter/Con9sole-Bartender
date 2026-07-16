@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
 
+from core.sqlite_storage import connect_sqlite, enable_wal
 from data.drink_data import DrinkEntry
+
+log = logging.getLogger("con9sole-bartender.drink.storage")
 
 EVENT_SELF_DRINK = "self_drink"
 EVENT_GIFT_DRINK = "gift_drink"
@@ -24,7 +28,8 @@ STATS_DB = DATA_DIR / "community_stats.sqlite3"
 
 def init_drink_events_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
+        enable_wal(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS drink_events (
@@ -82,7 +87,7 @@ def record_drink_event(
 ) -> None:
     try:
         init_drink_events_db()
-        with sqlite3.connect(STATS_DB) as conn:
+        with connect_sqlite(STATS_DB) as conn:
             conn.execute(
                 """
                 INSERT INTO drink_events (
@@ -110,12 +115,18 @@ def record_drink_event(
             )
     except Exception:
         # Stats failure should never block drink flow.
-        pass
+        log.exception(
+            "Failed to record drink event: guild=%s event=%s actor=%s target=%s",
+            guild_id,
+            event_type,
+            actor_id,
+            target_id,
+        )
 
 
 def count_events(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
     init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         row = conn.execute(
             f"""
             SELECT COUNT(*)
@@ -130,7 +141,7 @@ def count_events(guild_id: int | None, where_sql: str, params: tuple[object, ...
 
 def count_distinct_drinks(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
     init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         row = conn.execute(
             f"""
             SELECT COUNT(DISTINCT drink_eng)
@@ -145,7 +156,7 @@ def count_distinct_drinks(guild_id: int | None, where_sql: str, params: tuple[ob
 
 def recent_event(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> sqlite3.Row | None:
     init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             f"""
@@ -167,7 +178,7 @@ def top_member_id(
     params: tuple[object, ...],
 ) -> tuple[int, int] | None:
     init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         row = conn.execute(
             f"""
             SELECT {select_field} AS member_id, COUNT(*) AS total
@@ -296,7 +307,7 @@ def fetch_collection_rows(
         limit_sql = "LIMIT ?"
         params.append(limit)
 
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""
@@ -332,7 +343,7 @@ def fetch_collection_rows(
 
 def fetch_collection_rarity_counts(guild_id: int | None, user_id: int) -> dict[str, int]:
     init_drink_events_db()
-    with sqlite3.connect(STATS_DB) as conn:
+    with connect_sqlite(STATS_DB) as conn:
         rows = conn.execute(
             """
             SELECT rarity, COUNT(*) AS total
