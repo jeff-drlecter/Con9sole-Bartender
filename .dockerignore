@@ -1,2 +1,9 @@
-fly.toml
+.git
+.github
+.env
 .venv
+__pycache__
+*.pyc
+data
+tests
+fly.toml
