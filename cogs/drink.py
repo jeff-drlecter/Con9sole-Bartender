@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -55,6 +56,8 @@ from features.drink_views import (
     GiftDrinkCancelView,
 )
 
+log = logging.getLogger("con9sole-bartender.drink")
+
 
 @dataclass
 class GiftDrinkPending:
@@ -99,7 +102,7 @@ class Drink(commands.Cog):
             try:
                 await menu_cog.record_usage(feature, interaction.user.id, interaction.guild_id)
             except Exception:
-                pass
+                log.exception("Failed to record drink usage: user=%s feature=%s", interaction.user.id, feature)
 
     async def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
         completed = complete_daily_bar_task(
@@ -116,7 +119,7 @@ class Drink(commands.Cog):
                 ephemeral=True,
             )
         except Exception:
-            pass
+            log.exception("Failed to send daily-bar completion notice: user=%s feature=%s", interaction.user.id, feature)
 
     async def _check_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         retry_after = get_drink_retry_after(interaction.user.id)

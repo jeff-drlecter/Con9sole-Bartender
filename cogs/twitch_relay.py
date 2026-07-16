@@ -272,7 +272,7 @@ async def _safe_get_messageable_channel(bot: commands.Bot, channel_id: int) -> O
         if isinstance(ch, (TextChannel, VoiceChannel, StageChannel, Messageable)):
             return ch
     except Exception:
-        pass
+        log.debug("Could not fetch Discord relay channel: channel=%s", channel_id, exc_info=True)
     return None
 
 

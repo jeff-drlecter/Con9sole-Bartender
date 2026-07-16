@@ -1031,7 +1031,7 @@ class TempVC(commands.Cog):
                     try:
                         await member.send("我剛剛想幫你開臨時語音房，但建立失敗。請通知管理員檢查 Bot 權限設定。")
                     except Exception:
-                        pass
+                        log.debug("Could not DM member after temp VC creation failure: member=%s", member.id)
             finally:
                 self._creating_for_members.discard(member.id)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import time
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from data.cheers_quotes import (
 from features.daily_bar import complete_daily_bar_task
 from features.menu_helpers import build_menu_file
 from features.menu_views import build_full_menu_view
+
+log = logging.getLogger("con9sole-bartender.cheers")
 
 CHEERS_USER_COOLDOWNS: dict[int, float] = {}
 CHEER_TARGET_TIMEOUT_SECONDS = 60.0
@@ -132,7 +135,7 @@ class Cheers(commands.Cog):
             try:
                 await menu_cog.record_usage(feature, interaction.user.id, interaction.guild_id)
             except Exception:
-                pass
+                log.exception("Failed to record cheers usage: user=%s feature=%s", interaction.user.id, feature)
 
     async def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
         completed = complete_daily_bar_task(
@@ -149,7 +152,7 @@ class Cheers(commands.Cog):
                 ephemeral=True,
             )
         except Exception:
-            pass
+            log.exception("Failed to send daily-bar completion notice: user=%s feature=%s", interaction.user.id, feature)
 
     async def _check_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
         if is_admin_or_helper(interaction.user):
