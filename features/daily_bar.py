@@ -2,27 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 import discord
 
 from core.sqlite_storage import connect_sqlite, enable_wal
+from core.storage_paths import DATA_DIR, STATS_DB
 
 log = logging.getLogger("con9sole-bartender.daily-bar")
 
 DAILY_BAR_COLOR = 0xD6A85C
-
-DATA_DIR = Path(os.getenv("DRINK_DATA_DIR", "/data"))
-if not DATA_DIR.exists():
-    DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-STATS_DB = DATA_DIR / "community_stats.sqlite3"
-
 
 @dataclass(frozen=True)
 class DailyBarTask:
