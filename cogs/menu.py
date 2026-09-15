@@ -7,6 +7,7 @@ from discord.ext import commands
 import config
 from core.safe_send import send_or_followup
 from features.admin_actions import (
+    admin_game_tools_from_button as run_admin_game_tools_from_button,
     admin_ping_from_button as run_admin_ping_from_button,
     admin_reload_from_button as run_admin_reload_from_button,
     admin_role_tools_from_button as run_admin_role_tools_from_button,
@@ -31,12 +32,7 @@ from features.menu_helpers import (
     touch_cooldown,
 )
 from features.menu_stats import init_stats_db, record_usage_sync
-from features.menu_views import (
-    AdminToolView,
-    HelpMenuView,
-    HomeMenuView,
-    QuickBarView,
-)
+from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
 from features.role_tools import RoleActionState, RoleToolsView
 from features.role_tools_actions import (
     execute_role_change_from_select as run_execute_role_change_from_select,
@@ -56,7 +52,11 @@ class Menu(commands.Cog):
 
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
-            await send_or_followup(interaction, content=f"⏳ 請等 {retry_after:.1f} 秒後再用 /menu。", ephemeral=True)
+            await send_or_followup(
+                interaction,
+                content=f"⏳ 請等 {retry_after:.1f} 秒後再用 /menu。",
+                ephemeral=True,
+            )
             return False
 
         touch_cooldown(interaction.user.id)
@@ -68,20 +68,44 @@ class Menu(commands.Cog):
 
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
-            await send_or_followup(interaction, content=f"⏳ 請等 {retry_after:.1f} 秒後再撳。", ephemeral=True)
+            await send_or_followup(
+                interaction,
+                content=f"⏳ 請等 {retry_after:.1f} 秒後再按。",
+                ephemeral=True,
+            )
             return False
 
         touch_cooldown(interaction.user.id)
         return True
 
-    async def record_usage(self, feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
+    async def record_usage(
+        self,
+        feature: str,
+        user_id: int | None = None,
+        guild_id: int | None = None,
+    ) -> None:
         record_usage_sync(feature, user_id, guild_id)
 
-    async def execute_role_change_from_select(self, interaction: discord.Interaction, *, state: RoleActionState) -> None:
+    async def execute_role_change_from_select(
+        self,
+        interaction: discord.Interaction,
+        *,
+        state: RoleActionState,
+    ) -> None:
         await run_execute_role_change_from_select(interaction, state=state)
 
-    async def execute_role_list_for_member(self, interaction: discord.Interaction, *, member: discord.Member, edit_existing: bool = True) -> None:
-        await run_execute_role_list_for_member(interaction, member=member, edit_existing=edit_existing)
+    async def execute_role_list_for_member(
+        self,
+        interaction: discord.Interaction,
+        *,
+        member: discord.Member,
+        edit_existing: bool = True,
+    ) -> None:
+        await run_execute_role_list_for_member(
+            interaction,
+            member=member,
+            edit_existing=edit_existing,
+        )
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
@@ -114,6 +138,9 @@ class Menu(commands.Cog):
 
     async def admin_role_tools_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_role_tools_from_button(self, interaction)
+
+    async def admin_game_tools_from_button(self, interaction: discord.Interaction) -> None:
+        await run_admin_game_tools_from_button(self, interaction)
 
     async def admin_ping_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_ping_from_button(interaction)
@@ -173,7 +200,11 @@ class Menu(commands.Cog):
             app_commands.Choice(name="全部", value="all"),
         ]
     )
-    async def admin_stats(self, interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
+    async def admin_stats(
+        self,
+        interaction: discord.Interaction,
+        scope: app_commands.Choice[str],
+    ) -> None:
         await run_admin_stats_command(interaction, scope_value=scope.value)
 
 
