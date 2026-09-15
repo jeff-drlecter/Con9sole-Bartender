@@ -102,10 +102,10 @@ async def admin_role_tools_from_button(menu_cog: object, interaction: discord.In
 
 
 async def admin_game_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
-    if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+    if not can_use_admin(interaction.user):
         await send_or_followup(
             interaction,
-            content="❌ Game Tools 與 `/add_new_game`、`/add_game_version` 一樣，只限 Administrator 使用。",
+            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Game Tools。",
             ephemeral=True,
         )
         return
@@ -124,7 +124,7 @@ async def admin_game_tools_from_button(menu_cog: object, interaction: discord.In
         ),
         color=MENU_COLOR,
     )
-    embed.set_footer(text="Game Tools｜只限 Administrator 使用。")
+    embed.set_footer(text="Game Tools｜Admin / Helper 專用。")
     await send_or_followup(
         interaction,
         embed=embed,
