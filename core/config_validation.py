@@ -7,7 +7,9 @@ import config
 
 REQUIRED_POSITIVE_INT_SETTINGS: tuple[str, ...] = (
     "GUILD_ID",
+    "TEMPLATE_CATEGORY_ID",
     "VERIFIED_ROLE_ID",
+    "MOD_ROLE_ID",
     "WELCOME_CHANNEL_ID",
     "RULES_CHANNEL_ID",
     "GUIDE_CHANNEL_ID",
@@ -27,7 +29,16 @@ def validate_config(settings: ModuleType | object = config) -> list[str]:
     helper_role_ids = getattr(settings, "HELPER_ROLE_IDS", [])
     if not isinstance(helper_role_ids, (list, tuple, set)):
         warnings.append("HELPER_ROLE_IDS must be a list, tuple, or set")
-    elif any(not isinstance(role_id, int) or isinstance(role_id, bool) or role_id <= 0 for role_id in helper_role_ids):
+    elif any(
+        not isinstance(role_id, int) or isinstance(role_id, bool) or role_id <= 0
+        for role_id in helper_role_ids
+    ):
         warnings.append("HELPER_ROLE_IDS contains an invalid Discord role ID")
+
+    helper_role_names = getattr(settings, "HELPER_ROLE_NAMES", [])
+    if not isinstance(helper_role_names, (list, tuple, set)):
+        warnings.append("HELPER_ROLE_NAMES must be a list, tuple, or set")
+    elif any(not isinstance(name, str) or not name.strip() for name in helper_role_names):
+        warnings.append("HELPER_ROLE_NAMES contains an invalid role name")
 
     return warnings
