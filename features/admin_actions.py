@@ -57,7 +57,7 @@ async def admin_reload_from_button(interaction: discord.Interaction) -> None:
     record_usage_sync("admin_reload", interaction.user.id, interaction.guild_id)
 
     reload_cog = interaction.client.get_cog("Reload")
-    if reload_cog is None or not hasattr(reload_cog, "_reload_one"):
+    if reload_cog is None or not hasattr(reload_cog, "_reload_many"):
         await send_or_followup(
             interaction,
             content="❌ Reload 模組未載入，無法由 Bot 內自行修復。請重新啟動 Bot。",
@@ -66,35 +66,21 @@ async def admin_reload_from_button(interaction: discord.Interaction) -> None:
         return
 
     try:
-        from cogs.reload import _list_cogs_package  # type: ignore
+        result = reload_cog._reload_many(None)  # type: ignore[attr-defined]
+        if inspect.isawaitable(result):
+            ok_list, fail_list = await result
+        else:
+            ok_list, fail_list = result
 
-        ok_list: list[str] = []
-        fail_list: list[str] = []
-        for name in _list_cogs_package():
-            ext = f"cogs.{name}"
-            try:
-                result = reload_cog._reload_one(ext)  # type: ignore[attr-defined]
-                if inspect.isawaitable(result):
-                    ok, fail = await result
-                else:
-                    ok, fail = result
-            except Exception as exc:
-                ok = False
-                fail = f"`{type(exc).__name__}`: {exc}"
-            if ok:
-                ok_list.append(name)
-            else:
-                fail_list.append(f"{name} -> {fail}")
-
-        msg: list[str] = []
+        parts: list[str] = []
         if ok_list:
-            msg.append("✅ 已重載： " + ", ".join(ok_list))
+            parts.append("✅ 已重載： " + ", ".join(ok_list))
         if fail_list:
-            msg.append("❌ 失敗：\n- " + "\n- ".join(fail_list))
+            parts.append("❌ 失敗：\n- " + "\n- ".join(fail_list))
 
         await send_or_followup(
             interaction,
-            content="\n".join(msg) if msg else "⚠️ 無可重載的 cogs。",
+            content="\n".join(parts) if parts else "⚠️ 無可重載的 cogs。",
             ephemeral=True,
         )
     except Exception as exc:
