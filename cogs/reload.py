@@ -63,6 +63,14 @@ class Reload(commands.Cog):
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
 
+    async def _sync_guild_commands(self) -> tuple[bool, str]:
+        try:
+            guild_obj = discord.Object(id=config.GUILD_ID)
+            await self.bot.tree.sync(guild=guild_obj)
+            return True, ""
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+
     async def _reload_many(self, cog: str | None = None) -> tuple[list[str], list[str]]:
         target = _normalize_cog_name(cog)
         names = _list_cogs_package() if target is None else [target]
@@ -77,6 +85,10 @@ class Reload(commands.Cog):
                 ok_list.append(name)
             else:
                 fail_list.append(f"{name} -> {fail}")
+
+        sync_ok, sync_fail = await self._sync_guild_commands()
+        if not sync_ok:
+            fail_list.append(f"slash command sync -> {sync_fail}")
 
         return ok_list, fail_list
 
