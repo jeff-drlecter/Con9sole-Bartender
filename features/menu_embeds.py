@@ -117,10 +117,11 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             "**管理工具**\n\n"
             "📊 **Stats** — Community Bot 使用數據\n"
-            "🔄 **Reload** — 直接重載所有 cogs\n"
-            "🎭 **Role Tools** — Select Menu 角色管理工具\n"
+            "🔄 **Reload** — 重載 Bot cogs\n"
+            "🎭 **Role Tools** — 成員角色管理\n"
+            "🎮 **Game Tools** — `/add_new_game` / `/add_game_version` 使用說明\n"
             "🏓 **Ping** — Bot latency\n"
-            "🧹 **VC Teardown** — 列出並刪除 Bot Temp VC\n\n"
+            "🧹 **VC Teardown** — 列出並刪除 Bot 建立的臨時語音房\n\n"
             "⬅️ **Menu** — 返回吧枱主頁"
         ),
         color=MENU_COLOR,
