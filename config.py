@@ -10,9 +10,10 @@ CATEGORY_NAME_PATTERN = "{game}"   # 新分區命名
 ROLE_NAME_PATTERN = "{game}"       # 新角色命名
 ADMIN_ROLE_IDS: List[int] = []      # 額外管理角色（可留空）
 
-# Helper 權限：可以使用 /admin_stats
+# Admin / Helper 權限設定
 HELPER_ROLE_NAMES: List[str] = ["helpers"]
 HELPER_ROLE_IDS: List[int] = [1279071042249162856]
+MOD_ROLE_ID: int = 626379227473903632
 
 # 後備頻道
 FALLBACK_CHANNELS = {}
@@ -43,7 +44,7 @@ VC_LIMIT_CHANNEL_COOLDOWN_SECONDS = 30
 VC_LIMIT_MIN = 1
 VC_LIMIT_MAX = 99
 
-#social media link
+# social media link
 SOCIAL_INSTAGRAM_URL = "https://www.instagram.com/con9sole/"
 SOCIAL_THREADS_URL = "https://threads.net/con9sole"
 
