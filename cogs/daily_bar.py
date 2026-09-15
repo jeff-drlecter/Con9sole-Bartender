@@ -39,7 +39,7 @@ class DailyBarActionButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if self.task_key not in TASK_ACTIONS:
-            await interaction.response.send_message("❌ 呢個每日任務暫時未設定動作。", ephemeral=True)
+            await interaction.response.send_message("❌ 此每日任務暫時未設定動作。", ephemeral=True)
             return
 
         cog_name, method_name = TASK_ACTIONS[self.task_key]
@@ -86,7 +86,7 @@ class DailyBar(commands.Cog):
         await self._send_daily_bar(interaction)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="daily_bar", description="View today's bar task")
+    @app_commands.command(name="daily_bar", description="查看今日吧枱任務")
     async def daily_bar(self, interaction: discord.Interaction) -> None:
         await self._send_daily_bar(interaction)
 
