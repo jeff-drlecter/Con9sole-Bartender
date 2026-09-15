@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -13,7 +12,6 @@ from core.storage_paths import DATA_DIR, STATS_DB
 log = logging.getLogger("con9sole-bartender.menu.stats")
 
 MENU_COLOR = 0x2B2D31
-
 HK_TZ = timezone(timedelta(hours=8))
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 
@@ -29,6 +27,8 @@ FEATURE_LABELS: dict[str, str] = {
     "drink_gift": "賜酒",
     "drink_stats": "酒保紀錄",
     "drink_collection": "酒單收藏",
+    "drink_leaderboard": "酒保排行榜",
+    "daily_bar": "今日任務",
     "confession": "無名告白",
     "ig": "IG Page",
     "threads": "Threads Page",
@@ -38,6 +38,7 @@ FEATURE_LABELS: dict[str, str] = {
     "admin_stats": "Admin Stats",
     "admin_reload": "Reload",
     "admin_role": "Role Tools",
+    "admin_game_tools": "Game Tools",
     "admin_role_grant": "Role Grant",
     "admin_role_revoke": "Role Revoke",
     "admin_role_list": "Role List",
@@ -58,6 +59,8 @@ FEATURE_EMOJIS: dict[str, str] = {
     "drink_gift": "🥂",
     "drink_stats": "📊",
     "drink_collection": "🍾",
+    "drink_leaderboard": "🏆",
+    "daily_bar": "📅",
     "confession": "🕯️",
     "ig": "📸",
     "threads": "🧵",
@@ -67,6 +70,7 @@ FEATURE_EMOJIS: dict[str, str] = {
     "admin_stats": "📊",
     "admin_reload": "🔄",
     "admin_role": "🎭",
+    "admin_game_tools": "🎮",
     "admin_role_grant": "➕",
     "admin_role_revoke": "➖",
     "admin_role_list": "📋",
@@ -105,7 +109,11 @@ def init_stats_db() -> None:
         )
 
 
-def record_usage_sync(feature: str, user_id: int | None = None, guild_id: int | None = None) -> None:
+def record_usage_sync(
+    feature: str,
+    user_id: int | None = None,
+    guild_id: int | None = None,
+) -> None:
     try:
         init_stats_db()
         now = datetime.now(timezone.utc).isoformat()
@@ -193,7 +201,12 @@ def format_stats_block(stats: list[tuple[str, int]]) -> str:
     return "\n".join(lines)
 
 
-def build_admin_stats_embed(*, guild_id: int | None, days: int | None, title_scope: str) -> discord.Embed:
+def build_admin_stats_embed(
+    *,
+    guild_id: int | None,
+    days: int | None,
+    title_scope: str,
+) -> discord.Embed:
     stats = get_stats(guild_id, days)
     total = get_total_usage(guild_id, days)
 
