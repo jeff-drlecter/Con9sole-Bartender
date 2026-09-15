@@ -22,17 +22,6 @@ class MenuItem:
     description: str = ""
 
 
-# Button colour rule:
-# - secondary: navigation / info / quiet utility
-# - primary: normal functional action / targeted action / records
-# - success: light positive instant action
-# - danger: admin-restricted or destructive/high-impact action
-# - link: external URL, added dynamically in menu.py
-
-
-# Layer 1：公開 / 快捷吧枱
-# Quick Bar 會出喺 drink / cheers / main menu 下方。
-# Layout：row 0 兩個入口、row 1 兩個小隊 call、row 2 四個即用功能。
 QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="home_menu",
@@ -125,13 +114,6 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 ]
 
 
-# Layer 2：私人主頁 / 功能總覽
-# Desired Home layout:
-# row 0: core community tools
-# row 1: cheers / social-emotion / confession
-# row 2: bartender drink series
-# row 3: daily bar + invite + IG + Threads
-# row 4: help + admin
 HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="team",
@@ -370,7 +352,19 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         cog="Menu",
         method="admin_role_tools_from_button",
         admin_only=True,
-        description="Select Menu 角色管理工具",
+        description="角色管理工具",
+    ),
+    MenuItem(
+        id="admin_game_tools",
+        label="Game Tools",
+        emoji="🎮",
+        style="primary",
+        layer="admin",
+        row=1,
+        cog="Menu",
+        method="admin_game_tools_from_button",
+        admin_only=True,
+        description="建立全新遊戲或新增遊戲版本",
     ),
     MenuItem(
         id="admin_ping",
