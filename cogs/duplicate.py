@@ -8,13 +8,14 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.permissions import is_admin_or_helper
 from utils import copy_forum_tags, make_private_overwrites
 
 log = logging.getLogger("con9sole-bartender.duplicate")
 
 
-def user_is_section_admin(interaction: discord.Interaction) -> bool:
-    return isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
+def user_can_manage_games(interaction: discord.Interaction) -> bool:
+    return is_admin_or_helper(interaction.user)
 
 
 def _safe_get(obj: object, attr: str, default: Any = None) -> Any:
@@ -326,8 +327,7 @@ class Duplicate(commands.Cog):
         description="建立全新遊戲 Category、角色及模板頻道",
     )
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(lambda interaction: user_can_manage_games(interaction))
     @app_commands.describe(gamename="新遊戲名稱，例如 delta-force")
     async def add_new_game_cmd(
         self,
@@ -337,8 +337,8 @@ class Duplicate(commands.Cog):
         if interaction.guild_id != config.GUILD_ID:
             await interaction.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
             return
-        if not user_is_section_admin(interaction):
-            await interaction.response.send_message("需要 Administrator 權限。", ephemeral=True)
+        if not user_can_manage_games(interaction):
+            await interaction.response.send_message("需要 Administrator、Manage Server 或 Helper 權限。", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -357,8 +357,7 @@ class Duplicate(commands.Cog):
         description="喺現有遊戲系列 Category 內新增另一個版本 Forum 及角色",
     )
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(lambda interaction: user_can_manage_games(interaction))
     @app_commands.describe(
         source_forum="來源版本 Forum，例如 gta-v-專區",
         source_role="來源版本角色，例如 GTA-V Player",
@@ -374,8 +373,8 @@ class Duplicate(commands.Cog):
         if interaction.guild_id != config.GUILD_ID:
             await interaction.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
             return
-        if not user_is_section_admin(interaction):
-            await interaction.response.send_message("需要 Administrator 權限。", ephemeral=True)
+        if not user_can_manage_games(interaction):
+            await interaction.response.send_message("需要 Administrator、Manage Server 或 Helper 權限。", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
