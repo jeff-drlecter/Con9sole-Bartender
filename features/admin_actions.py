@@ -5,7 +5,7 @@ import inspect
 import discord
 
 from core.safe_send import send_or_followup
-from features.menu_helpers import can_use_admin
+from features.menu_helpers import MENU_COLOR, can_use_admin
 from features.menu_stats import build_admin_stats_embed, record_usage_sync
 from features.menu_views import AdminToolView
 from features.role_tools import RoleToolsView, build_role_tools_embed
@@ -60,7 +60,7 @@ async def admin_reload_from_button(interaction: discord.Interaction) -> None:
     if reload_cog is None or not hasattr(reload_cog, "_reload_one"):
         await send_or_followup(
             interaction,
-            content="❌ Reload cog 未載入，請先用 `/reload reload` 或重啟 Bot。",
+            content="❌ Reload 模組未載入，無法由 Bot 內自行修復。請重新啟動 Bot。",
             ephemeral=True,
         )
         return
@@ -111,6 +111,30 @@ async def admin_role_tools_from_button(menu_cog: object, interaction: discord.In
         interaction,
         embed=build_role_tools_embed(interaction.user),
         view=RoleToolsView(menu_cog),
+        ephemeral=True,
+    )
+
+
+async def admin_game_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    record_usage_sync("admin_game_tools", interaction.user.id, interaction.guild_id)
+    embed = discord.Embed(
+        title="🎮 Game Tools",
+        description=(
+            "**遊戲專區管理**\n\n"
+            "🆕 **建立全新遊戲**\n"
+            "使用 `/add_new_game`，建立新的 Category、角色及模板頻道。\n\n"
+            "🔄 **新增遊戲版本**\n"
+            "使用 `/add_game_version`，選擇現有 Forum 及來源角色後，只需填寫新版本名稱。\n"
+            "Bot 會自動建立 `<新版本>-專區` 及 `<新版本> Player`，並把新 Forum 放在來源 Forum 之前。\n\n"
+            "舊 `/role_channel_new` 已停用，避免與現行遊戲建立流程重疊。"
+        ),
+        color=MENU_COLOR,
+    )
+    embed.set_footer(text="Game Tools｜請使用上方兩個現行 slash commands。")
+    await send_or_followup(
+        interaction,
+        embed=embed,
+        view=AdminToolView(menu_cog),
         ephemeral=True,
     )
 
