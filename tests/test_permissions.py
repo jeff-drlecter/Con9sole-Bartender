@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import discord
 
 import config
-from core.permissions import is_admin_or_helper, is_verified_member
+from core.permissions import is_admin_or_helper, is_helper, is_verified_member
 
 
 def make_member(*, administrator: bool = False, manage_guild: bool = False, roles: list[Mock] | None = None) -> Mock:
@@ -30,15 +30,26 @@ class PermissionTests(unittest.TestCase):
     def test_administrator_is_allowed(self) -> None:
         self.assertTrue(is_admin_or_helper(make_member(administrator=True)))
 
+    def test_manage_guild_is_allowed(self) -> None:
+        self.assertTrue(is_admin_or_helper(make_member(manage_guild=True)))
+
     def test_helper_role_id_is_allowed(self) -> None:
         helper_id = config.HELPER_ROLE_IDS[0]
         member = make_member(roles=[make_role(helper_id, "renamed-helper")])
 
+        self.assertTrue(is_helper(member))
+        self.assertTrue(is_admin_or_helper(member))
+
+    def test_helper_role_name_is_case_insensitive(self) -> None:
+        member = make_member(roles=[make_role(999, "HeLpErS")])
+
+        self.assertTrue(is_helper(member))
         self.assertTrue(is_admin_or_helper(member))
 
     def test_ordinary_member_is_rejected(self) -> None:
         member = make_member(roles=[make_role(123, "member")])
 
+        self.assertFalse(is_helper(member))
         self.assertFalse(is_admin_or_helper(member))
 
     def test_verified_role_is_detected(self) -> None:
@@ -49,6 +60,7 @@ class PermissionTests(unittest.TestCase):
     def test_non_member_is_rejected(self) -> None:
         user = Mock(spec=discord.User)
 
+        self.assertFalse(is_helper(user))
         self.assertFalse(is_admin_or_helper(user))
         self.assertFalse(is_verified_member(user))
 
