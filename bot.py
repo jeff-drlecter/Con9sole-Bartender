@@ -14,17 +14,15 @@ from core.app_command_errors import handle_app_command_error
 from core.config_validation import validate_config
 from core.logging_config import configure_logging
 
-# ---------- Logging ----------
 configure_logging()
 log = logging.getLogger("con9sole-bartender")
 
-# ---------- Intents ----------
 intents = discord.Intents.default()
-intents.members = True           # 成員事件：join / leave / role / nick 更新
+intents.members = True
 intents.guilds = True
 intents.messages = True
-intents.voice_states = True      # 語音房事件
-intents.message_content = True   # tag bot 出 menu / 讀 message content
+intents.voice_states = True
+intents.message_content = True
 
 
 class Con9soleCommandTree(app_commands.CommandTree):
@@ -48,8 +46,7 @@ class Bot(commands.Bot):
         for warning in validate_config():
             log.warning("Configuration issue: %s", warning)
 
-        # 自動載入 cogs：只掃真 .py，避免 .py.old / .bak
-        import cogs  # 以已安裝 package 取目錄，避免 cwd 不同
+        import cogs
 
         cogs_dir = pathlib.Path(cogs.__file__).parent
         loaded: list[str] = []
@@ -63,9 +60,7 @@ class Bot(commands.Bot):
                 if fn.startswith("_"):
                     continue
 
-                stem = fn[:-3]  # 去掉 .py
-
-                # 防止 message_audit.py.old / xxx.bak.py 呢類帶點號檔名被誤讀
+                stem = fn[:-3]
                 if "." in stem:
                     continue
 
@@ -74,20 +69,18 @@ class Bot(commands.Bot):
                     await self.load_extension(full)
                     loaded.append(full)
                     log.info("Loaded extension: %s", full)
-                except Exception as e:
-                    log.exception("Failed loading %s: %r", full, e)
+                except Exception as exc:
+                    log.exception("Failed loading %s: %r", full, exc)
 
         if not loaded:
             log.warning("No cogs loaded from %s", cogs_dir)
 
-        # Slash 指令同步
-        # 重要：清走舊 global commands，避免 bot.py 舊 /ping 或其他歷史 global command 留喺 Discord UI。
         try:
             self.tree.clear_commands(guild=None)
             await self.tree.sync()
             log.info("Global app commands cleared")
-        except Exception as e:
-            log.exception("Global app command clear failed: %r", e)
+        except Exception as exc:
+            log.exception("Global app command clear failed: %r", exc)
 
         try:
             if getattr(config, "GUILD_ID", None):
@@ -97,18 +90,13 @@ class Bot(commands.Bot):
             else:
                 await self.tree.sync()
                 log.info("App commands synced globally")
-        except Exception as e:
-            log.exception("Slash command sync failed: %r", e)
+        except Exception as exc:
+            log.exception("Slash command sync failed: %r", exc)
 
     async def on_ready(self) -> None:
         log.info("✅ Logged in as %s (%s)", self.user, self.user and self.user.id)
 
     async def on_message(self, message: discord.Message) -> None:
-        """全局 fallback：純 tag bot 時叫出 Menu。
-
-        放喺 bot.py 主 Bot class，比單靠 Cog listener 更穩陣。
-        注意：最後一定要 process_commands，避免影響 prefix / hybrid commands。
-        """
         if message.author.bot:
             return
 
@@ -129,8 +117,6 @@ class Bot(commands.Bot):
                 f"<@!{self.user.id}>",
             }
 
-            # 只接受純 tag bot，例如：@Con9sole-Bartender
-            # 避免「@Bot hello」呢類普通對話都彈 Menu。
             is_pure_mention = False
             if raw_content in mention_forms:
                 is_pure_mention = True
@@ -151,16 +137,23 @@ class Bot(commands.Bot):
                     except Exception:
                         log.exception("Failed to send mention menu via Menu.send_mention_menu")
 
-                # 後備方案：如果 menu.py 未有 send_mention_menu，都盡量直接用現有 helper 出 Menu。
                 try:
-                    import cogs.menu as menu_module
+                    from features.menu_embeds import build_quick_bar_embed
+                    from features.menu_helpers import build_menu_file
+                    from features.menu_views import QuickBarView
 
-                    await message.reply(
-                        embed=menu_module.build_main_menu_embed(message.author),
-                        view=menu_module.MainMenuView(menu_cog) if menu_cog else None,
-                        file=menu_module.build_menu_file(),
-                        mention_author=False,
-                    )
+                    kwargs: dict[str, object] = {
+                        "embed": build_quick_bar_embed(message.author),
+                        "mention_author": False,
+                    }
+                    if menu_cog is not None:
+                        kwargs["view"] = QuickBarView(menu_cog)
+
+                    menu_file = build_menu_file()
+                    if menu_file is not None:
+                        kwargs["file"] = menu_file
+
+                    await message.reply(**kwargs)
                     return
                 except Exception:
                     log.exception("Failed to send mention menu fallback")
@@ -168,14 +161,7 @@ class Bot(commands.Bot):
         await self.process_commands(message)
 
 
-# ---------- Token loader（支援多種變數名與 config） ----------
 def _get_token() -> str:
-    """Return Discord bot token from env or config using flexible keys.
-
-    Priority:
-    env(DISCORD_TOKEN) -> env(DISCORD_BOT_TOKEN) ->
-    config.DISCORD_TOKEN -> config.DISCORD_BOT_TOKEN
-    """
     return (
         os.getenv("DISCORD_TOKEN")
         or os.getenv("DISCORD_BOT_TOKEN")
@@ -184,7 +170,6 @@ def _get_token() -> str:
     )
 
 
-# ---------- Main ----------
 async def main() -> None:
     bot = Bot()
 
