@@ -116,6 +116,14 @@ async def admin_role_tools_from_button(menu_cog: object, interaction: discord.In
 
 
 async def admin_game_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+        await send_or_followup(
+            interaction,
+            content="❌ Game Tools 與 `/add_new_game`、`/add_game_version` 一樣，只限 Administrator 使用。",
+            ephemeral=True,
+        )
+        return
+
     record_usage_sync("admin_game_tools", interaction.user.id, interaction.guild_id)
     embed = discord.Embed(
         title="🎮 Game Tools",
@@ -130,7 +138,7 @@ async def admin_game_tools_from_button(menu_cog: object, interaction: discord.In
         ),
         color=MENU_COLOR,
     )
-    embed.set_footer(text="Game Tools｜請使用上方兩個現行 slash commands。")
+    embed.set_footer(text="Game Tools｜只限 Administrator 使用。")
     await send_or_followup(
         interaction,
         embed=embed,
