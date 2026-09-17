@@ -279,6 +279,9 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
         self.kind = kind
         self.games = games
         self.announcement_date.default = _today_hong_kong()
+        if kind == "game" and games:
+            game_names = "、".join(game.name for game in games)
+            self.new_features.default = f"新增 {game_names} 遊戲專區"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         draft = AnnouncementDraft(

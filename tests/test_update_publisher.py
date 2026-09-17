@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import asyncio
 from pathlib import Path
 
 from features.update_publisher import (
@@ -14,6 +15,7 @@ from features.update_publisher import (
     mark_games_published,
     record_created_game,
 )
+from cogs.update_publisher import AnnouncementDetailsModal
 
 
 class UpdatePublisherTests(unittest.TestCase):
@@ -137,6 +139,16 @@ class UpdatePublisherTests(unittest.TestCase):
         self.assertIn("🧭 **加入方法**", text)
         self.assertIn("<id:customize>", text)
         self.assertIn("勾選想加入的遊戲角色，即可看到對應專區", text)
+
+    def test_game_modal_suggests_new_feature_copy(self) -> None:
+        game_a = record_created_game(guild_id=1, name="FC27", detail="FC27 detail", path=self.path)
+        game_b = record_created_game(guild_id=1, name="NBA 2K27", detail="NBA detail", path=self.path)
+
+        async def build_modal() -> str | None:
+            modal = AnnouncementDetailsModal(kind="game", games=[game_a, game_b])
+            return modal.new_features.default
+
+        self.assertEqual(asyncio.run(build_modal()), "新增 FC27、NBA 2K27 遊戲專區")
 
 
 if __name__ == "__main__":
