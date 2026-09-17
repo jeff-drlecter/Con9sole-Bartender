@@ -13,9 +13,11 @@ from features.update_publisher import (
     MAX_PENDING_GAMES,
     PendingGame,
     build_announcement_embed,
+    game_name_from_forum,
     game_draft_from_pending,
     get_pending_games,
     mark_games_published,
+    record_created_game,
 )
 
 
@@ -61,15 +63,120 @@ class PublisherStartView(discord.ui.View):
     async def game_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
         pending_games = get_pending_games(self.guild_id)
         if not pending_games:
-            await interaction.response.send_message("暫時冇待公告的新遊戲。", ephemeral=True)
+            await interaction.response.send_message(
+                "暫時冇待公告的新遊戲；可以撳「補錄現有 Forum」揀返已建立的專區。",
+                ephemeral=True,
+            )
             return
 
-        games_for_draft = pending_games[-MAX_GAMES_PER_DRAFT:]
-        draft = game_draft_from_pending(games_for_draft)
-        note = "以下係草稿預覽；未發佈。"
-        if len(pending_games) > len(games_for_draft):
-            note += f" 今次會處理最近 {len(games_for_draft)} 項，其餘會保留待下次。"
-        await send_draft_preview(interaction, draft, games_for_draft, note=note)
+        selectable_games = pending_games[-25:]
+        await interaction.response.send_message(
+            "揀今次要放入草稿的遊戲（最多 10 項）。",
+            view=PendingGameSelectionView(
+                owner_id=self.owner_id,
+                guild_id=self.guild_id,
+                games=selectable_games,
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="補錄現有 Forum", emoji="➕", style=discord.ButtonStyle.secondary)
+    async def backfill_forums(
+        self,
+        interaction: discord.Interaction,
+        _: discord.ui.Button["PublisherStartView"],
+    ) -> None:
+        await interaction.response.send_message(
+            "揀返已建立但未被記錄的遊戲 Forum（最多 10 個）。",
+            view=ForumBackfillView(owner_id=self.owner_id, guild_id=self.guild_id),
+            ephemeral=True,
+        )
+
+
+class PendingGameSelect(discord.ui.Select):
+    def __init__(self, games: list[PendingGame]) -> None:
+        self.games_by_id = {game.id: game for game in games}
+        options = [
+            discord.SelectOption(
+                label=game.name[:100],
+                value=game.id,
+                description=game.detail[:100],
+            )
+            for game in games
+        ]
+        super().__init__(
+            placeholder="選擇待公告遊戲",
+            min_values=1,
+            max_values=min(MAX_GAMES_PER_DRAFT, len(options)),
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        selected_games = [self.games_by_id[game_id] for game_id in self.values if game_id in self.games_by_id]
+        await send_draft_preview(interaction, game_draft_from_pending(selected_games), selected_games)
+
+
+class PendingGameSelectionView(discord.ui.View):
+    def __init__(self, *, owner_id: int, guild_id: int, games: list[PendingGame]) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.add_item(PendingGameSelect(games))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id and _publisher_access_allowed(interaction):
+            return True
+        await interaction.response.send_message("❌ 呢個選單只限建立者使用。", ephemeral=True)
+        return False
+
+
+class ExistingForumSelect(discord.ui.ChannelSelect):
+    def __init__(self) -> None:
+        super().__init__(
+            placeholder="選擇遊戲 Forum",
+            channel_types=[discord.ChannelType.forum],
+            min_values=1,
+            max_values=MAX_GAMES_PER_DRAFT,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("❌ 呢個功能只可喺伺服器內使用。", ephemeral=True)
+            return
+
+        recorded_games: list[PendingGame] = []
+        for selected in self.values:
+            forum = guild.get_channel(selected.id)
+            if not isinstance(forum, discord.ForumChannel):
+                continue
+            recorded_games.append(
+                record_created_game(
+                    guild_id=guild.id,
+                    name=game_name_from_forum(forum.name),
+                    detail=f"{forum.mention} 已開放，歡迎入嚟一齊玩。",
+                    source_key=f"forum:{forum.id}",
+                )
+            )
+
+        if not recorded_games:
+            await interaction.response.send_message("❌ 未能補錄所選 Forum。", ephemeral=True)
+            return
+        await send_draft_preview(interaction, game_draft_from_pending(recorded_games), recorded_games)
+
+
+class ForumBackfillView(discord.ui.View):
+    def __init__(self, *, owner_id: int, guild_id: int) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.add_item(ExistingForumSelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id and _publisher_access_allowed(interaction):
+            return True
+        await interaction.response.send_message("❌ 呢個選單只限建立者使用。", ephemeral=True)
+        return False
 
 
 class FeatureDraftModal(discord.ui.Modal, title="功能更新草稿"):

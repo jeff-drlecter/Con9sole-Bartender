@@ -7,6 +7,7 @@ from pathlib import Path
 from features.update_publisher import (
     AnnouncementDraft,
     build_announcement_embed,
+    game_name_from_forum,
     game_draft_from_pending,
     get_pending_games,
     mark_games_published,
@@ -78,6 +79,29 @@ class UpdatePublisherTests(unittest.TestCase):
 
         self.assertEqual(len(embed.fields), 2)
         self.assertTrue(all(len(field.value) <= 1024 for field in embed.fields))
+
+    def test_existing_forum_backfill_is_not_duplicated_while_pending(self) -> None:
+        first = record_created_game(
+            guild_id=1,
+            name="FC27",
+            detail="<#10> 已開放。",
+            source_key="forum:10",
+            path=self.path,
+        )
+        second = record_created_game(
+            guild_id=1,
+            name="FC27",
+            detail="<#10> 已開放。",
+            source_key="forum:10",
+            path=self.path,
+        )
+
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(len(get_pending_games(1, path=self.path)), 1)
+
+    def test_game_name_is_derived_from_forum_name(self) -> None:
+        self.assertEqual(game_name_from_forum("fc27-專區"), "fc27")
+        self.assertEqual(game_name_from_forum("NBA 2K27"), "NBA 2K27")
 
 
 if __name__ == "__main__":

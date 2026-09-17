@@ -24,6 +24,7 @@ class PendingGame:
     name: str
     detail: str
     created_at: str
+    source_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ def _as_pending_game(value: object, *, guild_id: int) -> PendingGame | None:
         name=name,
         detail=detail,
         created_at=created_at,
+        source_key=value.get("source_key") if isinstance(value.get("source_key"), str) else None,
     )
 
 
@@ -80,6 +82,7 @@ def record_created_game(
     guild_id: int,
     name: str,
     detail: str,
+    source_key: str | None = None,
     path: Path = GAME_ANNOUNCEMENTS_PATH,
 ) -> PendingGame:
     """Record a game for a later manual announcement; this never publishes anything."""
@@ -90,12 +93,26 @@ def record_created_game(
 
     state = _load_state(path)
     games = state["games"]
+    clean_source_key = source_key.strip() if isinstance(source_key, str) and source_key.strip() else None
+    if clean_source_key is not None:
+        for item in games:
+            if (
+                isinstance(item, dict)
+                and item.get("guild_id") == guild_id
+                and item.get("source_key") == clean_source_key
+                and item.get("published_at") is None
+            ):
+                existing = _as_pending_game(item, guild_id=guild_id)
+                if existing is not None:
+                    return existing
+
     record = {
         "id": uuid4().hex,
         "guild_id": guild_id,
         "name": clean_name,
         "detail": clean_detail,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_key": clean_source_key,
     }
     games.append(record)
 
@@ -109,6 +126,13 @@ def record_created_game(
 
     atomic_write_json(path, state)
     return PendingGame(**record)
+
+
+def game_name_from_forum(name: str) -> str:
+    clean_name = name.strip()
+    if clean_name.endswith("-專區"):
+        clean_name = clean_name[:-3].rstrip("- ")
+    return clean_name or name.strip()
 
 
 def get_pending_games(
