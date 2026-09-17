@@ -115,6 +115,70 @@ def _normalise_version_base(value: str) -> str:
     return base
 
 
+def _compact_alphanumeric(value: str) -> str:
+    return "".join(character.casefold() for character in value if character.isalnum())
+
+
+def _apply_source_casing(value: str, source: str) -> str:
+    source_letters = "".join(character for character in source if character.isalpha())
+    if source_letters.isupper():
+        return value.upper()
+    if source_letters.islower():
+        return value.lower()
+    return value
+
+
+def _format_replacement_like_source(value: str, source: str) -> str:
+    """Retain source separators such as the space in ``NBA 2K25`` when possible."""
+    target_characters = [character for character in value if character.isalnum()]
+    source_characters = [character for character in source if character.isalnum()]
+    if len(target_characters) != len(source_characters):
+        return _apply_source_casing(value, source)
+
+    target_index = 0
+    formatted: list[str] = []
+    for character in source:
+        if not character.isalnum():
+            formatted.append(character)
+            continue
+
+        replacement = target_characters[target_index]
+        target_index += 1
+        if character.isupper():
+            replacement = replacement.upper()
+        elif character.islower():
+            replacement = replacement.lower()
+        formatted.append(replacement)
+    return "".join(formatted)
+
+
+def _derive_version_role_name(
+    source_role: discord.Role,
+    source_forum: discord.ForumChannel,
+    new_game: str,
+) -> str:
+    """Preserve the source role's naming convention when its game name is identifiable."""
+    source_game = _normalise_version_base(source_forum.name)
+    source_key = _compact_alphanumeric(source_game)
+    role_characters = [
+        (index, character.casefold())
+        for index, character in enumerate(source_role.name)
+        if character.isalnum()
+    ]
+    role_key = "".join(character for _, character in role_characters)
+    match_start = role_key.find(source_key)
+
+    if match_start < 0:
+        return f"{new_game} Player"
+
+    match_end = match_start + len(source_key) - 1
+    source_start = role_characters[match_start][0]
+    source_end = role_characters[match_end][0] + 1
+    source_segment = source_role.name[source_start:source_end]
+    replacement = _format_replacement_like_source(new_game, source_segment)
+    return f"{source_role.name[:source_start]}{replacement}{source_role.name[source_end:]}"
+
+
 def _clone_forum_overwrites(
     source_forum: discord.ForumChannel,
     *,
@@ -151,7 +215,7 @@ async def add_game_version(
 
     base_name = _normalise_version_base(new_game)
     forum_name = f"{base_name}-專區"
-    role_name = f"{base_name} Player"
+    role_name = _derive_version_role_name(source_role, source_forum, base_name)
 
     if discord.utils.get(guild.forums, name=forum_name) is not None:
         raise RuntimeError(f"已經有一個 Forum 叫 `{forum_name}`。")
@@ -160,10 +224,19 @@ async def add_game_version(
     if new_role is None:
         new_role = await guild.create_role(
             name=role_name,
-            hoist=False,
-            mentionable=True,
+            colour=source_role.colour,
+            hoist=source_role.hoist,
+            mentionable=source_role.mentionable,
             reason=f"Create role for new game version from {source_forum.name}",
         )
+        try:
+            new_role = await new_role.edit(position=source_role.position)
+        except Exception:
+            log.exception(
+                "Failed to position new game role above source role: role=%s source_role=%s",
+                new_role.id,
+                source_role.id,
+            )
 
     overwrites = _clone_forum_overwrites(
         source_forum,
