@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import discord
 from discord.ext import commands
@@ -13,6 +15,7 @@ from features.update_publisher import (
     MAX_PENDING_GAMES,
     PendingGame,
     build_announcement_embed,
+    build_announcement_text,
     game_name_from_forum,
     game_draft_from_pending,
     get_pending_games,
@@ -22,7 +25,7 @@ from features.update_publisher import (
 
 
 log = logging.getLogger("con9sole-bartender.update-publisher")
-MAX_GAMES_PER_DRAFT = 10
+MAX_GAMES_PER_DRAFT = 5
 
 
 def _publisher_access_allowed(interaction: discord.Interaction) -> bool:
@@ -38,6 +41,10 @@ def _publisher_intro() -> discord.Embed:
         ),
         color=0x5865F2,
     )
+
+
+def _today_hong_kong() -> str:
+    return datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%d.%m.%Y")
 
 
 class PublisherStartView(discord.ui.View):
@@ -57,7 +64,7 @@ class PublisherStartView(discord.ui.View):
 
     @discord.ui.button(label="功能更新", emoji="✨", style=discord.ButtonStyle.primary)
     async def feature_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
-        await interaction.response.send_modal(FeatureDraftModal(owner_id=self.owner_id, guild_id=self.guild_id))
+        await interaction.response.send_modal(AnnouncementDetailsModal(kind="feature", games=[]))
 
     @discord.ui.button(label="遊戲更新", emoji="🎮", style=discord.ButtonStyle.success)
     async def game_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
@@ -71,7 +78,7 @@ class PublisherStartView(discord.ui.View):
 
         selectable_games = pending_games[-25:]
         await interaction.response.send_message(
-            "揀今次要放入草稿的遊戲（最多 10 項）。",
+            f"揀今次要放入草稿的遊戲（最多 {MAX_GAMES_PER_DRAFT} 項）。",
             view=PendingGameSelectionView(
                 owner_id=self.owner_id,
                 guild_id=self.guild_id,
@@ -87,7 +94,7 @@ class PublisherStartView(discord.ui.View):
         _: discord.ui.Button["PublisherStartView"],
     ) -> None:
         await interaction.response.send_message(
-            "揀返已建立但未被記錄的遊戲 Forum（最多 10 個）。",
+            f"揀返已建立但未被記錄的遊戲 Forum（最多 {MAX_GAMES_PER_DRAFT - 1} 個）。",
             view=ForumBackfillView(owner_id=self.owner_id, guild_id=self.guild_id),
             ephemeral=True,
         )
@@ -113,7 +120,7 @@ class PendingGameSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         selected_games = [self.games_by_id[game_id] for game_id in self.values if game_id in self.games_by_id]
-        await send_draft_preview(interaction, game_draft_from_pending(selected_games), selected_games)
+        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=selected_games))
 
 
 class PendingGameSelectionView(discord.ui.View):
@@ -136,7 +143,7 @@ class ExistingForumSelect(discord.ui.ChannelSelect):
             placeholder="選擇遊戲 Forum",
             channel_types=[discord.ChannelType.forum],
             min_values=1,
-            max_values=MAX_GAMES_PER_DRAFT,
+            max_values=MAX_GAMES_PER_DRAFT - 1,
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -145,24 +152,19 @@ class ExistingForumSelect(discord.ui.ChannelSelect):
             await interaction.response.send_message("❌ 呢個功能只可喺伺服器內使用。", ephemeral=True)
             return
 
-        recorded_games: list[PendingGame] = []
+        forums: list[discord.ForumChannel] = []
         for selected in self.values:
             forum = guild.get_channel(selected.id)
-            if not isinstance(forum, discord.ForumChannel):
-                continue
-            recorded_games.append(
-                record_created_game(
-                    guild_id=guild.id,
-                    name=game_name_from_forum(forum.name),
-                    detail=f"{forum.mention} 已開放，歡迎入嚟一齊玩。",
-                    source_key=f"forum:{forum.id}",
-                )
-            )
+            if isinstance(forum, discord.ForumChannel):
+                forums.append(forum)
 
-        if not recorded_games:
+        if not forums:
             await interaction.response.send_message("❌ 未能補錄所選 Forum。", ephemeral=True)
             return
-        await send_draft_preview(interaction, game_draft_from_pending(recorded_games), recorded_games)
+        await interaction.response.edit_message(
+            content="請為每個 Forum 揀返對應的專用 Role，再撳「下一步」。",
+            view=ForumRoleMappingView(owner_id=interaction.user.id, guild_id=guild.id, forums=forums),
+        )
 
 
 class ForumBackfillView(discord.ui.View):
@@ -179,58 +181,146 @@ class ForumBackfillView(discord.ui.View):
         return False
 
 
-class FeatureDraftModal(discord.ui.Modal, title="功能更新草稿"):
-    announcement_title = discord.ui.TextInput(
-        label="標題",
-        default="✨ 功能更新",
-        max_length=256,
-    )
-    announcement_body = discord.ui.TextInput(
-        label="內容",
-        placeholder="簡短講解今次有咩更新。",
-        style=discord.TextStyle.paragraph,
-        max_length=2000,
-    )
+class ForumRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, forum: discord.ForumChannel, *, row: int) -> None:
+        super().__init__(
+            placeholder=f"{game_name_from_forum(forum.name)[:80]} 專用 Role",
+            min_values=1,
+            max_values=1,
+            row=row,
+        )
+        self.forum = forum
 
-    def __init__(self, *, owner_id: int, guild_id: int) -> None:
-        super().__init__()
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, ForumRoleMappingView):
+            await interaction.response.send_message("❌ Role 對應狀態失效，請重新補錄。", ephemeral=True)
+            return
+        role = self.values[0]
+        self.view.role_ids[self.forum.id] = role.id
+        await interaction.response.edit_message(
+            content=f"已配對 {len(self.view.role_ids)}/{len(self.view.forums)} 個 Forum；完成後撳「下一步」。",
+            view=self.view,
+        )
+
+
+class ContinueForumMappingButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(label="下一步", emoji="➡️", style=discord.ButtonStyle.success, row=4)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.view, ForumRoleMappingView):
+            await interaction.response.send_message("❌ Role 對應狀態失效，請重新補錄。", ephemeral=True)
+            return
+        if len(self.view.role_ids) != len(self.view.forums):
+            await interaction.response.send_message("請先為每個 Forum 揀一個專用 Role。", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("❌ 呢個功能只可喺伺服器內使用。", ephemeral=True)
+            return
+
+        games: list[PendingGame] = []
+        for forum in self.view.forums:
+            role = guild.get_role(self.view.role_ids[forum.id])
+            if role is None:
+                await interaction.response.send_message(f"❌ 搵唔到 `{forum.name}` 對應的 Role。", ephemeral=True)
+                return
+            games.append(
+                record_created_game(
+                    guild_id=guild.id,
+                    name=game_name_from_forum(forum.name),
+                    detail=f"{forum.mention} 已開放；專用身份：{role.mention}",
+                    source_key=f"forum:{forum.id}",
+                    role_id=role.id,
+                )
+            )
+        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=games))
+
+
+class ForumRoleMappingView(discord.ui.View):
+    def __init__(self, *, owner_id: int, guild_id: int, forums: list[discord.ForumChannel]) -> None:
+        super().__init__(timeout=900)
         self.owner_id = owner_id
         self.guild_id = guild_id
+        self.forums = forums
+        self.role_ids: dict[int, int] = {}
+        for row, forum in enumerate(forums):
+            self.add_item(ForumRoleSelect(forum, row=row))
+        self.add_item(ContinueForumMappingButton())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id and _publisher_access_allowed(interaction):
+            return True
+        await interaction.response.send_message("❌ 呢個選單只限建立者使用。", ephemeral=True)
+        return False
+
+
+class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
+    version = discord.ui.TextInput(
+        label="版本",
+        placeholder="例如 v3.8.0",
+        max_length=32,
+    )
+    announcement_date = discord.ui.TextInput(
+        label="日期",
+        placeholder="例如 17.09.2026",
+        max_length=32,
+    )
+    new_features = discord.ui.TextInput(
+        label="新功能（每行一項）",
+        placeholder="例如：新增 FC27 及 NBA 2K27 遊戲專區",
+        style=discord.TextStyle.paragraph,
+        max_length=800,
+    )
+
+    def __init__(self, *, kind: str, games: list[PendingGame]) -> None:
+        super().__init__()
+        self.kind = kind
+        self.games = games
+        self.announcement_date.default = _today_hong_kong()
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         draft = AnnouncementDraft(
-            kind="feature",
-            title=self.announcement_title.value.strip(),
-            body=self.announcement_body.value.strip(),
+            kind="game" if self.kind == "game" else "feature",
+            title="Con9sole 更新公告",
+            body=self.new_features.value.strip(),
+            game_ids=tuple(game.id for game in self.games),
+            version=self.version.value.strip(),
+            announcement_date=self.announcement_date.value.strip(),
         )
-        await send_draft_preview(interaction, draft, [])
+        await send_draft_preview(interaction, draft, self.games)
 
 
 class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
-    announcement_title = discord.ui.TextInput(label="標題", max_length=256)
-    announcement_body = discord.ui.TextInput(
-        label="內容",
+    version = discord.ui.TextInput(label="版本", max_length=32)
+    announcement_date = discord.ui.TextInput(label="日期", max_length=32)
+    new_features = discord.ui.TextInput(
+        label="新功能（每行一項）",
         style=discord.TextStyle.paragraph,
-        max_length=2000,
+        max_length=800,
     )
 
     def __init__(self, view: "DraftReviewView") -> None:
         super().__init__()
         self.review_view = view
-        self.announcement_title.default = view.draft.title
-        self.announcement_body.default = view.draft.body
+        self.version.default = view.draft.version
+        self.announcement_date.default = view.draft.announcement_date
+        self.new_features.default = view.draft.body
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         self.review_view.draft = AnnouncementDraft(
             kind=self.review_view.draft.kind,
-            title=self.announcement_title.value.strip(),
-            body=self.announcement_body.value.strip(),
+            title="Con9sole 更新公告",
+            body=self.new_features.value.strip(),
             game_ids=self.review_view.draft.game_ids,
+            version=self.version.value.strip(),
+            announcement_date=self.announcement_date.value.strip(),
         )
         if self.review_view.message is not None:
             await self.review_view.message.edit(
-                content="以下係草稿預覽；未發佈。",
-                embed=self.review_view.embed(),
+                content=self.review_view.preview_content(),
+                embed=None,
                 view=self.review_view,
             )
         await interaction.response.send_message("✅ 草稿已更新。", ephemeral=True)
@@ -254,6 +344,12 @@ class DraftReviewView(discord.ui.View):
 
     def embed(self) -> discord.Embed:
         return build_announcement_embed(self.draft, games=self.games)
+
+    def announcement_text(self) -> str:
+        return build_announcement_text(self.draft, games=self.games)
+
+    def preview_content(self) -> str:
+        return f"以下係草稿預覽；未發佈。\n\n{self.announcement_text()}"
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -295,7 +391,7 @@ class DraftReviewView(discord.ui.View):
             return
 
         try:
-            published_message = await channel.send(embed=self.embed())
+            published_message = await channel.send(content=self.announcement_text())
         except discord.DiscordException:
             log.exception("Unable to publish update: channel=%s guild=%s", channel.id, guild.id)
             await interaction.response.send_message("❌ 發佈失敗；請檢查 Bot 喺公告頻道的發訊息及 Embed 權限。", ephemeral=True)
@@ -334,7 +430,14 @@ async def send_draft_preview(
         draft=draft,
         games=games,
     )
-    await interaction.response.send_message(note, embed=view.embed(), view=view, ephemeral=True)
+    preview_content = f"{note}\n\n{view.announcement_text()}"
+    if len(preview_content) > 2000:
+        await interaction.response.send_message(
+            "❌ 草稿超過 Discord 2,000 字限制；請縮短新功能內容或減少今次項目。",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(preview_content, view=view, ephemeral=True)
     view.message = await interaction.original_response()
 
 

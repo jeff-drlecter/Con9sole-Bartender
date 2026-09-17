@@ -7,6 +7,7 @@ from pathlib import Path
 from features.update_publisher import (
     AnnouncementDraft,
     build_announcement_embed,
+    build_announcement_text,
     game_name_from_forum,
     game_draft_from_pending,
     get_pending_games,
@@ -86,22 +87,52 @@ class UpdatePublisherTests(unittest.TestCase):
             name="FC27",
             detail="<#10> 已開放。",
             source_key="forum:10",
+            role_id=100,
             path=self.path,
         )
         second = record_created_game(
             guild_id=1,
             name="FC27",
-            detail="<#10> 已開放。",
+            detail="<#10> 已開放；專用身份：<@&200>",
             source_key="forum:10",
+            role_id=200,
             path=self.path,
         )
 
         self.assertEqual(first.id, second.id)
         self.assertEqual(len(get_pending_games(1, path=self.path)), 1)
+        self.assertEqual(second.role_id, 200)
+        self.assertIn("<@&200>", second.detail)
 
     def test_game_name_is_derived_from_forum_name(self) -> None:
         self.assertEqual(game_name_from_forum("fc27-專區"), "fc27")
         self.assertEqual(game_name_from_forum("NBA 2K27"), "NBA 2K27")
+
+    def test_plain_announcement_matches_version_date_and_feature_format(self) -> None:
+        games = [
+            record_created_game(
+                guild_id=1,
+                name="FC27",
+                detail="<#10> 已開放；專用身份：<@&100>",
+                path=self.path,
+            )
+        ]
+        draft = AnnouncementDraft(
+            kind="game",
+            title="Con9sole 更新公告",
+            body="新增遊戲專區",
+            game_ids=(games[0].id,),
+            version="3.8.0",
+            announcement_date="17.09.2026",
+        )
+
+        text = build_announcement_text(draft, games=games)
+
+        self.assertIn("📣 **Con9sole 更新公告 — v3.8.0**", text)
+        self.assertIn("📅 **17.09.2026**", text)
+        self.assertIn("🆕 **新功能**", text)
+        self.assertIn("• 新增遊戲專區", text)
+        self.assertIn("• **FC27**｜<#10> 已開放；專用身份：<@&100>", text)
 
 
 if __name__ == "__main__":

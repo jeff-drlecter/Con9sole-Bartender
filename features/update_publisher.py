@@ -25,6 +25,7 @@ class PendingGame:
     detail: str
     created_at: str
     source_key: str | None = None
+    role_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class AnnouncementDraft:
     title: str
     body: str
     game_ids: tuple[str, ...] = ()
+    version: str = ""
+    announcement_date: str = ""
 
 
 def _empty_state() -> dict[str, Any]:
@@ -74,6 +77,7 @@ def _as_pending_game(value: object, *, guild_id: int) -> PendingGame | None:
         detail=detail,
         created_at=created_at,
         source_key=value.get("source_key") if isinstance(value.get("source_key"), str) else None,
+        role_id=value.get("role_id") if isinstance(value.get("role_id"), int) else None,
     )
 
 
@@ -83,6 +87,7 @@ def record_created_game(
     name: str,
     detail: str,
     source_key: str | None = None,
+    role_id: int | None = None,
     path: Path = GAME_ANNOUNCEMENTS_PATH,
 ) -> PendingGame:
     """Record a game for a later manual announcement; this never publishes anything."""
@@ -104,7 +109,13 @@ def record_created_game(
             ):
                 existing = _as_pending_game(item, guild_id=guild_id)
                 if existing is not None:
-                    return existing
+                    item["name"] = clean_name
+                    item["detail"] = clean_detail
+                    item["role_id"] = role_id
+                    atomic_write_json(path, state)
+                    refreshed = _as_pending_game(item, guild_id=guild_id)
+                    if refreshed is not None:
+                        return refreshed
 
     record = {
         "id": uuid4().hex,
@@ -113,6 +124,7 @@ def record_created_game(
         "detail": clean_detail,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_key": clean_source_key,
+        "role_id": role_id,
     }
     games.append(record)
 
@@ -133,6 +145,51 @@ def game_name_from_forum(name: str) -> str:
     if clean_name.endswith("-專區"):
         clean_name = clean_name[:-3].rstrip("- ")
     return clean_name or name.strip()
+
+
+def _version_label(value: str) -> str:
+    clean_value = value.strip()
+    if not clean_value:
+        return ""
+    return clean_value if clean_value.casefold().startswith("v") else f"v{clean_value}"
+
+
+def _bullet_lines(value: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in value.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("•", "-", "*")):
+            line = line[1:].strip()
+        lines.append(f"• {line}")
+    return lines
+
+
+def build_announcement_text(
+    draft: AnnouncementDraft,
+    *,
+    games: list[PendingGame] | None = None,
+) -> str:
+    title = "📣 **Con9sole 更新公告"
+    version = _version_label(draft.version)
+    if version:
+        title += f" — {version}"
+    title += "**"
+
+    sections = [title]
+    if draft.announcement_date.strip():
+        sections.append(f"📅 **{draft.announcement_date.strip()}**")
+
+    feature_lines = _bullet_lines(draft.body)
+    if draft.kind == "game":
+        selected_ids = set(draft.game_ids)
+        selected_games = [game for game in games or [] if game.id in selected_ids]
+        feature_lines.extend(f"• **{game.name}**｜{game.detail}" for game in selected_games)
+    if feature_lines:
+        sections.append("🆕 **新功能**\n" + "\n".join(feature_lines))
+
+    return "\n\n".join(sections)
 
 
 def get_pending_games(
