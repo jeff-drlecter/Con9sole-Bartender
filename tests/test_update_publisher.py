@@ -132,7 +132,11 @@ class UpdatePublisherTests(unittest.TestCase):
         self.assertIn("📅 **17.09.2026**", text)
         self.assertIn("🆕 **新功能**", text)
         self.assertIn("• 新增遊戲專區", text)
+        self.assertIn("🎮 **新增遊戲專區**", text)
         self.assertIn("• **FC27**｜<#10> 已開放；專用身份：<@&100>", text)
+        self.assertIn("🧭 **加入方法**", text)
+        self.assertIn("<id:customize>", text)
+        self.assertIn("勾選想加入的遊戲角色，即可看到對應專區", text)
 
 
 if __name__ == "__main__":

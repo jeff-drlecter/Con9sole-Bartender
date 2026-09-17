@@ -182,12 +182,21 @@ def build_announcement_text(
         sections.append(f"📅 **{draft.announcement_date.strip()}**")
 
     feature_lines = _bullet_lines(draft.body)
+    game_lines: list[str] = []
     if draft.kind == "game":
         selected_ids = set(draft.game_ids)
         selected_games = [game for game in games or [] if game.id in selected_ids]
-        feature_lines.extend(f"• **{game.name}**｜{game.detail}" for game in selected_games)
+        game_lines = [f"• **{game.name}**｜{game.detail}" for game in selected_games]
     if feature_lines:
         sections.append("🆕 **新功能**\n" + "\n".join(feature_lines))
+
+    if game_lines:
+        sections.append("🎮 **新增遊戲專區**\n" + "\n".join(game_lines))
+        sections.append(
+            "🧭 **加入方法**\n"
+            "• 前往 <id:customize>（Channels & Roles／頻道及身份組）\n"
+            "• 勾選想加入的遊戲角色，即可看到對應專區"
+        )
 
     return "\n\n".join(sections)
 
