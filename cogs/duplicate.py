@@ -9,6 +9,7 @@ from discord.ext import commands
 
 import config
 from core.permissions import is_admin_or_helper
+from features.update_publisher import record_created_game
 from utils import copy_forum_tags, make_private_overwrites
 
 log = logging.getLogger("con9sole-bartender.duplicate")
@@ -27,6 +28,19 @@ def _safe_get(obj: object, attr: str, default: Any = None) -> Any:
 
 def _admin_roles(guild: discord.Guild) -> list[discord.Role]:
     return [role for role_id in config.ADMIN_ROLE_IDS if (role := guild.get_role(role_id))]
+
+
+def _record_game_announcement(
+    guild: discord.Guild,
+    *,
+    name: str,
+    detail: str,
+) -> None:
+    """Keep a manual-announcement prompt separate from game creation."""
+    try:
+        record_created_game(guild_id=guild.id, name=name, detail=detail)
+    except Exception:
+        log.exception("Failed to record created game for later announcement: game=%s", name)
 
 
 async def _get_template_category(
@@ -262,10 +276,17 @@ async def add_game_version(
     except Exception:
         log.exception("Failed to copy tags to cloned forum: forum=%s", new_forum.id)
 
+    _record_game_announcement(
+        guild,
+        name=base_name,
+        detail=f"已新增 {new_forum.mention}，可選擇 {new_role.mention} 身份。",
+    )
+
     return (
         f"已喺 `#{source_forum.category.name}` 建立 `#{new_forum.name}`；"
         f"新角色：`{new_role.name}`；權限由 `#{source_forum.name}` 複製，"
-        f"並將 `{source_role.name}` 映射成 `{new_role.name}`。"
+        f"並將 `{source_role.name}` 映射成 `{new_role.name}`。\n"
+        "📝 已記錄到 Update Publisher；如要公告，請喺 Admin Tool 建立草稿（唔會自動發佈）。"
     )
 
 
@@ -382,13 +403,23 @@ async def add_new_game(
                     overwrites=private_overwrites,
                 )
         if created_forum is None and fallback.get("forum"):
-            await guild.create_forum(
+            created_forum = await guild.create_forum(
                 fallback["forum"],
                 category=new_category,
                 overwrites=private_overwrites,
             )
 
-    return f"新分區：#{new_category.name}；新角色：{new_role.name}"
+    destination = created_forum.mention if created_forum is not None else new_category.mention
+    _record_game_announcement(
+        guild,
+        name=game_name,
+        detail=f"已建立 {destination}，可選擇 {new_role.mention} 身份。",
+    )
+
+    return (
+        f"新分區：#{new_category.name}；新角色：{new_role.name}\n"
+        "📝 已記錄到 Update Publisher；如要公告，請喺 Admin Tool 建立草稿（唔會自動發佈）。"
+    )
 
 
 class Duplicate(commands.Cog):

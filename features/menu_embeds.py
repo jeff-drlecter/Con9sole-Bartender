@@ -120,6 +120,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
             "🔄 **Reload** — 重載 Bot cogs\n"
             "🎭 **Role Tools** — 成員角色管理\n"
             "🎮 **Game Tools** — `/add_new_game` / `/add_game_version` 使用說明\n"
+            "📣 **Update Publisher** — 草擬、預覽及手動發佈更新公告\n"
             "🏓 **Ping** — Bot latency\n"
             "🧹 **VC Teardown** — 列出並刪除 Bot 建立的臨時語音房\n\n"
             "⬅️ **Menu** — 返回吧枱主頁"

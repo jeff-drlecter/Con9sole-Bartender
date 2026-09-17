@@ -59,5 +59,8 @@ INVITE_CHANNEL_ID: int = 1278976821710426133
 # Logging 頻道
 LOG_CHANNEL_ID: int = 1401346745346297966
 
+# 更新公告頻道；填入文字／公告頻道 ID 後才可由 Update Publisher 發佈。
+ANNOUNCEMENT_CHANNEL_ID: int = 0
+
 # Token（由環境變數注入）
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")

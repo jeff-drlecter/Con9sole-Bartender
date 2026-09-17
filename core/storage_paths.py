@@ -18,3 +18,6 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATS_DB = Path(os.getenv("STATS_DB_PATH", str(DATA_DIR / "community_stats.sqlite3")))
 STATS_DB.parent.mkdir(parents=True, exist_ok=True)
 DRINK_STATE_PATH = Path(os.getenv("DRINK_STATE_PATH", str(DATA_DIR / "drink_state.json")))
+GAME_ANNOUNCEMENTS_PATH = Path(
+    os.getenv("GAME_ANNOUNCEMENTS_PATH", str(DATA_DIR / "game_announcements.json"))
+)

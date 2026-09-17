@@ -38,6 +38,12 @@ class ConfigValidationTests(unittest.TestCase):
 
         self.assertTrue(any("HELPER_ROLE_IDS" in warning for warning in validate_config(settings)))
 
+    def test_invalid_announcement_channel_is_reported(self) -> None:
+        settings = valid_settings()
+        settings.ANNOUNCEMENT_CHANNEL_ID = 0
+
+        self.assertTrue(any("ANNOUNCEMENT_CHANNEL_ID" in warning for warning in validate_config(settings)))
+
 
 if __name__ == "__main__":
     unittest.main()

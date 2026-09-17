@@ -57,9 +57,16 @@ Then run `/ping`, `/menu`, and the feature affected by the incident.
 - `/data/drink_state.json`: cooldown and recent-drink state.
 - `/data/activity_reminders.json`: activity schedules and sent cache.
 - `/data/community_stats.sqlite3`: drink events, menu usage, and daily bar data.
+- `/data/game_announcements.json`: newly created games awaiting a manual Update Publisher post.
 - `*.corrupt.<timestamp>`: preserved malformed JSON awaiting manual inspection.
 
 Never delete or replace a `/data` file without first making a backup. SQLite is the correct store for event history and statistics at the current single-machine scale; a network database is unnecessary unless multiple writers or substantially higher traffic are introduced.
+
+## Update Publisher
+
+Set `ANNOUNCEMENT_CHANNEL_ID` in `config.py` to the target text or announcement channel before release. A zero or invalid value leaves publishing disabled. New games are only added to the pending list; they are never posted automatically.
+
+After deployment, open `/menu` → Admin Tool → Update Publisher as an Admin or Helper. Create a feature or game draft, confirm the private preview, then test Publish and Cancel with a non-production draft if appropriate.
 
 ## Dependency updates
 

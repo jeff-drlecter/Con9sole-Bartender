@@ -133,6 +133,27 @@ async def admin_game_tools_from_button(menu_cog: object, interaction: discord.In
     )
 
 
+async def admin_update_publisher_from_button(interaction: discord.Interaction) -> None:
+    if not can_use_admin(interaction.user):
+        await send_or_followup(
+            interaction,
+            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Update Publisher。",
+            ephemeral=True,
+        )
+        return
+
+    publisher_cog = interaction.client.get_cog("UpdatePublisher")
+    if publisher_cog is None or not hasattr(publisher_cog, "open_from_admin_tool"):
+        await send_or_followup(
+            interaction,
+            content="❌ Update Publisher 未載入；請先 Reload 或重新啟動 Bot。",
+            ephemeral=True,
+        )
+        return
+
+    await publisher_cog.open_from_admin_tool(interaction)  # type: ignore[attr-defined]
+
+
 async def admin_ping_from_button(interaction: discord.Interaction) -> None:
     await safe_defer(interaction, ephemeral=True)
     record_usage_sync("admin_ping", interaction.user.id, interaction.guild_id)

@@ -367,6 +367,18 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         description="建立全新遊戲或新增遊戲版本",
     ),
     MenuItem(
+        id="admin_update_publisher",
+        label="Update Publisher",
+        emoji="📣",
+        style="success",
+        layer="admin",
+        row=1,
+        cog="Menu",
+        method="admin_update_publisher_from_button",
+        admin_only=True,
+        description="建立及發佈功能／遊戲更新公告",
+    ),
+    MenuItem(
         id="admin_ping",
         label="Ping",
         emoji="🏓",

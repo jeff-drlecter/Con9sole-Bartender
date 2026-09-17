@@ -13,6 +13,7 @@ from features.admin_actions import (
     admin_role_tools_from_button as run_admin_role_tools_from_button,
     admin_stats_command as run_admin_stats_command,
     admin_stats_from_button as run_admin_stats_from_button,
+    admin_update_publisher_from_button as run_admin_update_publisher_from_button,
     admin_vc_teardown_from_button as run_admin_vc_teardown_from_button,
 )
 from features.menu_actions import (
@@ -141,6 +142,9 @@ class Menu(commands.Cog):
 
     async def admin_game_tools_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_game_tools_from_button(self, interaction)
+
+    async def admin_update_publisher_from_button(self, interaction: discord.Interaction) -> None:
+        await run_admin_update_publisher_from_button(interaction)
 
     async def admin_ping_from_button(self, interaction: discord.Interaction) -> None:
         await run_admin_ping_from_button(interaction)
