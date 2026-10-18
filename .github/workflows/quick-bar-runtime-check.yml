@@ -31,25 +31,57 @@ jobs:
           command = 'python -c ' + shlex.quote("import base64;exec(base64.b64decode('aW1wb3J0IGhhc2hsaWIsIGpzb24sIG9zLCBzcWxpdGUzLCB1cmxsaWIucmVxdWVzdApmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKb3MuY2hkaXIoJy9hcHAnKQppbXBvcnQgY29uZmlnCmZyb20gY29yZS5zdG9yYWdlX3BhdGhzIGltcG9ydCBTVEFUU19EQgpleHBlY3RlZCA9IHsiYm90LnB5IjogIjhmYTE4ZWMzZmRhYzlhYWYwYzhhZWRlNmI5MjY0OTlmNDRlMTQyYzYwMDY2NmM5MzExMjQ5YTExMGJiYjEyODkiLCAiY29ncy9fX2luaXRfXy5weSI6ICIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwgImNvZ3MvYWN0aXZpdHlfcmVtaW5kZXIucHkiOiAiNjEwYzk5MDI2NjcxYTM5MTQyOTM1NjVmNTZhZjBhZDkzYjUyNzdmYjhhNmFmNzc4MjY3YjY2YzY3NjY1ZjJlNyIsICJjb2dzL2NoZWVycy5weSI6ICJlZGQ4MGEyNTViYWQyNThjNGI0NWI4NWY4ODhlMjUzMDk2OWJlMzY0ZmI0YjY2MjcxOWYzNDZiNWE4YjdlOTU1IiwgImNvZ3MvY29uZmVzc2lvbi5weSI6ICI2ZjNiYTM5NjdiMDYxNjI3NDNkOTU4NDllOGQ5ZjJjZjYzMjdlNWU2YzE1MmZjMjk1MjgyOTg4ZmI1MjkwMDk0IiwgImNvZ3MvZGFpbHlfYmFyLnB5IjogIjgyMzMzZmM2MTMzMzNhMjY5YWQ0OGFhZWUxOGJiNDNjM2E5ODEyOTgzZTc2ZGQxNmNhOTliMDBlZmIwZmE1YzkiLCAiY29ncy9kcmluay5weSI6ICJiNmFiMjM3YzM0ZTBkNjYzZTAxMTliYWNjNjRkOTRhN2M4NmM3YWIxMWJkOTgxNDcxNjk2ZWI4MDZmZmE1YzNjIiwgImNvZ3MvZHVwbGljYXRlLnB5IjogImMzZmU3NTgwNWE0ZWZlNDEwMjA4ZjliOWNmMWZhYmViNDM2ODNjMjQwNDJkNzE0NzFlN2JkZmNlNDkwYTE4ZDIiLCAiY29ncy9tZW51LnB5IjogImE0N2UyODI0OWY3MjY2OWU1OGFhZjEyMTZiYzkyN2IzNDFkZjcwMTIxNzQ2MDQzZmNkNDRlYzcxYzFmMDhlNzEiLCAiY29ncy9waW5nLnB5IjogImU5Y2ZiNDY4YmRhYjdhZTQzMTFkMzc4ZDdiZDkwMmZhM2U0ZGVlMWY3YTgyZDAxMWI0YzI1NjBmZWYyYjBlNzkiLCAiY29ncy9yZWxvYWQucHkiOiAiODRkN2U2NGI0YzQ0YWY5ZjM4OGU0M2VmZTViYTRjOGViZGI2MDI2MjA5ZjYwODEyODViZjk5ZTViMjdjZDQyNyIsICJjb2dzL3JvbGUucHkiOiAiOWQ2N2Y2MDAwZjI5ZWZjMDhkY2JlNjViZDUxNzhmZmJlMjY3Yjk2NGExOGQ5ODczZGIwODQ4ZmY2Yzc0MDc5NyIsICJjb2dzL3JvbGVfY2hhbm5lbF9lbW9qaV9sb2cucHkiOiAiNjAyYmY4YjU3M2VmMzE2ZTY1MDA4NWFlMThiYzE2NWY1ODE3ODNjODU3YWRjOTQ4ZWNjOTRiZTM4YWY1NjQ3OCIsICJjb2dzL3JvbGVfY2hhbm5lbF9mYWN0b3J5LnB5IjogIjRlMTg1Yzc2NDAyODAyYzZhZTJlNjNjODMzMmQwOWEwNWY3YmRlOWJkZGUyNDkzM2JlYWE3ODkyMDIzNTdhZGIiLCAiY29ncy90ZWFtcy5weSI6ICJjMjQ3NWQ2MTMyNmY3YTA5NTBmNGQ3ZDQyOTNlMmQzY2IyNjRmNmRmYmE1YjE1OTE4N2VjYTEzYzNmZGUzMmM4IiwgImNvZ3MvdGVtcHZjLnB5IjogIjIyZTI2YTE3OTMzMmY0ODJiYzRmNDdjMjcwNmM5YTkyYzI2ZDdmYWI4OWYyY2Y2ZDI4NTA4YmI1ODA4OWU4ZDciLCAiY29ncy90d2l0Y2hfcmVsYXkucHkiOiAiZmNkNmU5YzBmZGVlZDJmZDBjOTgzNzFjOTkzNzQ2YjM5OGZhODljZjhiZTZmYTY3MjVkZGQxZWM5ZDQ0MTlkZCIsICJjb2dzL3VwZGF0ZV9wdWJsaXNoZXIucHkiOiAiZmUzMjJmMGUwZmIxYmU1ODdjMDMzOGNhZjJkNjI0ZDc5OTg3Y2YzOTg5MDg4NTU0M2NlYmQyYWEzMWI5Mzk0NSIsICJjb2dzL3dlbGNvbWVfbG9nLnB5IjogIjUzYjlkNDU0NGQ0ZmExZTQ5ZjNkNWFiMTQ1MWQ4NzhlMjdhZWFlMTJhMDkxMDk2YmU0ZGVjMDRlZDhlMDc2OTMiLCAiY29uZmlnLnB5IjogIjYwOWE0MTU5ZTM2MmU4OGMxMjY4NTIxY2Y1YTY4NzE4N2ZhZDhlMWFiMGMwZmVmN2UwOGMyNDI4YWZiNTBhM2EiLCAiY29yZS9fX2luaXRfXy5weSI6ICIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwgImNvcmUvYWN0aW9uX2d1YXJkLnB5IjogImIwYjFmMDNiYjQ0YTA5MDJjMGQ1MDBlZTQ5M2Y5MmRiYzVlYjNkZGU1NWM2MzYwOGZkNmRlZTllYjBkMDkxZDEiLCAiY29yZS9hcHBfY29tbWFuZF9lcnJvcnMucHkiOiAiNTI3ZjkwOGU4OTUwZDYzZDM1N2IyNDBlZDk5ZmY4N2U2YWI5YTQ2NzQ5M2MwYjk5MjU4NTc4NDk5YzMwNWNiOSIsICJjb3JlL2NvbmZpZ192YWxpZGF0aW9uLnB5IjogImQxZjIzYTUyMzY4ZTJlZTAwYjM5ZjIzMjQ1MzA5OGQ1NmNiNWUyNzA0Mzc3M2Y3ZGY5ZGE0ZDFlZGFiYmQ0NDQiLCAiY29yZS9kaXNjb3JkX2ludGVyYWN0aW9ucy5weSI6ICJiYzk2N2FiNWZlZmY1ZWUyN2ZhN2E2OWFhOTFkM2E5YTA3M2VkNjA2MDM2NjQzOTE0ODQ5OTE1YzczZDg3MDdhIiwgImNvcmUvanNvbl9zdG9yYWdlLnB5IjogImRlYjRlNzIzY2ZhNjFkYTkzZWNmYzgxNWEyMGNkN2MxYjM4MTFiZGQxMTNiMjNkZjU2ZDAxM2I2YmRjNDljZTIiLCAiY29yZS9sb2dnaW5nX2NvbmZpZy5weSI6ICI4MTFjMmNjNTg0OWNmYmE1ZDczYjI1ZWEyZDBhYTc1YmY1ODk1OWUyOWMzNmE2Yzc4OTRhMDllYTJhZWFlMTFmIiwgImNvcmUvcGVybWlzc2lvbnMucHkiOiAiNjM5YTFiOGY4OGMzNmRmMmU0MDYyZGFlMmMzNDRjZmQ1ODBlZDBiZWVhYTU4ZDdlZjJmYmU5MTZiN2JiOTYxMCIsICJjb3JlL3NhZmVfc2VuZC5weSI6ICJlZmM5OWVlMGMwYTE0YjVhZjAzNjU3N2NjYWU5NjY2Mjk3NmQyYTRlNzg1NmFiM2MxZWRmZjkwM2MwMDE2NDEwIiwgImNvcmUvc3FsaXRlX3N0b3JhZ2UucHkiOiAiM2QzNzc2ZTljNDA4NDhmOGNhYTMwYjcxMDI5MTliYmMxMWNkNGU3Mjk1ZjMyMTRiNjMxMjM5NDYzYTQ4Y2FhMyIsICJjb3JlL3N0b3JhZ2VfcGF0aHMucHkiOiAiZWFhY2Q1N2JhN2RmYTc2MzBhY2ViYmU3NDhmNDE3MjA5OGIxMDcxMGRmZjQ4MDljOWVkMmUzMDRlY2VlZTdhZCIsICJjb3JlL3VpLnB5IjogIjRjYWFmMjgyZWI1M2Q5MDQwNTk3ZmJmNjAxYzc5YjQ2YTc1MDY1YmViYzc4ZjkwNGI5NmUyNjU2NDg5Mzg0YTMiLCAiZGF0YS9fX2luaXRfXy5weSI6ICI3NDdkZDcwMGY3MTAxZTliNmFjZTRkNDUwN2ExYmU5ZGUxZWViM2RmOTY1M2Q5ZDdhMzU0NGZlNDkzMzE1NjFhIiwgImRhdGEvY2hlZXJzX3F1b3Rlcy5weSI6ICJkY2Q4NWE3Njk4OWFjMGU1NmJkYmMxOTgzMGQ0YWJlMWE2NTE2NjUxN2JlZTlhOTJkNTMzNjc0ODNhZjBiNTk5IiwgImRhdGEvZHJpbmtfZGF0YS5weSI6ICJkOGM0MjZhYTllMGM3ZWQ4N2UwNmI1MDZlOGIyNTlkNTdmNzlkN2Y0ODc0ZTMxNmZlNjRlYzlkYjcxYmU1NDI4IiwgImRhdGEvbWVudV9yZWdpc3RyeS5weSI6ICJjYzE3OGIwYWUzYTA0Mjc0YzY3NGE1MjNlMjExZGQ3M2NlYTJiN2Y0N2U1NzJmNWZjODcwMTdhODc1MzE0MTM1IiwgImZlYXR1cmVzL19faW5pdF9fLnB5IjogIjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCAiZmVhdHVyZXMvYWRtaW5fYWN0aW9ucy5weSI6ICIyN2Y4YTM5NmNhNzZmMmFmNzBkYmZlNzA4M2JkNjUxMmQzNjNmZDRkNDE1ZGNjMzE0MzI3Y2VlYTVjMWRhZTJlIiwgImZlYXR1cmVzL2RhaWx5X2Jhci5weSI6ICJmZjRmM2JhNmFlMjJlYjJkMDA1NzJjMjMxMThhYmVkMjUyMmQxM2M5NjJjMDlkMWE0Y2ZhYjVlOTM0MDczYjNjIiwgImZlYXR1cmVzL2RyaW5rX2NhdGFsb2cucHkiOiAiMjBiZWY3NmM4ZDYyMTQ3MmFhNTM5NzMyMjMzN2ExYjFhNGJhY2YxOTk1ZWVkYzI2YzBiOTA5NmIyMjVlNjc5YSIsICJmZWF0dXJlcy9kcmlua19jb25zdGFudHMucHkiOiAiYTg1OWIyZGNiYmUxOGQ5YWU3OTgyMjA5NGE3MWQ4NzQ3ZTIyNjU5YTdkNDNkMzc1ZDFjYTFiN2U1MWMyZTIwMyIsICJmZWF0dXJlcy9kcmlua19lbWJlZHMucHkiOiAiOWEzOGI4OTM4MjUyN2M5ODAyNGJiMjA1OWQ1ZGUzOGI1YjI3OTAwODhlOWRjZTRkODFhYmJhZjAyNTZiMmUxNSIsICJmZWF0dXJlcy9kcmlua19sZWFkZXJib2FyZC5weSI6ICI0YzdkMzQ2NTg1Mjk4Yzk5NmUwNDhiYzE3MTg4NzIwNzMyNWVjOTljMjEwMGZiZjA5NmE2ODVhNDFlNDdlODA3IiwgImZlYXR1cmVzL2RyaW5rX3Jlc3VsdC5weSI6ICJmMDFjOGFhMmNlOWJjMzQ5ODg3NDU3OWI2YzRiZDNkNzViMDE3OTIxNTQwMjQxODU5ODlkM2Q5ZTdkNjEyZDczIiwgImZlYXR1cmVzL2RyaW5rX3N0YXRlLnB5IjogImZkYzY1N2RhMmZmNzRiNjA3N2U0MTc0N2MwODI5OTgwNzRiOGRkYjljOTE4MmVjODc4OTlhMDEyOTcyMjA2MDIiLCAiZmVhdHVyZXMvZHJpbmtfc3RvcmFnZS5weSI6ICI1NWRiY2VmZTY5YTMyMmE2MTMyNGYyZGFjYWIwOTk4Yjk4NmFkYzQ4NWMyNzA5Y2VlYTYxNjhlMzI1ODczMDUxIiwgImZlYXR1cmVzL2RyaW5rX3ZpZXdzLnB5IjogImIwZTA4OGE0MmMzYjVkYTNlYzZlN2IzYTE3YmZlOGUxN2RlZDVhZTc4MTg5YTNjODg4MjlkMjUxZGNkZDVjYTUiLCAiZmVhdHVyZXMvaW52aXRlX3Rvb2xzLnB5IjogIjAyYTQ0MmY4NmMxY2Y5ODk2OTBlM2VlZTBkNmE2ZThjZjU1ZTE1Mzk3MzMzMTg2ZjU0MThhNzc0M2Y4ODcyYWYiLCAiZmVhdHVyZXMvbWVtYmVyX3BpY2tlci5weSI6ICJlNmZkMjc3YzMwOWViM2IxODdiYzYxZDhiMTlkZDAzMTY3ZTdiYjBhZTE0Mzk3MzIzM2M4MTAzZjVhMjQ0M2IxIiwgImZlYXR1cmVzL21lbnVfYWN0aW9ucy5weSI6ICJlMDU2ZGE0MmUxYjM5ZDVjYzBkN2IwMzYxZDExOGQ1MGE1MDk4Mzk4NzFmZjhkMTc4YzM4ODM5MzAxMmE5ZDI3IiwgImZlYXR1cmVzL21lbnVfZW1iZWRzLnB5IjogIjM5NmM0NWExMjZjNTNlZGE1ZWExODRkMjIyYmNhNTVmODkzZmI3MTA5MDczOWQ0ZWZjMGFkMzdlZmI1ZGQ2ZDciLCAiZmVhdHVyZXMvbWVudV9oZWxwZXJzLnB5IjogIjFiZjZjMGRkY2FmOGZhNTE4ZWQ4ZmRjZGVjNWJmYzViYTNmNWFmOWQwNTk1YzgxMGE1MmUwNWY3NTc3N2U5ZDUiLCAiZmVhdHVyZXMvbWVudV9zdGF0cy5weSI6ICIwNGQ1MDNhYjY4ZTY3Mzk0MmViMjJhMzRmMzFlOTg3NzdlNTYxZmQ0NDM5ZmI1ZGQ5MDU5NTI1OTFjMjNhMjA1IiwgImZlYXR1cmVzL21lbnVfdmlld3MucHkiOiAiNzQ5MDRjODVkMTI2YWE4MzZmZTRhNjY1NDRkNWNjMjhiYmE4MWNmNDdlZWM4M2M0ODk2ODNmMGI1MjQ2OTIzMyIsICJmZWF0dXJlcy9yb2xlX3Rvb2xzLnB5IjogIjdiMTQzYjM2MGUwODc1Y2QxMmQ3MTBhYzYxNzYyMTBjOWExZDBkMmU3NjhjZGEzZmUwYWY0YTM2MjRmYThlZDMiLCAiZmVhdHVyZXMvcm9sZV90b29sc19hY3Rpb25zLnB5IjogIjkxOWNkNmJkYWE4ZjY4NGIzMWVmMDhhMTBiOGIzMDJmNDM5NzkzOTg5ZjQwMDFjY2YzMjA0MzYxY2VkOTQ0MWUiLCAiZmVhdHVyZXMvc29jaWFsX3Rvb2xzLnB5IjogIjhhZTJlMmRiNmJlYTU5ODI0NDIwZWRmMzViMzM0YjY5YTQzMzI1ODhlMjA0NTc2Mzg4MzgwNjRjYTk0MjA1N2EiLCAiZmVhdHVyZXMvdGVhbV9zdG9yYWdlLnB5IjogImJmZDVlNTg5Y2RmOWI5OTM5NmZhODMzMjE2ODIyMzQzNjc4MjRjZDgxNmVmNmE3Njc0Mzc3NmU1MTUzMTcwYzAiLCAiZmVhdHVyZXMvdGVtcHZjX3NldHRpbmdzLnB5IjogIjljNGM1MDJiOGY0MjhiMGIxMDA3NWNmMzRlMDk2ODIzZGY2MzI5ZDlkMmNjM2E4ZmI3Y2NhNWFhMjhiMmQxZmIiLCAiZmVhdHVyZXMvdGVtcHZjX3N0b3JhZ2UucHkiOiAiMDdhNjI3N2JkNDMwMTM0NWMxYjA4ZGQzYzFhMTk5ZjIyZjJjYjc2ZTQxNzgyMWQ3ZmViMGE2OTM2NzQ0NmRlYSIsICJmZWF0dXJlcy91cGRhdGVfcHVibGlzaGVyLnB5IjogImE2MjdlOThhMGFkZjM3ZDIyNDI4MzNhOWMzMWEyNDY2ZDgzZDgwMzU0YzBiNGExMDY2MDY5YjJkYzY3ODgyZjUiLCAidXRpbHMucHkiOiAiMDYyODZiN2Y3ZDI5YzBmMDYzOGYwNGJhNjlmNTk3ZDQ3YmRlYTA4NmQyYTYyODQ3MDE5N2RiNjJkMmZmOTgwYyJ9Cm1pc21hdGNoZXMgPSBbbmFtZSBmb3IgbmFtZSwgZGlnZXN0IGluIGV4cGVjdGVkLml0ZW1zKCkgaWYgbm90IFBhdGgobmFtZSkuZXhpc3RzKCkgb3IgaGFzaGxpYi5zaGEyNTYoUGF0aChuYW1lKS5yZWFkX2J5dGVzKCkpLmhleGRpZ2VzdCgpICE9IGRpZ2VzdF0KaWYgbWlzbWF0Y2hlczoKICAgIHByaW50KGpzb24uZHVtcHMoeydjb2RlX21pc21hdGNoZXMnOiBtaXNtYXRjaGVzfSkpCiAgICByYWlzZSBTeXN0ZW1FeGl0KDEpCnRva2VuID0gb3MuZ2V0ZW52KCdESVNDT1JEX1RPS0VOJykgb3Igb3MuZ2V0ZW52KCdESVNDT1JEX0JPVF9UT0tFTicpCmRlZiBnZXQocGF0aCk6CiAgICByZXEgPSB1cmxsaWIucmVxdWVzdC5SZXF1ZXN0KCdodHRwczovL2Rpc2NvcmQuY29tL2FwaS92MTAnICsgcGF0aCwgaGVhZGVycz17J0F1dGhvcml6YXRpb24nOiAnQm90ICcgKyB0b2tlbiwgJ1VzZXItQWdlbnQnOiAnQ29uOXNvbGVSZWxlYXNlVmVyaWZpY2F0aW9uLzEuMCd9KQogICAgd2l0aCB1cmxsaWIucmVxdWVzdC51cmxvcGVuKHJlcSwgdGltZW91dD0yMCkgYXMgcmVzcG9uc2U6CiAgICAgICAgcmV0dXJuIGpzb24ubG9hZChyZXNwb25zZSkKbWUgPSBnZXQoJy91c2Vycy9AbWUnKQpjb21tYW5kcyA9IGdldChmJy9hcHBsaWNhdGlvbnMve21lWyJpZCJdfS9ndWlsZHMve2NvbmZpZy5HVUlMRF9JRH0vY29tbWFuZHMnKQphc3NlcnQgeydtZW51JywnZHJpbmsnLCdjaGVlcnMnLCd2Y19uZXcnfSA8PSB7aXRlbVsnbmFtZSddIGZvciBpdGVtIGluIGNvbW1hbmRzfQpjb25uID0gc3FsaXRlMy5jb25uZWN0KFBhdGgoU1RBVFNfREIpLnJlc29sdmUoKS5hc191cmkoKSArICc/bW9kZT1ybycsIHVyaT1UcnVlKQp0cnk6CiAgICBhc3NlcnQgY29ubi5leGVjdXRlKCdQUkFHTUEgcXVpY2tfY2hlY2snKS5mZXRjaG9uZSgpWzBdID09ICdvaycKICAgIHRhYmxlcyA9IHtyb3dbMF0gZm9yIHJvdyBpbiBjb25uLmV4ZWN1dGUoIlNFTEVDVCBuYW1lIEZST00gc3FsaXRlX21hc3RlciBXSEVSRSB0eXBlPSd0YWJsZSciKX0KICAgIGFzc2VydCB7J3RlYW1fY2FyZHMnLCd0ZW1wX3ZvaWNlX2NoYW5uZWxzJywnZHJpbmtfZXZlbnRzJywnY29tbWFuZF91c2FnZScsJ2RhaWx5X2Jhcl9jb21wbGV0aW9ucyd9IDw9IHRhYmxlcwpmaW5hbGx5OgogICAgY29ubi5jbG9zZSgpCnByaW50KGpzb24uZHVtcHMoeydjb2RlX2ZpbGVzX3ZlcmlmaWVkJzogbGVuKGV4cGVjdGVkKSwgJ2Rpc2NvcmRfYXV0aF9vayc6IFRydWUsICdndWlsZF9jb21tYW5kcyc6IGxlbihjb21tYW5kcyksICdzcWxpdGVfaW50ZWdyaXR5JzogJ29rJywgJ25ld190YWJsZXNfcHJlc2VudCc6IFRydWV9KSkK'))")
           subprocess.run(['flyctl', 'ssh', 'console', '--app', 'con9sole-bartender', '-C', command], check=True)
           result = subprocess.run(['flyctl', 'logs', '--app', 'con9sole-bartender', '--json', '--no-tail'], check=True, capture_output=True, text=True)
-          try:
-              parsed = json.loads(result.stdout)
-              records = parsed if isinstance(parsed, list) else [parsed]
-              kind = type(parsed).__name__
-          except ValueError:
-              records = []
-              for line in result.stdout.splitlines():
-                  try:
-                      records.append(json.loads(line))
-                  except ValueError:
-                      pass
-              kind = 'jsonlines'
-          def describe(value, depth=0):
-              if depth > 2:
-                  return type(value).__name__
+          raw = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
+          decoder = json.JSONDecoder()
+          records = []
+          index = 0
+          while index < len(raw):
+              while index < len(raw) and raw[index].isspace():
+                  index += 1
+              try:
+                  value, index = decoder.raw_decode(raw, index)
+                  records.extend(value if isinstance(value, list) else [value])
+              except ValueError:
+                  index = raw.find('{', index + 1)
+                  if index < 0:
+                      break
+          def fields(value):
               if isinstance(value, dict):
-                  return {key: (item if any(part in key.lower() for part in ('time', 'stamp')) and isinstance(item, (str, int, float)) else describe(item, depth+1)) for key,item in value.items()}
-              if isinstance(value, list):
-                  return [describe(item, depth+1) for item in value[:1]]
-              return type(value).__name__
-          print(json.dumps({'log_format': kind, 'characters': len(result.stdout), 'line_count': len(result.stdout.splitlines()), 'record_count': len(records), 'first_record_shape': describe(records[0]) if records else None}))
+                  for key, item in value.items():
+                      yield key.lower(), item
+                      yield from fields(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      yield from fields(item)
+          cutoff = datetime.datetime.fromisoformat('2026-10-18T19:49:53+00:00')
+          messages = []
+          for record in records:
+              pairs = list(fields(record))
+              stamps = []
+              for key, value in pairs:
+                  if key not in ('timestamp', 'time', '@timestamp'):
+                      continue
+                  try:
+                      if isinstance(value, str):
+                          stamp = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+                          if stamp.tzinfo is None:
+                              stamp = stamp.replace(tzinfo=datetime.timezone.utc)
+                      elif isinstance(value, (float, int)):
+                          while value > 100000000000:
+                              value /= 1000
+                          stamp = datetime.datetime.fromtimestamp(value, datetime.timezone.utc)
+                      else:
+                          continue
+                      stamps.append(stamp)
+                  except (ValueError, OverflowError):
+                      continue
+              if any(stamp >= cutoff for stamp in stamps):
+                  messages.extend(value for key,value in pairs if key in ('message', 'msg') and isinstance(value, str))
+          joined = '\n'.join(messages)
+          cogs = sorted(set(re.findall(r'Loaded extension: cogs\.([a-z_]+)', joined)))
+          report = {'loaded_cogs': cogs, 'discord_ready_seen': 'Logged in as' in joined, 'guild_sync_seen': 'App commands synced to guild' in joined, 'vc_sweeper_seen': 'Temp VC safety sweeper started' in joined, 'failed_loading_seen': 'Failed loading' in joined, 'recent_error_lines': sum(' ERROR ' in m for m in messages), 'parsed_records': len(records)}
+          print(json.dumps(report))
+          if len(cogs) != 17 or not all(report[key] for key in ('discord_ready_seen', 'guild_sync_seen', 'vc_sweeper_seen')) or report['failed_loading_seen']:
+              print(json.dumps({'first_record_keys': list(records[0]) if records else []}))
+              raise SystemExit(1)
           PYCODE
