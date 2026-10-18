@@ -10,7 +10,12 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.action_guard import claim_action
 from core.permissions import is_admin_or_helper
+from core.safe_send import send_or_followup
+from core.ui import SafeModal, SafeView
+from features import tempvc_storage
+from features.menu_stats import record_usage_sync
 from features.tempvc_settings import (
     format_seconds,
     get_auto_vc_user_limit,
@@ -28,17 +33,18 @@ from features.tempvc_settings import (
     parse_manual_limit,
 )
 from utils import (
-    emb,
-    send_log,
-    voice_arrow,
-    is_temp_vc_id,
-    set_delete_task,
-    clear_delete_task,
-    cancel_delete_task,
+    bootstrap_track_temp_vcs,
     cancel_all_delete_tasks,
+    cancel_delete_task,
+    clear_delete_task,
+    emb,
+    has_delete_task,
+    is_temp_vc_id,
+    send_log,
+    set_delete_task,
     track_temp_vc,
     untrack_temp_vc,
-    bootstrap_track_temp_vcs,
+    voice_arrow,
 )
 
 log = logging.getLogger("con9sole-bartender.tempvc")
@@ -177,8 +183,10 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
     if not is_temp_vc_id(ch_id):
         return
 
-    if not force and len(channel.members) > 0:
+    if len(channel.members) > 0:
         cancel_delete_task(ch_id)
+        return
+    if has_delete_task(ch_id):
         return
 
     async def _task() -> None:
@@ -193,6 +201,7 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
                     fresh = await guild.fetch_channel(ch_id)
                 except discord.NotFound:
                     log.info("Temp VC already deleted before countdown completed: channel=%s", ch_id)
+                    untrack_temp_vc(ch_id)
                     return
                 except Exception:
                     log.exception("Failed to fetch temp VC during deletion: channel=%s", ch_id)
@@ -200,9 +209,9 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
 
             if isinstance(fresh, discord.VoiceChannel) and len(fresh.members) == 0 and is_temp_vc_id(ch_id):
                 log.info("Deleting empty temp VC: channel=%s name=%s", ch_id, fresh.name)
-                untrack_temp_vc(ch_id)
                 try:
                     await fresh.delete(reason="Temp VC idle timeout")
+                    untrack_temp_vc(ch_id)
                 except discord.Forbidden:
                     log.error("Missing permission to delete temp VC: channel=%s", ch_id)
                 except Exception:
@@ -228,7 +237,6 @@ def _build_created_message(ch: discord.VoiceChannel, limit: int) -> str:
         f"✅ **Temp VC 已建立**：{ch.mention}\n"
         f"📝 **名稱**：`{ch.name}`\n"
         f"👥 **人數上限**：`{actual_limit}`\n"
-        f"⚙️ **房間設定**：`bitrate={ch.bitrate // 1000}kbps` · `limit={actual_limit}`\n"
         f"✨ 祝你哋傾得開心。"
     )
 
@@ -279,118 +287,7 @@ def _channel_sort_key(ch: discord.VoiceChannel) -> tuple[str, str, int]:
     return (category_name.lower(), ch.name.lower(), ch.id)
 
 
-class TempVCLimitSelect(discord.ui.Select):
-    def __init__(self) -> None:
-        options = [
-            discord.SelectOption(label=f"{limit} 人", value=str(limit), emoji="⚡" if limit == 32 else "👥")
-            for limit in TEMP_VC_LIMIT_CHOICES
-        ]
-        options[0].emoji = "2️⃣"
-        options[1].emoji = "5️⃣"
-        options[2].emoji = "8️⃣"
-        options[-1].label = "32 人（預設）"
-
-        super().__init__(
-            placeholder="選擇人數上限；選完會即時建立房間",
-            min_values=1,
-            max_values=1,
-            options=options,
-            row=0,
-        )
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        if not isinstance(self.view, TempVCLimitView):
-            return
-        limit = normalize_limit(self.values[0], default=32)
-        await self.view.create_with_limit(interaction, limit)
-
-
-class TempVCLimitView(discord.ui.View):
-    def __init__(
-        self,
-        cog: "TempVC",
-        *,
-        owner_id: int,
-        room_name: Optional[str],
-        category: Optional[discord.CategoryChannel],
-    ) -> None:
-        super().__init__(timeout=180)
-        self.cog = cog
-        self.owner_id = owner_id
-        self.room_name = room_name.strip() if room_name else None
-        self.category = category
-        self.created = False
-        self.add_item(TempVCLimitSelect())
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("呢個面板只限發起者使用。", ephemeral=True)
-            return False
-        return True
-
-    async def create_with_limit(self, interaction: discord.Interaction, limit: int) -> None:
-        if self.created:
-            await interaction.response.send_message("呢個小隊房已經建立咗。", ephemeral=True)
-            return
-
-        if not interaction.guild:
-            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
-            return
-
-        self.created = True
-        room_label = self.room_name or "自動編號"
-        await interaction.response.edit_message(
-            content=(
-                f"✅ 已選擇人數上限：`{limit}`\n"
-                f"📝 房間名稱：`{room_label}`\n"
-                "⏳ 正在建立小隊房……"
-            ),
-            view=None,
-        )
-
-        try:
-            ch = await self.cog._create_manual_temp_vc(
-                interaction.guild,
-                self.category,
-                name=self.room_name,
-                limit=limit,
-            )
-        except discord.Forbidden:
-            await interaction.followup.send("❌ 建立失敗：Bot 缺少 `Manage Channels` 權限。", ephemeral=True)
-            self.stop()
-            return
-        except discord.HTTPException as exc:
-            await interaction.followup.send(f"❌ 建立失敗：Discord API 錯誤 `{type(exc).__name__}`。", ephemeral=True)
-            self.stop()
-            return
-        except Exception as exc:
-            await interaction.followup.send(f"❌ 建立失敗：`{type(exc).__name__}`。", ephemeral=True)
-            self.stop()
-            return
-
-        msg = _build_created_message(ch, limit)
-        control_view = TempVCControlView(self.cog, channel_id=ch.id)
-        try:
-            if interaction.channel is not None:
-                await interaction.channel.send(msg, view=control_view)
-            else:
-                await interaction.followup.send(msg, view=control_view, ephemeral=False)
-        except Exception:
-            await interaction.followup.send(msg, view=control_view, ephemeral=False)
-
-        self.stop()
-
-    @discord.ui.button(label="用預設 32 建立", emoji="⚡", style=discord.ButtonStyle.primary, row=1)
-    async def default_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.create_with_limit(interaction, 32)
-
-    @discord.ui.button(label="取消", emoji="🗑️", style=discord.ButtonStyle.danger, row=1)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(content="已取消建立小隊房。", view=None)
-        self.stop()
-
-
-class ChangeLimitModal(discord.ui.Modal, title="修改小隊 call 人數上限"):
+class ChangeLimitModal(SafeModal, title="修改小隊 call 人數上限"):
     new_limit = discord.ui.TextInput(
         label="新的人數上限",
         placeholder="請輸入 1-99，例如：11",
@@ -408,25 +305,72 @@ class ChangeLimitModal(discord.ui.Modal, title="修改小隊 call 人數上限")
         await self.cog.apply_vc_limit_from_modal(interaction, self.channel_id, limit)
 
 
-class TempVCControlView(discord.ui.View):
-    def __init__(self, cog: "TempVC", *, channel_id: int):
+class RenameRoomModal(SafeModal, title="改小隊房名"):
+    name = discord.ui.TextInput(label="房名", max_length=50)
+
+    def __init__(self, cog: "TempVC", channel_id: int) -> None:
+        super().__init__(timeout=180)
+        self.cog, self.channel_id = cog, channel_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        member, channel, error = self.cog._get_control_channel(interaction, self.channel_id)
+        if error or channel is None or member is None:
+            await send_or_followup(interaction, content=error or "搵唔到房間。", ephemeral=True)
+            return
+        if member.id != tempvc_storage.creator_id(channel.id) and not user_can_admin_teardown(member):
+            await send_or_followup(interaction, content="改名只限開房者或管理員。", ephemeral=True)
+            return
+        name = self.name.value.strip()
+        if not name:
+            await send_or_followup(interaction, content="請填一個房名。", ephemeral=True)
+            return
+        with claim_action("vc-edit", channel.id) as claimed:
+            if not claimed:
+                await send_or_followup(interaction, content="房間設定正在更新，請稍候。", ephemeral=True)
+                return
+            if not user_bypasses_vc_limit_cooldown(member):
+                retry = get_vc_limit_channel_cooldown_seconds() - (time.time() - VC_LIMIT_CHANNEL_COOLDOWNS.get(channel.id, 0.0))
+                if retry > 0:
+                    await send_or_followup(interaction, content=f"請等 {format_seconds(retry)} 再改房間設定。", ephemeral=True)
+                    return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            try:
+                await channel.edit(name=f"{get_temp_channel_base_name()} {name}", reason=f"Room renamed by {member.id}")
+            except discord.HTTPException:
+                await interaction.edit_original_response(content="改名失敗，請稍後再試。")
+                return
+            if not user_bypasses_vc_limit_cooldown(member):
+                VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = time.time()
+            await interaction.edit_original_response(content="✅ 房名已更新。")
+
+
+class TempVCControlView(SafeView):
+    def __init__(self, cog: "TempVC", *, channel_id: int, guild_id: int | None = None):
         super().__init__(timeout=600)
         self.cog = cog
         self.channel_id = channel_id
+        room = cog.bot.get_channel(channel_id)
+        guild_id = guild_id or (room.guild.id if room is not None else None)
+        if guild_id is not None:
+            self.add_item(discord.ui.Button(label="加入語音房", emoji="🎧", url=f"https://discord.com/channels/{guild_id}/{channel_id}", row=0))
 
-    @discord.ui.button(label="改人數上限", emoji="👥", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="改名", emoji="✏️", style=discord.ButtonStyle.secondary, row=1)
+    async def rename_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(RenameRoomModal(self.cog, self.channel_id))
+
+    @discord.ui.button(label="改人數上限", emoji="👥", style=discord.ButtonStyle.secondary, row=1)
     async def change_limit_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(ChangeLimitModal(self.cog, self.channel_id))
 
-    @discord.ui.button(label="刪除小隊 call", emoji="🧹", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="刪除小隊 call", emoji="🧹", style=discord.ButtonStyle.danger, row=2)
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.cog.delete_temp_vc_from_control(interaction, self.channel_id)
 
-    @discord.ui.button(label="Menu", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="吧枱", emoji="🍸", style=discord.ButtonStyle.secondary, row=2)
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         menu_cog = interaction.client.get_cog("Menu")
         if menu_cog and hasattr(menu_cog, "open_home_menu_from_button"):
-            await menu_cog.open_home_menu_from_button(interaction)  # type: ignore[attr-defined]
+            await menu_cog.open_main_menu(interaction)  # type: ignore[attr-defined]
             return
         await interaction.response.send_message("❌ Menu 功能未載入。", ephemeral=True)
 
@@ -467,7 +411,7 @@ class AdminTempVCSelect(discord.ui.Select):
         await self.view.select_channel(interaction, int(self.values[0]))
 
 
-class AdminTempVCSelectView(discord.ui.View):
+class AdminTempVCSelectView(SafeView):
     def __init__(self, cog: "TempVC", *, owner_id: int, channels: list[discord.VoiceChannel]):
         super().__init__(timeout=180)
         self.cog = cog
@@ -520,7 +464,7 @@ class AdminTempVCSelectView(discord.ui.View):
         self.stop()
 
 
-class AdminTempVCConfirmView(discord.ui.View):
+class AdminTempVCConfirmView(SafeView):
     def __init__(self, cog: "TempVC", *, owner_id: int, channel_id: int):
         super().__init__(timeout=120)
         self.cog = cog
@@ -549,6 +493,8 @@ class AdminTempVCConfirmView(discord.ui.View):
             await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
             return
 
+        self.done = True
+        await interaction.response.defer()
         channel = interaction.guild.get_channel(self.channel_id)
         if channel is None:
             try:
@@ -560,7 +506,7 @@ class AdminTempVCConfirmView(discord.ui.View):
                 channel = None
 
         if not isinstance(channel, discord.VoiceChannel) or not is_temp_vc_id(channel.id):
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content="❌ 呢間 Temp VC 已不存在，或者已不再係 Bot 建立嘅 Temp VC。",
                 view=None,
             )
@@ -573,14 +519,14 @@ class AdminTempVCConfirmView(discord.ui.View):
         try:
             await self.cog._teardown_temp_vc(channel)
         except discord.Forbidden:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content="❌ 刪除失敗：Bot 缺少 `Manage Channels` 權限。",
                 view=None,
             )
             self.stop()
             return
         except discord.HTTPException as exc:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"❌ 刪除失敗：Discord API 錯誤 `{type(exc).__name__}`。",
                 view=None,
             )
@@ -588,7 +534,7 @@ class AdminTempVCConfirmView(discord.ui.View):
             return
 
         self.done = True
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=f"✅ Admin Teardown 已刪除：`{channel_name}`（刪除前 `{member_count}` 人）",
             view=None,
         )
@@ -600,47 +546,6 @@ class AdminTempVCConfirmView(discord.ui.View):
         self.stop()
 
 
-class TempVCNameModal(discord.ui.Modal, title="建立小隊房"):
-    room_name = discord.ui.TextInput(
-        label="房間名稱",
-        placeholder="可留空，例如：Apex / Rank / 深夜房",
-        required=False,
-        max_length=50,
-    )
-
-    def __init__(self, cog: "TempVC") -> None:
-        super().__init__()
-        self.cog = cog
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not user_can_run_tempvc(interaction):
-            await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
-            return
-
-        if not interaction.guild:
-            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
-            return
-
-        category = _category_from_ctx_channel(interaction.channel)
-        name_value = str(self.room_name.value).strip() or None
-        room_label = name_value or "自動編號"
-
-        await interaction.response.send_message(
-            content=(
-                f"📝 房間名稱：`{room_label}`\n"
-                "👥 請選擇人數上限；**選完會即時建立房間**。\n"
-                "⚡ 或直接使用預設 `32` 建立。"
-            ),
-            view=TempVCLimitView(
-                self.cog,
-                owner_id=interaction.user.id,
-                room_name=name_value,
-                category=category,
-            ),
-            ephemeral=True,
-        )
-
-
 class TempVC(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -648,10 +553,21 @@ class TempVC(commands.Cog):
         self._sweeper_task: Optional[asyncio.Task] = None
         self._creating_for_members: set[int] = set()
 
-    def cog_unload(self) -> None:
-        if self._sweeper_task and not self._sweeper_task.done():
-            self._sweeper_task.cancel()
+    async def cog_load(self) -> None:
+        tempvc_storage.init_tempvc_db()
+        self._startup_task = asyncio.create_task(self._start_after_ready())
+
+    async def _start_after_ready(self) -> None:
+        await self.bot.wait_until_ready()
+        await self.on_ready()
+
+    async def cog_unload(self) -> None:
+        tasks = [task for task in (getattr(self, "_startup_task", None), self._sweeper_task) if task is not None]
+        for task in tasks:
+            task.cancel()
         cancel_all_delete_tasks()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
         """Unified entrypoint for data/menu_registry.py."""
@@ -694,6 +610,7 @@ class TempVC(commands.Cog):
         *,
         name: Optional[str] = None,
         limit: Optional[int] = None,
+        creator_id: int | None = None,
     ) -> discord.VoiceChannel:
         base = get_temp_channel_base_name()
         vc_name = f"{base} {name.strip()}" if name and name.strip() else _next_temp_channel_name_in_category(category, guild)
@@ -707,16 +624,20 @@ class TempVC(commands.Cog):
             reason="Create temp VC (bartender)",
             **kwargs,
         )
-        track_temp_vc(ch.id)
+        try:
+            track_temp_vc(ch.id, guild_id=guild.id, creator_id=creator_id)
+        except Exception:
+            await ch.delete(reason="Could not persist temp VC ownership")
+            raise
         log.info("Created temp VC: channel=%s name=%s category=%s", ch.id, ch.name, category.id if category else None)
         await schedule_delete_if_empty(ch, force=False)
         return ch
 
     async def _teardown_temp_vc(self, target: discord.VoiceChannel) -> None:
-        untrack_temp_vc(target.id)
-        cancel_delete_task(target.id)
         log.info("Deleting temp VC manually: channel=%s name=%s", target.id, target.name)
         await target.delete(reason="Manual teardown temp VC")
+        untrack_temp_vc(target.id)
+        cancel_delete_task(target.id)
 
     async def get_all_temp_vcs(self, guild: discord.Guild) -> list[discord.VoiceChannel]:
         try:
@@ -732,15 +653,58 @@ class TempVC(commands.Cog):
         return sorted(channels, key=_channel_sort_key)
 
     async def create_temp_vc_from_menu(self, interaction: discord.Interaction) -> None:
-        if not user_can_run_tempvc(interaction):
-            await interaction.response.send_message("你未有使用 Temp VC 權限。", ephemeral=True)
+        member, current, _ = self._get_current_member_temp_vc(interaction)
+        if current is not None:
+            await self.open_control_panel_from_menu(interaction)
             return
+        await self._create_default_room(interaction)
 
-        if not interaction.guild:
-            await interaction.response.send_message("只可在伺服器使用。", ephemeral=True)
+    async def _find_owned_room(self, guild: discord.Guild, user_id: int) -> discord.VoiceChannel | None:
+        for channel_id in tempvc_storage.owned_ids(guild.id, user_id):
+            room = guild.get_channel(channel_id)
+            if room is None:
+                try:
+                    room = await guild.fetch_channel(channel_id)
+                except discord.NotFound:
+                    untrack_temp_vc(channel_id)
+                    continue
+            if isinstance(room, discord.VoiceChannel):
+                return room
+        return None
+
+    async def _create_default_room(self, interaction: discord.Interaction, *, name: str | None = None, limit: int | None = None) -> None:
+        if not interaction.guild or not user_can_run_tempvc(interaction):
+            await send_or_followup(interaction, content="需要已驗證會員身份，先可以開小隊 call。", ephemeral=True)
             return
-
-        await interaction.response.send_modal(TempVCNameModal(self))
+        with claim_action("vc-create", interaction.guild_id, interaction.user.id) as claimed:
+            if not claimed:
+                await send_or_followup(interaction, content="正在開房，請稍候。", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            guild = interaction.guild
+            try:
+                room = await self._find_owned_room(guild, interaction.user.id)
+            except discord.HTTPException:
+                await interaction.edit_original_response(content="暫時確認唔到你原本間房，請稍後再試。")
+                return
+            if room is not None:
+                await interaction.edit_original_response(content=f"🎧 你間小隊 call：{room.mention}", view=TempVCControlView(self, channel_id=room.id, guild_id=guild.id))
+                return
+            with claim_action("vc-create-guild", guild.id) as guild_claimed:
+                if not guild_claimed:
+                    await interaction.edit_original_response(content="酒保正在開另一間房，請稍後再撳。")
+                    return
+                try:
+                    room = await self._create_manual_temp_vc(
+                        guild, _category_from_ctx_channel(interaction.channel), name=name,
+                        limit=normalize_limit(limit, default=get_auto_vc_user_limit() or 32), creator_id=interaction.user.id,
+                    )
+                except discord.HTTPException:
+                    log.exception("Failed to create manual VC: user=%s", interaction.user.id)
+                    await interaction.edit_original_response(content="暫時開唔到房，請稍後再試；如持續出現，請通知管理員。")
+                    return
+            record_usage_sync("tempvc", interaction.user.id, guild.id)
+            await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32), view=TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id))
 
     async def open_control_panel_from_menu(self, interaction: discord.Interaction) -> None:
         member, channel, error = self._get_current_member_temp_vc(interaction)
@@ -756,7 +720,7 @@ class TempVC(commands.Cog):
         await _send_interaction_message(
             interaction,
             _build_control_panel_message(channel),
-            view=TempVCControlView(self, channel_id=channel.id),
+            view=TempVCControlView(self, channel_id=channel.id, guild_id=channel.guild.id),
             ephemeral=True,
         )
 
@@ -821,24 +785,29 @@ class TempVC(commands.Cog):
                 )
                 return
 
-        try:
-            await channel.edit(user_limit=new_limit, reason=f"Temp VC limit changed by {member} ({member.id})")
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ 修改失敗：Bot 缺少 `Manage Channels` 權限。", ephemeral=True)
-            return
-        except discord.HTTPException as exc:
-            await interaction.response.send_message(f"❌ 修改失敗：Discord API 錯誤 `{type(exc).__name__}`。", ephemeral=True)
-            return
+        with claim_action("vc-edit", channel.id) as claimed:
+            if not claimed:
+                await send_or_followup(interaction, content="房間設定正在更新，請稍候。", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            try:
+                await channel.edit(user_limit=new_limit, reason=f"Temp VC limit changed by {member} ({member.id})")
+            except discord.Forbidden:
+                await send_or_followup(interaction, content="❌ 修改失敗：Bot 缺少 `Manage Channels` 權限。", ephemeral=True)
+                return
+            except discord.HTTPException as exc:
+                await send_or_followup(interaction, content=f"❌ 修改失敗：Discord API 錯誤 `{type(exc).__name__}`。", ephemeral=True)
+                return
 
-        if not user_bypasses_vc_limit_cooldown(member):
-            now = time.time()
-            VC_LIMIT_USER_COOLDOWNS[member.id] = now
-            VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = now
+            if not user_bypasses_vc_limit_cooldown(member):
+                now = time.time()
+                VC_LIMIT_USER_COOLDOWNS[member.id] = now
+                VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = now
 
-        await interaction.response.send_message(
-            f"✅ 已更新小隊 call 人數上限：`{old_limit or '無限制'}` → `{new_limit}`",
-            ephemeral=True,
-        )
+            await send_or_followup(interaction,
+                content=f"✅ 已更新小隊 call 人數上限：`{old_limit or '無限制'}` → `{new_limit}`",
+                ephemeral=True,
+            )
 
     async def delete_temp_vc_from_control(self, interaction: discord.Interaction, channel_id: int) -> None:
         member, channel, error = self._get_control_channel(interaction, channel_id)
@@ -855,8 +824,13 @@ class TempVC(commands.Cog):
             )
             return
 
-        await self._teardown_temp_vc(channel)
-        await interaction.response.send_message("✅ 已刪除你目前嘅小隊 call。", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self._teardown_temp_vc(channel)
+        except discord.HTTPException:
+            await interaction.edit_original_response(content="刪除失敗，房間仍保留，請稍後再試。")
+            return
+        await interaction.edit_original_response(content="✅ 已刪除你目前嘅小隊 call。")
 
     async def open_admin_teardown_panel(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
@@ -915,7 +889,11 @@ class TempVC(commands.Cog):
             log.exception("Failed to create automatic temp VC: member=%s", member.id)
             return None
 
-        track_temp_vc(ch.id)
+        try:
+            track_temp_vc(ch.id, guild_id=guild.id, creator_id=member.id)
+        except Exception:
+            await ch.delete(reason="Could not persist temp VC ownership")
+            raise
         log.info("Created automatic temp VC: channel=%s member=%s hub=%s", ch.id, member.id, source_channel.id)
 
         try:
@@ -941,6 +919,10 @@ class TempVC(commands.Cog):
 
         for guild in self.bot.guilds:
             try:
+                for channel_id in getattr(config, "TEMP_VC_LEGACY_CHANNEL_IDS", []):
+                    channel = guild.get_channel(channel_id)
+                    if isinstance(channel, discord.VoiceChannel) and not _is_hub_channel(channel):
+                        track_temp_vc(channel.id, guild_id=guild.id)
                 ids = await bootstrap_track_temp_vcs(guild, name_prefixes=get_name_prefixes())
                 for cid in ids:
                     ch = guild.get_channel(cid)
@@ -948,6 +930,7 @@ class TempVC(commands.Cog):
                         try:
                             ch = await guild.fetch_channel(cid)
                         except discord.NotFound:
+                            untrack_temp_vc(cid)
                             continue
                         except Exception:
                             log.exception("Failed to fetch temp VC during bootstrap: channel=%s", cid)
@@ -980,6 +963,7 @@ class TempVC(commands.Cog):
                                 try:
                                     ch = await guild.fetch_channel(cid)
                                 except discord.NotFound:
+                                    untrack_temp_vc(cid)
                                     continue
                                 except Exception:
                                     continue
@@ -1024,35 +1008,32 @@ class TempVC(commands.Cog):
             and before.channel != after.channel
             and member.id not in self._creating_for_members
         ):
-            self._creating_for_members.add(member.id)
-            try:
-                created = await self._create_temp_vc_for_member(member, after.channel)
-                if created is None:
-                    try:
-                        await member.send("我剛剛想幫你開臨時語音房，但建立失敗。請通知管理員檢查 Bot 權限設定。")
-                    except Exception:
-                        log.debug("Could not DM member after temp VC creation failure: member=%s", member.id)
-            finally:
-                self._creating_for_members.discard(member.id)
+            with claim_action("vc-create", member.guild.id, member.id) as claimed:
+                if not claimed:
+                    return
+                self._creating_for_members.add(member.id)
+                try:
+                    room = await self._find_owned_room(member.guild, member.id)
+                    if room is not None:
+                        await member.move_to(room, reason="Reuse existing small-team room")
+                        return
+                    with claim_action("vc-create-guild", member.guild.id) as guild_claimed:
+                        if not guild_claimed:
+                            return
+                        created = await self._create_temp_vc_for_member(member, after.channel)
+                    if created is None:
+                        try:
+                            await member.send("暫時開唔到語音房，請通知管理員檢查權限。")
+                        except discord.HTTPException:
+                            log.debug("Could not DM member after temp VC creation failure")
+                finally:
+                    self._creating_for_members.discard(member.id)
 
     @app_commands.command(name="vc_new", description="建立一個臨時語音房（空房 120 秒自動刪除）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.describe(name="語音房名稱（可選）", limit="人數上限（可選；不填＝32）")
     async def vc_new(self, inter: discord.Interaction, name: Optional[str] = None, limit: Optional[int] = None) -> None:
-        if not user_can_run_tempvc(inter):
-            await inter.response.send_message("你未有使用權限。", ephemeral=True)
-            return
-
-        if not inter.guild:
-            await inter.response.send_message("只可在伺服器使用。", ephemeral=True)
-            return
-
-        category = _category_from_ctx_channel(inter.channel)
-        await inter.response.defer(ephemeral=False)
-
-        final_limit = normalize_limit(limit, default=32)
-        ch = await self._create_manual_temp_vc(inter.guild, category, name=name, limit=final_limit)
-        await inter.followup.send(_build_created_message(ch, final_limit), view=TempVCControlView(self, channel_id=ch.id))
+        await self._create_default_room(inter, name=name, limit=limit)
 
     @app_commands.command(name="vc_teardown", description="Admin/Helper：選擇並刪除由 Bot 建立的臨時語音房")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))

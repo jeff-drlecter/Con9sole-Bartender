@@ -8,7 +8,13 @@ import discord
 
 import config
 from core.safe_send import send_or_followup
-from data.menu_registry import MenuItem, get_menu_items
+from core.ui import SafeView, report_ui_error
+from data.menu_registry import (
+    LEGACY_HOME_MENU_ITEMS,
+    LEGACY_QUICK_MENU_ITEMS,
+    MenuItem,
+    get_menu_items,
+)
 from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
 
@@ -73,7 +79,11 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
 }
 
 NO_COOLDOWN_ITEM_IDS = {
+    "team",
+    "tempvc",
+    "tempvc_control",
     "home_menu",
+    "quick_bar",
     "help",
     "admin_tool",
     "invite",
@@ -254,7 +264,7 @@ class RegistryButton(discord.ui.Button):
         await self.view.handle_item(interaction, self.item)
 
 
-class BaseMenuView(discord.ui.View):
+class BaseMenuView(SafeView):
     def __init__(self, cog: object, *, timeout: float | None = None) -> None:
         super().__init__(timeout=timeout)
         self.cog = cog
@@ -301,7 +311,7 @@ class RegistryMenuView(BaseMenuView):
             await send_or_followup(
                 interaction,
                 embed=embed,
-                view=HomeMenuView(self.cog),
+                view=HomeMenuView(self.cog, include_admin=can_use_admin(interaction.user)),
                 ephemeral=True,
             )
             return
@@ -311,7 +321,7 @@ class RegistryMenuView(BaseMenuView):
         await send_or_followup(
             interaction,
             embed=embed,
-            view=HomeMenuView(self.cog, include_external_links=False),
+            view=HomeMenuView(self.cog, include_external_links=False, include_admin=can_use_admin(interaction.user)),
             ephemeral=True,
         )
 
@@ -323,7 +333,7 @@ class RegistryMenuView(BaseMenuView):
                 pass
             except Exception as exc:
                 if interaction.response.is_done():
-                    log.exception("Menu item failed after interaction response: item=%s", item.id)
+                    await report_ui_error(interaction, exc)
                     return
                 await send_or_followup(
                     interaction,
@@ -370,7 +380,7 @@ class RegistryMenuView(BaseMenuView):
             pass
         except Exception as exc:
             if interaction.response.is_done():
-                log.exception("Menu item failed after interaction response: item=%s", item.id)
+                await report_ui_error(interaction, exc)
                 return
 
             await send_or_followup(
@@ -391,8 +401,13 @@ class HomeMenuView(RegistryMenuView):
         cog: object,
         *,
         include_external_links: bool = True,
+        include_admin: bool = False,
     ) -> None:
         super().__init__(cog, "home")
+        if not include_admin:
+            for item in list(self.children):
+                if isinstance(item, RegistryButton) and item.item.admin_only:
+                    self.remove_item(item)
         self.add_item(PublicExploreButton())
 
         if include_external_links and RULES_URL:
@@ -416,6 +431,18 @@ class HomeMenuView(RegistryMenuView):
                     row=4,
                 )
             )
+
+
+class LegacyMenuView(RegistryMenuView):
+    """Dispatch retired buttons on old messages without displaying them anew."""
+    def __init__(self, cog: object, layer: str) -> None:
+        super().__init__(cog, layer)
+        self.clear_items()
+        current_ids = {item.id for item in get_menu_items(layer)}
+        old_items = LEGACY_QUICK_MENU_ITEMS if layer == "quick" else LEGACY_HOME_MENU_ITEMS
+        for item in old_items:
+            if item.id not in current_ids:
+                self.add_item(RegistryButton(item))
 
 
 class AdminToolView(RegistryMenuView):

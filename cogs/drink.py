@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from collections import defaultdict, deque
-from dataclasses import dataclass
 from typing import Deque, Dict
 
 import discord
@@ -12,13 +9,14 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
+from core.action_guard import claim_action
+from core.discord_interactions import require_public_send
 from core.safe_send import send_or_followup
 from data.drink_data import (
-    BARTENDER_ATTACHMENT_NAME,
-    DrinkEntry,
     ICON_MAP,
     RARITY_STYLE,
     RECENT_HISTORY_LIMIT,
+    DrinkEntry,
 )
 from features.daily_bar import complete_daily_bar_task
 from features.drink_catalog import (
@@ -26,17 +24,14 @@ from features.drink_catalog import (
     pick_rarity,
     pick_weighted_drink,
 )
-from features.drink_constants import GIFT_DRINK_TARGET_TIMEOUT_SECONDS
 from features.drink_embeds import (
     build_drink_collection_embed,
     build_drink_stats_embed,
-    build_gift_prompt_embed,
 )
 from features.drink_leaderboard import (
     DrinkLeaderboardView,
     build_drink_leaderboard_embed,
 )
-from features.drink_result import build_bartender_result_payload
 from features.drink_state import (
     get_drink_retry_after,
     get_gift_drink_retry_after,
@@ -48,37 +43,17 @@ from features.drink_state import (
 from features.drink_storage import (
     EVENT_GIFT_DRINK,
     EVENT_SELF_DRINK,
+    has_collected_drink,
     init_drink_events_db,
     record_drink_event,
 )
 from features.drink_views import (
     DrinkCollectionView,
-    GiftDrinkCancelView,
+    DrinkResultView,
 )
+from features.member_picker import open_member_picker, resolve_member
 
 log = logging.getLogger("con9sole-bartender.drink")
-
-
-@dataclass
-class GiftDrinkPending:
-    started_at: float
-    cancel_event: asyncio.Event
-
-
-PENDING_GIFT_DRINK_REQUESTS: dict[int, GiftDrinkPending] = {}
-
-
-def cleanup_pending_gift_requests() -> None:
-    now = time.time()
-    expired_user_ids = [
-        user_id
-        for user_id, pending in PENDING_GIFT_DRINK_REQUESTS.items()
-        if now - pending.started_at >= GIFT_DRINK_TARGET_TIMEOUT_SECONDS
-    ]
-    for user_id in expired_user_ids:
-        pending = PENDING_GIFT_DRINK_REQUESTS.pop(user_id, None)
-        if pending is not None and not pending.cancel_event.is_set():
-            pending.cancel_event.set()
 
 
 class Drink(commands.Cog):
@@ -86,7 +61,9 @@ class Drink(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.user_recent_draws: Dict[int, Deque[str]] = defaultdict(lambda: deque(maxlen=RECENT_HISTORY_LIMIT))
+        self.user_recent_draws: Dict[int, Deque[str]] = defaultdict(
+            lambda: deque(maxlen=RECENT_HISTORY_LIMIT)
+        )
 
         for user_id, drinks in load_recent_draw_map().items():
             self.user_recent_draws[user_id] = deque(
@@ -96,15 +73,28 @@ class Drink(commands.Cog):
 
         init_drink_events_db()
 
-    async def _record_usage(self, interaction: discord.Interaction, feature: str = "drink") -> None:
+    async def cog_load(self) -> None:
+        self.bot.add_view(DrinkResultView())
+
+    async def _record_usage(
+        self, interaction: discord.Interaction, feature: str = "drink"
+    ) -> None:
         menu_cog = self.bot.get_cog("Menu")
         if menu_cog and hasattr(menu_cog, "record_usage"):
             try:
-                await menu_cog.record_usage(feature, interaction.user.id, interaction.guild_id)
+                await menu_cog.record_usage(
+                    feature, interaction.user.id, interaction.guild_id
+                )
             except Exception:
-                log.exception("Failed to record drink usage: user=%s feature=%s", interaction.user.id, feature)
+                log.exception(
+                    "Failed to record drink usage: user=%s feature=%s",
+                    interaction.user.id,
+                    feature,
+                )
 
-    async def _complete_daily_bar(self, interaction: discord.Interaction, feature: str) -> None:
+    async def _complete_daily_bar(
+        self, interaction: discord.Interaction, feature: str
+    ) -> None:
         completed = complete_daily_bar_task(
             guild_id=interaction.guild_id,
             user_id=interaction.user.id,
@@ -119,7 +109,11 @@ class Drink(commands.Cog):
                 ephemeral=True,
             )
         except Exception:
-            log.exception("Failed to send daily-bar completion notice: user=%s feature=%s", interaction.user.id, feature)
+            log.exception(
+                "Failed to send daily-bar completion notice: user=%s feature=%s",
+                interaction.user.id,
+                feature,
+            )
 
     async def _check_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         retry_after = get_drink_retry_after(interaction.user.id)
@@ -129,38 +123,15 @@ class Drink(commands.Cog):
             return False
         return True
 
-    async def _check_gift_drink_cooldown(self, interaction: discord.Interaction) -> bool:
+    async def _check_gift_drink_cooldown(
+        self, interaction: discord.Interaction
+    ) -> bool:
         retry_after = get_gift_drink_retry_after(interaction.user.id)
         if retry_after > 0:
             message = f"⏳ 酒保正在準備賜酒，請等 {retry_after:.1f} 秒後再試。"
             await send_or_followup(interaction, content=message, ephemeral=True)
             return False
         return True
-
-    async def _enforce_drink_cooldown(self, interaction: discord.Interaction) -> bool:
-        ok = await self._check_drink_cooldown(interaction)
-        if not ok:
-            return False
-
-        touch_drink_cooldown(interaction.user.id)
-        return True
-
-    async def _enforce_gift_drink_cooldown(self, interaction: discord.Interaction) -> bool:
-        ok = await self._check_gift_drink_cooldown(interaction)
-        if not ok:
-            return False
-
-        touch_gift_drink_cooldown(interaction.user.id)
-        return True
-
-    def _pick_unique_drink(self, user_id: int, rarity: str) -> DrinkEntry:
-        recent = set(self.user_recent_draws[user_id])
-        chosen = pick_weighted_drink(rarity=rarity, recent_drink_names=recent)
-
-        self.user_recent_draws[user_id].append(chosen.eng)
-        save_recent_draws(user_id, list(self.user_recent_draws[user_id]))
-
-        return chosen
 
     def _build_header_line(
         self,
@@ -178,192 +149,132 @@ class Drink(commands.Cog):
 
         return f"{icon} Bartender Special：酒保為 {giver} 調製了一杯 {drink_name}。"
 
-    async def _wait_for_gift_target(self, interaction: discord.Interaction) -> discord.Member | None:
-        if interaction.channel is None:
-            await send_or_followup(interaction, content="❌ 搵唔到目前 channel，請重新試一次。", ephemeral=True)
-            return None
-
-        cleanup_pending_gift_requests()
-        if interaction.user.id in PENDING_GIFT_DRINK_REQUESTS:
-            await send_or_followup(
-                interaction,
-                content="⏳ 你已經有一個等待 tag 對象嘅賜酒操作。請先完成，或者撳該訊息嘅取消按鈕。",
-                ephemeral=True,
-            )
-            return None
-
-        ok = await self._check_gift_drink_cooldown(interaction)
-        if not ok:
-            return None
-
-        cancel_event = asyncio.Event()
-        PENDING_GIFT_DRINK_REQUESTS[interaction.user.id] = GiftDrinkPending(
-            started_at=time.time(),
-            cancel_event=cancel_event,
-        )
-
-        view = GiftDrinkCancelView(owner_id=interaction.user.id, cancel_event=cancel_event)
-        await send_or_followup(
-            interaction,
-            embed=build_gift_prompt_embed(interaction.user),
-            view=view,
-            ephemeral=True,
-        )
-
-        def check(message: discord.Message) -> bool:
-            if message.author.bot:
-                return False
-            if message.author.id != interaction.user.id:
-                return False
-            if message.channel.id != interaction.channel_id:
-                return False
-            return True
-
-        message_task = asyncio.create_task(
-            self.bot.wait_for(
-                "message",
-                check=check,
-                timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS,
-            )
-        )
-        cancel_task = asyncio.create_task(cancel_event.wait())
-
-        try:
-            done, pending_tasks = await asyncio.wait(
-                {message_task, cancel_task},
-                timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            for task in pending_tasks:
-                task.cancel()
-
-            if cancel_task in done and cancel_event.is_set():
-                return None
-
-            if message_task not in done:
-                await interaction.followup.send("⏳ 已逾時，賜酒已取消。", ephemeral=True)
-                return None
-
-            try:
-                message = message_task.result()
-            except asyncio.TimeoutError:
-                await interaction.followup.send("⏳ 已逾時，賜酒已取消。", ephemeral=True)
-                return None
-        finally:
-            PENDING_GIFT_DRINK_REQUESTS.pop(interaction.user.id, None)
-            view.stop()
-
-        if message.content.strip().casefold() in {"cancel", "取消", "stop"}:
-            await interaction.followup.send("已取消賜酒。", ephemeral=True)
-            return None
-
-        if len(message.mentions) != 1:
-            await interaction.followup.send("❌ 請只 tag 一位成員。", ephemeral=True)
-            return None
-
-        target = message.mentions[0]
-        if not isinstance(target, discord.Member):
-            if interaction.guild is not None:
-                target = interaction.guild.get_member(target.id)
-
-        if target is None or not isinstance(target, discord.Member):
-            await interaction.followup.send("❌ 搵唔到呢位成員，請重新試一次。", ephemeral=True)
-            return None
-
-        if target.id == interaction.user.id:
-            await interaction.followup.send("🍹 想自己飲可以直接用調酒，賜酒請 tag 另一位成員。", ephemeral=True)
-            return None
-
-        if target.bot:
-            await interaction.followup.send("🤖 酒保暫時唔向 bot 賜酒，請 tag 一位真人成員。", ephemeral=True)
-            return None
-
-        return target
-
     async def do_drink(
         self,
         interaction: discord.Interaction,
-        to: discord.Member | None = None,
-        *,
-        enforce_cooldown: bool = True,
-        feature: str | None = None,
-    ) -> None:
-        if enforce_cooldown:
-            ok = await self._enforce_drink_cooldown(interaction)
-            if not ok:
-                return
-
-        is_gift = bool(to and to.id != interaction.user.id)
-        event_type = EVENT_GIFT_DRINK if is_gift else EVENT_SELF_DRINK
-        usage_feature = feature or ("drink_gift" if is_gift else "drink")
-
-        await self._record_usage(interaction, feature=usage_feature)
-
-        rarity = pick_rarity()
-        drink = self._pick_unique_drink(interaction.user.id, rarity)
-
-        record_drink_event(
-            guild_id=interaction.guild_id,
-            event_type=event_type,
-            actor_id=interaction.user.id,
-            target_id=to.id if is_gift and to is not None else interaction.user.id,
-            drink=drink,
-        )
-
-        rarity_meta = RARITY_STYLE[drink.rarity]
-        header = self._build_header_line(interaction, to, drink)
-        limited_text = f"\n🌟 **限定供應：** {drink.limited_tag}" if drink.limited_tag else ""
-        tasting_note = build_tasting_note(drink)
-        style_icon = ICON_MAP.get(drink.typ, ICON_MAP["default"])
-
-        rarity_line = f"{rarity_meta['emoji']} {rarity_meta['label']}"
-        style_line = f"{style_icon} {drink.typ}"
-        rotation_line = f"最近 {RECENT_HISTORY_LIMIT} 杯低機率重複"
-
-        result_embed = discord.Embed(
-            title="🍹 Bartender’s Pick",
-            description=(
-                f"{header}\n\n"
-                f"**品飲筆記**\n"
-                f"➡️ {tasting_note}{limited_text}\n\n"
-                f"**吧枱卡**\n"
-                f"`{rarity_line}` ｜ `{style_line}` ｜ `{rotation_line}`"
-            ),
-            color=rarity_meta["color"],
-            timestamp=discord.utils.utcnow(),
-        )
-        result_embed.set_footer(text="Con9sole Bartender｜⬅️ Menu 返回吧枱主頁")
-
-        send_kwargs = build_bartender_result_payload(
-            interaction,
-            result_embed,
-            attachment_name=BARTENDER_ATTACHMENT_NAME,
-        )
-
-        if interaction.response.is_done():
-            await interaction.followup.send(**send_kwargs)
-        else:
-            await interaction.response.send_message(**send_kwargs)
-
-        await self._complete_daily_bar(interaction, usage_feature)
+        to: discord.Member | discord.User | None = None,
+    ) -> bool:
+        with claim_action("drink", interaction.user.id) as claimed:
+            if not claimed:
+                await send_or_followup(
+                    interaction,
+                    content="🍹 酒保正在送出你嗰杯，請稍候。",
+                    ephemeral=True,
+                )
+                return False
+            if not await require_public_send(interaction):
+                return False
+            is_gift = to is not None and to.id != interaction.user.id
+            if to is not None and to.bot:
+                await send_or_followup(
+                    interaction, content="請揀一位真人會員。", ephemeral=True
+                )
+                return False
+            check = (
+                self._check_gift_drink_cooldown
+                if is_gift
+                else self._check_drink_cooldown
+            )
+            if not await check(interaction):
+                return False
+            # Acknowledge before fetching a member or touching storage.
+            await interaction.response.defer(thinking=True, ephemeral=False)
+            if is_gift:
+                to = await resolve_member(interaction, to)
+                if to is None or to.bot:
+                    await interaction.edit_original_response(
+                        content="搵唔到呢位真人會員，請重新選擇。"
+                    )
+                    return False
+            else:
+                to = None
+            recent = set(self.user_recent_draws[interaction.user.id])
+            drink = pick_weighted_drink(rarity=pick_rarity(), recent_drink_names=recent)
+            try:
+                is_new = not has_collected_drink(
+                    interaction.guild_id, (to or interaction.user).id, drink.eng
+                )
+            except Exception:
+                log.exception("Could not read collection before delivery")
+                is_new = False
+            meta = RARITY_STYLE[drink.rarity]
+            result_embed = discord.Embed(
+                title=f"🍹 {drink.eng} · {drink.zh}",
+                description=f"{self._build_header_line(interaction, to, drink)}\n\n{build_tasting_note(drink)}",
+                color=meta["color"],
+            )
+            result_embed.set_footer(
+                text=f"{meta['emoji']} {meta['label']} · {drink.typ}"
+            )
+            if is_new:
+                result_embed.add_field(
+                    name="✨ 新收藏",
+                    value="呢款已為收酒者解鎖，隨時打開酒櫃睇。",
+                    inline=False,
+                )
+            try:
+                await interaction.edit_original_response(
+                    content=to.mention if to else None,
+                    embed=result_embed,
+                    view=DrinkResultView(),
+                    allowed_mentions=discord.AllowedMentions(
+                        users=[to] if to else False, roles=False, everyone=False
+                    ),
+                )
+            except discord.HTTPException:
+                log.exception(
+                    "Drink result delivery failed: interaction=%s", interaction.id
+                )
+                # No cooldown, draw history or drink event is committed on delivery failure.
+                try:
+                    await interaction.edit_original_response(
+                        content="暫時送唔到呢杯，請稍後再試。"
+                    )
+                except discord.HTTPException:
+                    pass
+                return False
+            usage_feature = "drink_gift" if is_gift else "drink"
+            if is_gift:
+                touch_gift_drink_cooldown(interaction.user.id)
+            else:
+                touch_drink_cooldown(interaction.user.id)
+            self.user_recent_draws[interaction.user.id].append(drink.eng)
+            save_recent_draws(
+                interaction.user.id, list(self.user_recent_draws[interaction.user.id])
+            )
+            recorded = record_drink_event(
+                guild_id=interaction.guild_id,
+                event_type=EVENT_GIFT_DRINK if is_gift else EVENT_SELF_DRINK,
+                actor_id=interaction.user.id,
+                target_id=(to or interaction.user).id,
+                drink=drink,
+            )
+            if recorded is False:
+                await interaction.followup.send("飲品已送出，但收藏紀錄暫時保存唔到；請通知管理員，唔使重複叫酒。", ephemeral=True)
+            await self._record_usage(interaction, feature=usage_feature)
+            await self._complete_daily_bar(interaction, usage_feature)
+            return True
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
-        await self.do_drink(interaction, enforce_cooldown=True)
+        await self.do_drink(interaction)
+
+    async def _gift_from_picker(
+        self, interaction: discord.Interaction, *, to: discord.User | discord.Member
+    ) -> bool:
+        if to.id == interaction.user.id:
+            await send_or_followup(
+                interaction,
+                content="自己飲請用「飲一杯」；呢度揀一位朋友啦。",
+                ephemeral=True,
+            )
+            return False
+        return await self.do_drink(interaction, to=to)
 
     async def gift_drink_entry(self, interaction: discord.Interaction) -> None:
-        target = await self._wait_for_gift_target(interaction)
-        if target is None:
-            return
-
-        touch_gift_drink_cooldown(interaction.user.id)
-
-        await self.do_drink(
-            interaction,
-            to=target,
-            enforce_cooldown=False,
-            feature="drink_gift",
-        )
+        if await self._check_gift_drink_cooldown(interaction):
+            await open_member_picker(
+                interaction, deliver=self._gift_from_picker, label="🥂 想請邊位飲？"
+            )
 
     async def stats_entry(self, interaction: discord.Interaction) -> None:
         embed = build_drink_stats_embed(interaction.guild, interaction.user)
@@ -372,51 +283,60 @@ class Drink(commands.Cog):
     async def collection_entry(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction, feature="drink_collection")
         embed = build_drink_collection_embed(interaction.guild, interaction.user)
-        view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=interaction.user)
+        view = DrinkCollectionView(
+            owner_id=interaction.user.id,
+            guild=interaction.guild,
+            target_user=interaction.user,
+        )
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
         await self._complete_daily_bar(interaction, "drink_collection")
 
     async def leaderboard_entry(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction, feature="drink_leaderboard")
-        embed = build_drink_leaderboard_embed(interaction.guild, requested_by=interaction.user)
-        view = DrinkLeaderboardView(guild=interaction.guild, requested_by=interaction.user)
+        embed = build_drink_leaderboard_embed(
+            interaction.guild, requested_by=interaction.user
+        )
+        view = DrinkLeaderboardView(
+            guild=interaction.guild, requested_by=interaction.user
+        )
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="drink", description="由酒保為你或指定成員調一杯特選飲品")
+    @app_commands.command(
+        name="drink", description="由酒保為你或指定成員調一杯特選飲品"
+    )
     @app_commands.describe(to="收酒嘅人；留空即係自己叫酒")
-    async def drink(self, interaction: discord.Interaction, to: discord.Member | None = None) -> None:
-        if to is not None and to.id != interaction.user.id:
-            ok = await self._enforce_gift_drink_cooldown(interaction)
-            if not ok:
-                return
-
-            await self.do_drink(
-                interaction,
-                to,
-                enforce_cooldown=False,
-                feature="drink_gift",
-            )
-            return
-
-        await self.do_drink(interaction, to, enforce_cooldown=True)
+    async def drink(
+        self, interaction: discord.Interaction, to: discord.Member | None = None
+    ) -> None:
+        await self.do_drink(interaction, to)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="drink_stats", description="查看自己或指定成員的酒保紀錄")
+    @app_commands.command(
+        name="drink_stats", description="查看自己或指定成員的酒保紀錄"
+    )
     @app_commands.describe(user="要查看嘅成員；留空即係自己")
-    async def drink_stats(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
+    async def drink_stats(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
         target = user or interaction.user
         embed = build_drink_stats_embed(interaction.guild, target)
         await send_or_followup(interaction, embed=embed, ephemeral=True)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.command(name="drink_collection", description="查看自己或指定成員的酒單收藏")
+    @app_commands.command(
+        name="drink_collection", description="查看自己或指定成員的酒單收藏"
+    )
     @app_commands.describe(user="要查看嘅成員；留空即係自己")
-    async def drink_collection(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
+    async def drink_collection(
+        self, interaction: discord.Interaction, user: discord.Member | None = None
+    ) -> None:
         target = user or interaction.user
         await self._record_usage(interaction, feature="drink_collection")
         embed = build_drink_collection_embed(interaction.guild, target)
-        view = DrinkCollectionView(owner_id=interaction.user.id, guild=interaction.guild, target_user=target)
+        view = DrinkCollectionView(
+            owner_id=interaction.user.id, guild=interaction.guild, target_user=target
+        )
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
         if target.id == interaction.user.id:
             await self._complete_daily_bar(interaction, "drink_collection")
@@ -425,8 +345,12 @@ class Drink(commands.Cog):
     @app_commands.command(name="drink_leaderboard", description="查看酒保排行榜")
     async def drink_leaderboard(self, interaction: discord.Interaction) -> None:
         await self._record_usage(interaction, feature="drink_leaderboard")
-        embed = build_drink_leaderboard_embed(interaction.guild, requested_by=interaction.user)
-        view = DrinkLeaderboardView(guild=interaction.guild, requested_by=interaction.user)
+        embed = build_drink_leaderboard_embed(
+            interaction.guild, requested_by=interaction.user
+        )
+        view = DrinkLeaderboardView(
+            guild=interaction.guild, requested_by=interaction.user
+        )
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=False)
 
 

@@ -73,7 +73,7 @@ def record_drink_event(
     actor_id: int,
     target_id: int,
     drink: DrinkEntry,
-) -> None:
+) -> bool:
     try:
         init_drink_events_db()
         with connect_sqlite(STATS_DB) as conn:
@@ -102,6 +102,7 @@ def record_drink_event(
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+        return True
     except Exception:
         # Stats failure should never block drink flow.
         log.exception(
@@ -111,6 +112,7 @@ def record_drink_event(
             actor_id,
             target_id,
         )
+        return False
 
 
 def count_events(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
@@ -371,3 +373,11 @@ def format_recent_event(guild: discord.Guild | None, row: sqlite3.Row | None, *,
 
     actor = format_member_ref(guild, int(row["actor_id"]))
     return f"{drink_text} ← {actor}｜`{rarity}`"
+
+
+def has_collected_drink(guild_id: int | None, user_id: int, drink_eng: str) -> bool:
+    with connect_sqlite(STATS_DB) as conn:
+        return conn.execute(
+            "SELECT 1 FROM drink_events WHERE guild_id IS ? AND target_id = ? AND drink_eng = ? LIMIT 1",
+            (guild_id, user_id, drink_eng),
+        ).fetchone() is not None

@@ -22,7 +22,8 @@ class MenuItem:
     description: str = ""
 
 
-QUICK_MENU_ITEMS: list[MenuItem] = [
+# Keep previous custom IDs routable for messages posted before Quick Bar v1.
+LEGACY_QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="home_menu",
         label="Menu",
@@ -114,7 +115,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 ]
 
 
-HOME_MENU_ITEMS: list[MenuItem] = [
+LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem(
         id="team",
         label="組隊",
@@ -303,6 +304,28 @@ HOME_MENU_ITEMS: list[MenuItem] = [
         admin_only=True,
         description="管理工具",
     ),
+]
+
+
+QUICK_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("drink", "飲一杯", "🍹", "success", "quick", 0, "Drink"),
+    MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
+    MenuItem("team", "搵人玩", "👥", "primary", "quick", 1, "Teams"),
+    MenuItem("tempvc", "小隊 call", "🎧", "primary", "quick", 1, "TempVC"),
+    MenuItem("home_menu", "更多", "🍸", "secondary", "quick", 2, "Menu", "open_home_menu_from_button"),
+]
+
+HOME_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("quick_bar", "吧枱", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
+    MenuItem("drink_collection", "我的收藏", "🍾", "primary", "home", 0, "Drink", "collection_entry"),
+    MenuItem("daily_bar", "今日小任務", "📅", "secondary", "home", 0, "DailyBar"),
+    MenuItem("cheers", "打氣", "🎉", "success", "home", 1, "Cheers"),
+    MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "home", 1, "Cheers", "cheer_for_member_entry"),
+    MenuItem("invite", "邀請朋友", "🔗", "secondary", "home", 2, "Menu", "create_invite_link_from_button"),
+    MenuItem("instagram", "IG", "📸", "secondary", "home", 2, "Menu", "open_instagram_from_button"),
+    MenuItem("threads", "Threads", "🧵", "secondary", "home", 2, "Menu", "open_threads_from_button"),
+    MenuItem("help", "幫助", "ℹ️", "secondary", "home", 3, "Menu", "open_help_from_button"),
+    MenuItem("admin_tool", "管理工具", "🛠️", "danger", "home", 4, "Menu", "open_admin_tool_from_button", admin_only=True),
 ]
 
 
