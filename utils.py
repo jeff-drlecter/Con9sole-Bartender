@@ -6,6 +6,8 @@ import contextlib
 import logging
 import discord
 
+from features import tempvc_storage
+
 log = logging.getLogger("con9sole-bartender.utils")
 
 # 可選：如果你喺 config 入面未必有呢啲，就保持可選導入
@@ -137,12 +139,20 @@ def is_temp_vc_id(cid: int) -> bool:
     return cid in TEMP_VC_IDS
 
 
-def track_temp_vc(channel_id: int) -> None:
+def track_temp_vc(channel_id: int, *, guild_id: int | None = None, creator_id: int | None = None) -> None:
+    if guild_id is not None:
+        tempvc_storage.remember(channel_id, guild_id, creator_id)
     TEMP_VC_IDS.add(channel_id)
 
 
 def untrack_temp_vc(channel_id: int) -> None:
+    tempvc_storage.forget(channel_id)
     TEMP_VC_IDS.discard(channel_id)
+
+
+def has_delete_task(channel_id: int) -> bool:
+    task = _PENDING_DELETE_TASKS.get(channel_id)
+    return task is not None and not task.done()
 
 
 def set_delete_task(channel_id: int, task: asyncio.Task) -> None:
@@ -183,8 +193,8 @@ async def schedule_delete_if_empty(
             await asyncio.sleep(idle_seconds)
             if len(channel.members) == 0 and is_temp_vc_id(channel.id):
                 log.info("Deleting empty temp VC: channel=%s name=%s", channel.id, channel.name)
-                untrack_temp_vc(channel.id)
                 await channel.delete(reason=reason)
+                untrack_temp_vc(channel.id)
         except asyncio.CancelledError:  # 被重設/取消
             pass
         except Exception:  # pragma: no cover
@@ -205,21 +215,11 @@ async def bootstrap_track_temp_vcs(
     *,
     name_prefixes: Iterable[str],
 ) -> List[int]:
-    """Bot 重啟後，掃描現有語音房，以名稱前綴重建 TEMP_VC_IDS。
-    會返回被追蹤的 channel id 清單。
-    """
-    tracked: List[int] = []
-    prefixes = tuple(name_prefixes)
-    for ch in guild.voice_channels:
-        try:
-            if ch.name.startswith(prefixes):
-                track_temp_vc(ch.id)
-                tracked.append(ch.id)
-        except Exception:  # 極端情況：名稱是 None
-            continue
-    if tracked:
-        log.info("Restored tracking for %s temp VCs: sample=%s", len(tracked), tracked[:5])
-    return tracked
+    """Restore only recorded IDs. A matching name alone never authorizes deletion."""
+    ids = tempvc_storage.tracked_ids(guild.id)
+    for channel_id in ids:
+        TEMP_VC_IDS.add(channel_id)
+    return ids
 
 
 def cancel_all_delete_tasks() -> None:

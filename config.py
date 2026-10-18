@@ -64,3 +64,7 @@ ANNOUNCEMENT_CHANNEL_ID: int = 1282627023625261076
 
 # Token（由環境變數注入）
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+# Explicit, reviewed IDs only: optional migration of pre-v1 temporary rooms.
+# Never infer ownership from a room name. Clear after the migration release.
+TEMP_VC_LEGACY_CHANNEL_IDS: List[int] = []

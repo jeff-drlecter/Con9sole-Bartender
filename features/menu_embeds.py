@@ -22,27 +22,11 @@ def _public_discussion_tip() -> str:
 
 
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
-    embed = discord.Embed(
-        title="🍸 Con9sole Bartender",
-        description=(
-            f"歡迎回來，{user.mention}。\n\n"
-            "**想快速做些甚麼？**"
-        ),
+    return discord.Embed(
+        title="🍸 Con9sole 吧枱",
+        description="飲杯嘢，定搵人開局？",
         color=MENU_COLOR,
     )
-    embed.add_field(
-        name="⚡ Quick Bar",
-        value="常用功能已放在下面。想查看完整入口，可以按「Menu」。",
-        inline=False,
-    )
-    embed.add_field(
-        name="🌊 探索公海區",
-        value="進入「Menu」後按「探索公海」，即可了解如何瀏覽及參與遊戲以外的話題。",
-        inline=False,
-    )
-    apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"💡 {_public_discussion_tip()} 前往 Menu → 探索公海看看吧。")
-    return embed
 
 
 def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
@@ -50,34 +34,11 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
 
 
 def build_home_menu_embed(user: discord.abc.User, *, include_thumbnail: bool = True) -> discord.Embed:
-    embed = discord.Embed(
-        title="🍸 Con9sole Bartender",
-        description=(
-            f"歡迎回來，{user.mention}。\n\n"
-            "完整餐牌已打開。\n"
-            "**你想由哪裏開始？**"
-        ),
+    return discord.Embed(
+        title="🍸 更多玩法",
+        description="睇收藏、送句打氣，或者探索社群。\n小任務隨心參與，唔做都唔影響吧枱功能。",
         color=MENU_COLOR,
     )
-    embed.add_field(
-        name="🥃 吧枱服務",
-        value="組隊、開 call、打氣、調酒、匿名投稿，都可以在下面使用。",
-        inline=False,
-    )
-    embed.add_field(
-        name="🌊 探索公海區",
-        value="按「探索公海」瀏覽遊戲以外的公開話題，或了解如何開放相關討論區。",
-        inline=False,
-    )
-    embed.add_field(
-        name="📖 不確定應按哪一個？",
-        value="按「幫助」查看完整用法。",
-        inline=False,
-    )
-    if include_thumbnail:
-        apply_bartender_thumbnail(embed)
-    embed.set_footer(text=f"💡 {_public_discussion_tip()} 可由「探索公海」開始。")
-    return embed
 
 
 def build_help_embed(user: discord.abc.User) -> discord.Embed:
@@ -89,10 +50,10 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "🎧 **小隊 call**｜建立臨時語音房\n"
             "🎛️ **小隊 call 控制**｜改人數上限 / 刪除自己的小隊 call\n\n"
             "🎉 **打氣**｜送出隨機打氣內容\n"
-            "🙌 **幫人打氣**｜tag 一位成員，送一句打氣給對方\n"
+            "🙌 **幫人打氣**｜揀一位成員，送一句打氣給對方\n"
             "🕯️ **無名告白**｜匿名投稿\n\n"
             "🍹 **調酒**｜抽一杯酒保特選飲品\n"
-            "🥂 **賜酒**｜tag 一位成員，賜一杯酒給對方\n"
+            "🥂 **賜酒**｜揀一位成員，請佢飲一杯\n"
             "📊 **酒保紀錄**｜查看自己叫酒 / 賜酒 / 收到賜酒紀錄\n"
             "🍾 **酒單收藏**｜查看已解鎖酒款、稀有度進度與最近解鎖\n"
             "🏆 **酒保排行榜**｜查看叫酒 / 賜酒 / 收酒 / 收藏榜\n"
@@ -107,7 +68,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
         color=MENU_COLOR,
     )
     apply_bartender_thumbnail(embed)
-    embed.set_footer(text="⬅️ Menu 返回吧枱主頁")
+    embed.set_footer(text="🍸 吧枱返回快捷入口")
     return embed
 
 

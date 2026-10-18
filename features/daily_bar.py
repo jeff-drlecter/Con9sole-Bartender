@@ -39,7 +39,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🥂",
         title="請一位成員飲一杯酒",
         description="揀一位成員，請佢飲一杯酒保特選。",
-        method="用 `/drink to:@成員`，或者喺 Quick Bar 撳 🥂 後 tag 對方。",
+        method="用 `/drink to:@成員`，或者喺 Quick Bar 撳「請人飲」揀對方。",
         note="賜酒 cooldown 會照常運作。",
     ),
     DailyBarTask(
@@ -47,15 +47,15 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🎉",
         title="打一次氣",
         description="喺吧枱送出一句打氣說話。",
-        method="喺 Quick Bar 撳 🎉，或者用打氣功能。",
+        method="喺「更多」撳「打氣」，或者用打氣功能。",
         note="每日一句，輕輕鬆鬆暖下場。",
     ),
     DailyBarTask(
         key="cheers_target",
         emoji="🙌",
         title="幫一位成員打氣",
-        description="tag 一位成員，送一句打氣畀對方。",
-        method="喺 Quick Bar 撳 🙌，再跟提示 tag 成員。",
+        description="揀一位成員，送一句打氣畀對方。",
+        method="喺「更多」撳「幫人打氣」，再揀一位成員。",
         note="見到邊個需要加油，就順手撐一撐佢。",
     ),
     DailyBarTask(

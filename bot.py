@@ -139,7 +139,6 @@ class Bot(commands.Bot):
 
                 try:
                     from features.menu_embeds import build_quick_bar_embed
-                    from features.menu_helpers import build_menu_file
                     from features.menu_views import QuickBarView
 
                     kwargs: dict[str, object] = {
@@ -148,10 +147,6 @@ class Bot(commands.Bot):
                     }
                     if menu_cog is not None:
                         kwargs["view"] = QuickBarView(menu_cog)
-
-                    menu_file = build_menu_file()
-                    if menu_file is not None:
-                        kwargs["file"] = menu_file
 
                     await message.reply(**kwargs)
                     return

@@ -33,7 +33,7 @@ from features.menu_helpers import (
     touch_cooldown,
 )
 from features.menu_stats import init_stats_db, record_usage_sync
-from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
+from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView, LegacyMenuView
 from features.role_tools import RoleActionState, RoleToolsView
 from features.role_tools_actions import (
     execute_role_change_from_select as run_execute_role_change_from_select,
@@ -109,8 +109,6 @@ class Menu(commands.Cog):
         )
 
     async def open_main_menu(self, interaction: discord.Interaction) -> None:
-        if not await self._enforce_command_cooldown(interaction):
-            return
         await run_open_quick_bar_menu(self, interaction, ephemeral=True)
 
     async def open_home_menu_from_button(self, interaction: discord.Interaction) -> None:
@@ -163,7 +161,9 @@ class Menu(commands.Cog):
         if self._views_registered:
             return
         self.bot.add_view(QuickBarView(self))
-        self.bot.add_view(HomeMenuView(self))
+        self.bot.add_view(HomeMenuView(self, include_admin=True))
+        self.bot.add_view(LegacyMenuView(self, "quick"))
+        self.bot.add_view(LegacyMenuView(self, "home"))
         self.bot.add_view(HelpMenuView(self))
         self.bot.add_view(AdminToolView(self))
         self.bot.add_view(RoleToolsView(self))
@@ -187,7 +187,7 @@ class Menu(commands.Cog):
     async def menu(self, interaction: discord.Interaction) -> None:
         if not await self._enforce_command_cooldown(interaction):
             return
-        await run_open_quick_bar_menu(self, interaction, ephemeral=False)
+        await run_open_quick_bar_menu(self, interaction, ephemeral=True)
 
     @app_commands.command(name="community_hub", description="顯示 Con9sole Bartender 主頁")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))

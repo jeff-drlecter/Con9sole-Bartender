@@ -5,18 +5,22 @@ import logging
 import discord
 
 from core.safe_send import safe_message_kwargs, send_or_followup
-from features.invite_tools import create_invite_link_from_button as run_create_invite_link_from_button
+from features.invite_tools import (
+    create_invite_link_from_button as run_create_invite_link_from_button,
+)
 from features.menu_embeds import (
     build_admin_tool_embed,
     build_help_embed,
     build_home_menu_embed,
     build_quick_bar_embed,
 )
-from features.menu_helpers import build_menu_file, can_use_admin, get_retry_after, touch_cooldown
+from features.menu_helpers import can_use_admin, get_retry_after, touch_cooldown
 from features.menu_stats import record_usage_sync
 from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
 from features.social_tools import (
     open_instagram_from_button as run_open_instagram_from_button,
+)
+from features.social_tools import (
     open_threads_from_button as run_open_threads_from_button,
 )
 
@@ -42,7 +46,6 @@ async def open_quick_bar_menu(
         embed=build_quick_bar_embed(interaction.user),
         view=QuickBarView(cog),
         ephemeral=ephemeral,
-        file=build_menu_file(),
     )
 
 
@@ -52,9 +55,8 @@ async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
         await send_or_followup(
             interaction,
             embed=build_home_menu_embed(interaction.user),
-            view=HomeMenuView(cog),
+            view=HomeMenuView(cog, include_admin=can_use_admin(interaction.user)),
             ephemeral=True,
-            file=build_menu_file(),
         )
         return
     except discord.HTTPException as exc:
@@ -75,7 +77,6 @@ async def open_help_menu(cog: object, interaction: discord.Interaction) -> None:
         embed=build_help_embed(interaction.user),
         view=HelpMenuView(cog),
         ephemeral=True,
-        file=build_menu_file(),
     )
 
 
@@ -117,7 +118,6 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
         kwargs = safe_message_kwargs(
             embed=build_quick_bar_embed(message.author),
             view=QuickBarView(cog),
-            file=build_menu_file(),
         )
         kwargs["mention_author"] = False
         await message.reply(**kwargs)

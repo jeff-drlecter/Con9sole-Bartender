@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-
 import discord
 
+from core.ui import SafeView
 from data.drink_data import RARITY_STYLE
-from features.drink_constants import GIFT_DRINK_TARGET_TIMEOUT_SECONDS
 from features.drink_embeds import (
     build_drink_collection_embed,
     build_drink_collection_rarity_embed,
@@ -13,7 +11,7 @@ from features.drink_embeds import (
 )
 
 
-class DrinkCollectionView(discord.ui.View):
+class DrinkCollectionView(SafeView):
     def __init__(self, *, owner_id: int, guild: discord.Guild | None, target_user: discord.Member | discord.User) -> None:
         super().__init__(timeout=180)
         self.owner_id = owner_id
@@ -37,6 +35,10 @@ class DrinkCollectionView(discord.ui.View):
 
         self.add_item(DrinkCollectionRecentButton(row=1))
         self.add_item(DrinkCollectionSummaryButton(row=1))
+        self.add_item(FeatureButton(label="排行榜", emoji="🏆", cog="Drink", method="leaderboard_entry", row=1))
+        self.add_item(FeatureButton(label="酒保紀錄", emoji="📊", cog="Drink", method="stats_entry", row=1))
+        self.add_item(FeatureButton(label="今日小任務", emoji="📅", cog="DailyBar", method="menu_entry", row=1))
+        self.add_item(FeatureButton(label="吧枱", emoji="🍸", cog="Menu", method="open_main_menu", row=2))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -85,28 +87,27 @@ class DrinkCollectionSummaryButton(discord.ui.Button):
         await interaction.response.edit_message(embed=embed, view=self.view)
 
 
-class GiftDrinkCancelView(discord.ui.View):
-    def __init__(self, *, owner_id: int, cancel_event: asyncio.Event) -> None:
-        super().__init__(timeout=GIFT_DRINK_TARGET_TIMEOUT_SECONDS)
-        self.owner_id = owner_id
-        self.cancel_event = cancel_event
+class FeatureButton(discord.ui.Button):
+    def __init__(self, *, label: str, emoji: str, cog: str, method: str, row: int, custom_id: str | None = None) -> None:
+        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.secondary, row=row, custom_id=custom_id)
+        self.cog_name = cog
+        self.method = method
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("呢個賜酒取消按鈕只限發起者使用。", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if self.cancel_event.is_set():
-            await interaction.response.send_message("賜酒操作已經取消或逾時。", ephemeral=True)
+    async def callback(self, interaction: discord.Interaction) -> None:
+        from core.safe_send import send_or_followup
+        cog = interaction.client.get_cog(self.cog_name)
+        if cog is None:
+            await send_or_followup(interaction, content="呢個功能暫時未準備好，請稍後再試。", ephemeral=True)
             return
+        await getattr(cog, self.method)(interaction)
 
-        self.cancel_event.set()
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = True
 
-        await interaction.response.edit_message(content="已取消賜酒。", embed=None, view=self)
-        self.stop()
+class DrinkResultView(SafeView):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+        for label, emoji, cog, method in (
+            ("睇收藏", "🍾", "Drink", "collection_entry"),
+            ("請人飲", "🥂", "Drink", "gift_drink_entry"),
+            ("吧枱", "🍸", "Menu", "open_main_menu"),
+        ):
+            self.add_item(FeatureButton(label=label, emoji=emoji, cog=cog, method=method, row=0, custom_id=f"bartender:result:{method}"))

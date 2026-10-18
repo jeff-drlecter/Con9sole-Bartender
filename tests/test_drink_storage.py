@@ -83,7 +83,7 @@ class DrinkStorageTests(unittest.TestCase):
                     drink=self.drink,
                 )
 
-        self.assertIsNone(result)
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":

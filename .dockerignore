@@ -6,3 +6,12 @@ __pycache__
 *.pyc
 tests
 fly.toml
+
+# Runtime data must never be baked into an image; keep data/*.py source files.
+**/*.sqlite3
+**/*.sqlite3-wal
+**/*.sqlite3-shm
+data/drink_state.json
+data/game_announcements.json
+data/activity_reminders.json
+data/*.corrupt.*
