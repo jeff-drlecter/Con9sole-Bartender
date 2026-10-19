@@ -1,0 +1,28 @@
+name: Theme collections release operations
+on:
+  push:
+    branches: [codex/theme-collections-ops]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Back up live SQLite before theme release
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, shlex, subprocess
+          from pathlib import Path
+          p = subprocess.run(['flyctl','status','--app','con9sole-bartender','--json'], check=True, capture_output=True, text=True)
+          status = json.loads(p.stdout)
+          machines = [m for m in status.get('Machines',[]) if m.get('state') == 'started' and m.get('image_ref',{}).get('labels',{}).get('GH_SHA') == 'f5762d161314006fcaf3d78cc3ff2675878386c4']
+          assert len(machines) == 1, 'Unexpected live release'
+          print(json.dumps({'release': status.get('Version'), 'state': 'started', 'sha': 'f5762d161314006fcaf3d78cc3ff2675878386c4'}))
+          script = Path('ops/theme_backup.py').read_text()
+          subprocess.run(['flyctl','ssh','console','--app','con9sole-bartender','-C','python -c ' + shlex.quote(script)], check=True, timeout=180)
+          PY
