@@ -24,6 +24,8 @@ ICON_MAP = {
     "default": "🍸",
 }
 
+# Sustainable v1 collection pacing: rarity odds stay independent of tracked themes.
+# Entry goals use Common drinks; long-term goals add breadth, not odds boosts.
 RARITY_STYLE = {
     "Common": {"label": "House Pour", "emoji": "⚪", "weight": 85, "color": 0x95A5A6},
     "Rare": {"label": "Signature Serve", "emoji": "🟣", "weight": 12, "color": 0x9B59B6},
@@ -31,6 +33,8 @@ RARITY_STYLE = {
 }
 
 RECENT_HISTORY_LIMIT = 4
+RECENT_DRINK_WEIGHT = 1
+STANDARD_DRINK_WEIGHT = 4
 DRINK_COOLDOWN_SECONDS = 30.0
 BARTENDER_ATTACHMENT_NAME = "bartender.png"
 

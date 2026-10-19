@@ -9,7 +9,9 @@ from typing import Any
 from data.drink_data import (
     ALL_DRINKS,
     RARITY_STYLE,
+    RECENT_DRINK_WEIGHT,
     SEASONAL_DRINKS,
+    STANDARD_DRINK_WEIGHT,
     TASTING_LINES,
     DrinkEntry,
 )
@@ -33,7 +35,9 @@ def drink_catalog() -> dict[str, DrinkEntry]:
 
 def catalog_by_rarity() -> dict[str, list[DrinkEntry]]:
     """Group all catalog drinks by rarity and sort each group consistently."""
-    grouped: dict[str, list[DrinkEntry]] = {rarity: [] for rarity in RARITY_STYLE.keys()}
+    grouped: dict[str, list[DrinkEntry]] = {
+        rarity: [] for rarity in RARITY_STYLE.keys()
+    }
     for drink in drink_catalog().values():
         grouped.setdefault(drink.rarity, []).append(drink)
 
@@ -67,7 +71,12 @@ def pick_weighted_drink(*, rarity: str, recent_drink_names: set[str]) -> DrinkEn
     if not pool:
         pool = ALL_DRINKS + current_seasonal_pool()
 
-    weights = [1 if drink.eng in recent_drink_names else 4 for drink in pool]
+    weights = [
+        RECENT_DRINK_WEIGHT
+        if drink.eng in recent_drink_names
+        else STANDARD_DRINK_WEIGHT
+        for drink in pool
+    ]
     return random.choices(pool, weights=weights, k=1)[0]
 
 

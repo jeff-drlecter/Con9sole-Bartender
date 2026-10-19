@@ -114,6 +114,7 @@ def reconcile(
 
 def collection_snapshot(guild_id: int | None, user_id: int) -> dict:
     from features import drink_storage as storage
+    from features import theme_collections
 
     storage.init_drink_events_db()
     with storage.connect_sqlite(storage.STATS_DB) as conn:
@@ -121,6 +122,7 @@ def collection_snapshot(guild_id: int | None, user_id: int) -> dict:
         reconcile(
             conn, guild_id, user_id
         )  # Backfill quietly; never send historical announcements.
+        theme_collections.reconcile(conn, guild_id, user_id)
         names = {
             row[0]
             for row in conn.execute(
@@ -136,6 +138,7 @@ def collection_snapshot(guild_id: int | None, user_id: int) -> dict:
                 (guild_key(guild_id), user_id),
             )
         ]
+        awards.extend(theme_collections.title_awards(conn, guild_id, user_id))
         selected = conn.execute(
             "SELECT milestone_id FROM drink_collection_titles WHERE guild_key=? AND user_id=?",
             (guild_key(guild_id), user_id),
@@ -149,6 +152,7 @@ def collection_snapshot(guild_id: int | None, user_id: int) -> dict:
 
 def select_title(guild_id: int | None, user_id: int, milestone_id: str) -> bool:
     from features import drink_storage as storage
+    from features import theme_collections
 
     storage.init_drink_events_db()
     with storage.connect_sqlite(storage.STATS_DB) as conn:
@@ -163,7 +167,11 @@ def select_title(guild_id: int | None, user_id: int, milestone_id: str) -> bool:
             "SELECT 1 FROM drink_milestones WHERE guild_key=? AND user_id=? AND milestone_id=?",
             (guild_key(guild_id), user_id, milestone_id),
         ).fetchone()
-        if not owned:
+        owned_theme = any(
+            a["milestone_id"] == milestone_id
+            for a in theme_collections.title_awards(conn, guild_id, user_id)
+        )
+        if not owned and not owned_theme:
             return False
         conn.execute(
             "INSERT INTO drink_collection_titles VALUES (?, ?, ?) ON CONFLICT(guild_key,user_id) DO UPDATE SET milestone_id=excluded.milestone_id",

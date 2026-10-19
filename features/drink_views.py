@@ -49,6 +49,7 @@ class DrinkCollectionView(SafeView):
             )
 
         self.add_item(DrinkMilestonesButton(row=2))
+        self.add_item(DrinkThemesButton(row=2))
         self.add_item(DrinkCollectionRecentButton(row=1))
         self.add_item(DrinkCollectionSummaryButton(row=1))
         self.add_item(
@@ -87,6 +88,25 @@ class DrinkCollectionView(SafeView):
             )
             return False
         return True
+
+
+class DrinkThemesButton(discord.ui.Button):
+    def __init__(self, *, row: int) -> None:
+        super().__init__(
+            label="主題酒單", emoji="🗺️", style=discord.ButtonStyle.primary, row=row
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, DrinkCollectionView):
+            return
+        await interaction.response.defer()
+        from features.theme_views import ThemeCollectionView
+
+        themes_view = ThemeCollectionView(
+            owner_id=view.owner_id, guild=view.guild, target_user=view.target_user
+        )
+        await themes_view.render(interaction)
 
 
 class DrinkCollectionRarityButton(discord.ui.Button):
@@ -147,8 +167,13 @@ class DrinkCollectionSummaryButton(discord.ui.Button):
             )
             return
 
+        await interaction.response.defer()
         embed = build_drink_collection_embed(self.view.guild, self.view.target_user)
-        await interaction.response.edit_message(embed=embed, view=self.view)
+        await interaction.edit_original_response(embed=embed, view=self.view)
+        if self.view.owner_id == self.view.target_user.id:
+            from features.theme_views import deliver_pending_notice
+
+            await deliver_pending_notice(interaction)
 
 
 class DrinkMilestonesButton(discord.ui.Button):
@@ -199,7 +224,9 @@ class CollectionTitleSelect(discord.ui.Select):
             discord.SelectOption(
                 label=a["label"][:100],
                 value=a["milestone_id"],
-                description=f"{a['unlocked_at'][:10]} 解鎖",
+                description="主題酒單精通"
+                if a["milestone_id"].startswith("theme:")
+                else f"{a['unlocked_at'][:10]} 解鎖",
                 default=a["milestone_id"] == snapshot["selected"],
             )
             for a in awards
