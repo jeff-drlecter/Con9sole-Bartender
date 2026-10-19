@@ -9,11 +9,13 @@ import discord
 from core.sqlite_storage import connect_sqlite, enable_wal
 from core.storage_paths import DATA_DIR, STATS_DB
 from data.drink_data import DrinkEntry
+from features.collection_milestones import guild_key, initialize, reconcile
 
 log = logging.getLogger("con9sole-bartender.drink.storage")
 
 EVENT_SELF_DRINK = "self_drink"
 EVENT_GIFT_DRINK = "gift_drink"
+
 
 def init_drink_events_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -65,6 +67,8 @@ def init_drink_events_db() -> None:
             """
         )
 
+        initialize(conn)
+
 
 def record_drink_event(
     *,
@@ -73,10 +77,14 @@ def record_drink_event(
     actor_id: int,
     target_id: int,
     drink: DrinkEntry,
+    progress: dict | None = None,
 ) -> bool:
     try:
         init_drink_events_db()
         with connect_sqlite(STATS_DB) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            reconcile(conn, guild_id, target_id)
+            timestamp = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 """
                 INSERT INTO drink_events (
@@ -99,9 +107,27 @@ def record_drink_event(
                     drink.eng,
                     drink.zh,
                     drink.rarity,
-                    datetime.now(timezone.utc).isoformat(),
+                    timestamp,
                 ),
             )
+            inserted = conn.execute(
+                "INSERT OR IGNORE INTO drink_collection VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    guild_key(guild_id),
+                    target_id,
+                    drink.eng,
+                    drink.zh,
+                    drink.rarity,
+                    timestamp,
+                ),
+            ).rowcount
+            unlocked = reconcile(conn, guild_id, target_id)
+            total = conn.execute(
+                "SELECT COUNT(*) FROM drink_collection WHERE guild_key=? AND user_id=?",
+                (guild_key(guild_id), target_id),
+            ).fetchone()[0]
+        if progress is not None:
+            progress.update(is_new=bool(inserted), unlocked=unlocked, total=total)
         return True
     except Exception:
         # Stats failure should never block drink flow.
@@ -115,7 +141,9 @@ def record_drink_event(
         return False
 
 
-def count_events(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
+def count_events(
+    guild_id: int | None, where_sql: str, params: tuple[object, ...]
+) -> int:
     init_drink_events_db()
     with connect_sqlite(STATS_DB) as conn:
         row = conn.execute(
@@ -130,7 +158,9 @@ def count_events(guild_id: int | None, where_sql: str, params: tuple[object, ...
     return int(row[0]) if row else 0
 
 
-def count_distinct_drinks(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> int:
+def count_distinct_drinks(
+    guild_id: int | None, where_sql: str, params: tuple[object, ...]
+) -> int:
     init_drink_events_db()
     with connect_sqlite(STATS_DB) as conn:
         row = conn.execute(
@@ -145,7 +175,9 @@ def count_distinct_drinks(guild_id: int | None, where_sql: str, params: tuple[ob
     return int(row[0]) if row else 0
 
 
-def recent_event(guild_id: int | None, where_sql: str, params: tuple[object, ...]) -> sqlite3.Row | None:
+def recent_event(
+    guild_id: int | None, where_sql: str, params: tuple[object, ...]
+) -> sqlite3.Row | None:
     init_drink_events_db()
     with connect_sqlite(STATS_DB) as conn:
         conn.row_factory = sqlite3.Row
@@ -286,68 +318,42 @@ def fetch_collection_rows(
     limit: int | None = None,
 ) -> list[sqlite3.Row]:
     init_drink_events_db()
-
+    params: list[object] = [guild_id, guild_key(guild_id), user_id]
     rarity_sql = ""
-    params: list[object] = [guild_id, user_id, user_id]
     if rarity is not None:
-        rarity_sql = "AND rarity = ?"
+        rarity_sql = "AND c.rarity = ?"
         params.append(rarity)
-
     limit_sql = ""
     if limit is not None:
         limit_sql = "LIMIT ?"
         params.append(limit)
-
     with connect_sqlite(STATS_DB) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""
-            SELECT
-                drink_eng,
-                drink_zh,
-                rarity,
-                MAX(created_at) AS latest_at,
-                SUM(CASE WHEN event_type = ? AND actor_id = ? AND target_id = ? THEN 1 ELSE 0 END) AS self_count,
-                SUM(CASE WHEN event_type = ? AND actor_id = ? THEN 1 ELSE 0 END) AS given_count,
-                SUM(CASE WHEN event_type = ? AND target_id = ? THEN 1 ELSE 0 END) AS received_count
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND (actor_id = ? OR target_id = ?)
-            {rarity_sql}
-            GROUP BY drink_eng
-            ORDER BY latest_at DESC, drink_eng ASC
-            {limit_sql}
-            """,
-            (
-                EVENT_SELF_DRINK,
-                user_id,
-                user_id,
-                EVENT_GIFT_DRINK,
-                user_id,
-                EVENT_GIFT_DRINK,
-                user_id,
-                *params,
-            ),
+            SELECT c.drink_eng, c.drink_zh, c.rarity, c.first_at AS latest_at,
+                SUM(CASE WHEN e.event_type='self_drink' AND e.actor_id=c.user_id AND e.target_id=c.user_id THEN 1 ELSE 0 END) AS self_count,
+                SUM(CASE WHEN e.event_type='gift_drink' AND e.actor_id=c.user_id THEN 1 ELSE 0 END) AS given_count,
+                SUM(CASE WHEN e.event_type='gift_drink' AND e.target_id=c.user_id THEN 1 ELSE 0 END) AS received_count
+            FROM drink_collection c LEFT JOIN drink_events e
+                ON e.guild_id IS ? AND e.drink_eng=c.drink_eng
+                AND (e.actor_id=c.user_id OR e.target_id=c.user_id)
+            WHERE c.guild_key=? AND c.user_id=? {rarity_sql}
+            GROUP BY c.drink_eng ORDER BY c.first_at DESC, c.drink_eng {limit_sql}
+        """,
+            params,
         ).fetchall()
     return list(rows)
 
 
-def fetch_collection_rarity_counts(guild_id: int | None, user_id: int) -> dict[str, int]:
+def fetch_collection_rarity_counts(
+    guild_id: int | None, user_id: int
+) -> dict[str, int]:
     init_drink_events_db()
     with connect_sqlite(STATS_DB) as conn:
         rows = conn.execute(
-            """
-            SELECT rarity, COUNT(*) AS total
-            FROM (
-                SELECT drink_eng, rarity
-                FROM drink_events
-                WHERE guild_id IS ?
-                AND (actor_id = ? OR target_id = ?)
-                GROUP BY drink_eng
-            )
-            GROUP BY rarity
-            """,
-            (guild_id, user_id, user_id),
+            "SELECT rarity, COUNT(*) FROM drink_collection WHERE guild_key=? AND user_id=? GROUP BY rarity",
+            (guild_key(guild_id), user_id),
         ).fetchall()
     return {str(row[0]): int(row[1]) for row in rows}
 
@@ -357,7 +363,9 @@ def format_member_ref(guild: discord.Guild | None, user_id: int) -> str:
     return member.mention if member else f"<@{user_id}>"
 
 
-def format_recent_event(guild: discord.Guild | None, row: sqlite3.Row | None, *, user_id: int, kind: str) -> str:
+def format_recent_event(
+    guild: discord.Guild | None, row: sqlite3.Row | None, *, user_id: int, kind: str
+) -> str:
     if row is None:
         return "暫時未有紀錄"
 
@@ -376,8 +384,12 @@ def format_recent_event(guild: discord.Guild | None, row: sqlite3.Row | None, *,
 
 
 def has_collected_drink(guild_id: int | None, user_id: int, drink_eng: str) -> bool:
+    init_drink_events_db()
     with connect_sqlite(STATS_DB) as conn:
-        return conn.execute(
-            "SELECT 1 FROM drink_events WHERE guild_id IS ? AND target_id = ? AND drink_eng = ? LIMIT 1",
-            (guild_id, user_id, drink_eng),
-        ).fetchone() is not None
+        return (
+            conn.execute(
+                "SELECT 1 FROM drink_collection WHERE guild_key=? AND user_id=? AND drink_eng=?",
+                (guild_key(guild_id), user_id, drink_eng),
+            ).fetchone()
+            is not None
+        )

@@ -43,7 +43,6 @@ from features.drink_state import (
 from features.drink_storage import (
     EVENT_GIFT_DRINK,
     EVENT_SELF_DRINK,
-    has_collected_drink,
     init_drink_events_db,
     record_drink_event,
 )
@@ -190,13 +189,6 @@ class Drink(commands.Cog):
                 to = None
             recent = set(self.user_recent_draws[interaction.user.id])
             drink = pick_weighted_drink(rarity=pick_rarity(), recent_drink_names=recent)
-            try:
-                is_new = not has_collected_drink(
-                    interaction.guild_id, (to or interaction.user).id, drink.eng
-                )
-            except Exception:
-                log.exception("Could not read collection before delivery")
-                is_new = False
             meta = RARITY_STYLE[drink.rarity]
             result_embed = discord.Embed(
                 title=f"🍹 {drink.eng} · {drink.zh}",
@@ -206,12 +198,6 @@ class Drink(commands.Cog):
             result_embed.set_footer(
                 text=f"{meta['emoji']} {meta['label']} · {drink.typ}"
             )
-            if is_new:
-                result_embed.add_field(
-                    name="✨ 新收藏",
-                    value="呢款已為收酒者解鎖，隨時打開酒櫃睇。",
-                    inline=False,
-                )
             try:
                 await interaction.edit_original_response(
                     content=to.mention if to else None,
@@ -242,15 +228,39 @@ class Drink(commands.Cog):
             save_recent_draws(
                 interaction.user.id, list(self.user_recent_draws[interaction.user.id])
             )
+            progress: dict = {}
             recorded = record_drink_event(
                 guild_id=interaction.guild_id,
                 event_type=EVENT_GIFT_DRINK if is_gift else EVENT_SELF_DRINK,
                 actor_id=interaction.user.id,
                 target_id=(to or interaction.user).id,
                 drink=drink,
+                progress=progress,
             )
             if recorded is False:
-                await interaction.followup.send("飲品已送出，但收藏紀錄暫時保存唔到；請通知管理員，唔使重複叫酒。", ephemeral=True)
+                await interaction.followup.send(
+                    "飲品已送出，但收藏紀錄暫時保存唔到；請通知管理員，唔使重複叫酒。",
+                    ephemeral=True,
+                )
+            if recorded and progress.get("is_new"):
+                text = f"酒譜已收藏 {progress['total']} 款。"
+                if progress.get("unlocked"):
+                    text += (
+                        "\n🏅 達成："
+                        + "、".join(progress["unlocked"])
+                        + "！已加入收酒者嘅收藏頁。"
+                    )
+                result_embed.add_field(name="✨ 新收藏", value=text, inline=False)
+                try:
+                    await interaction.edit_original_response(
+                        embed=result_embed,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                except discord.HTTPException:
+                    log.warning(
+                        "Saved collection, but could not update milestone hint: interaction=%s",
+                        interaction.id,
+                    )
             await self._record_usage(interaction, feature=usage_feature)
             await self._complete_daily_bar(interaction, usage_feature)
             return True
