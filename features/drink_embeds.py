@@ -162,6 +162,28 @@ def build_drink_collection_embed(
         inline=False,
     )
     embed.set_footer(text="同款唔重複計｜舊收藏照計｜新送酒只計收酒者｜季節酒輪流供應")
+    from features.theme_collections import (
+        next_target,
+        recommended,
+    )
+    from features.theme_collections import (
+        snapshot as theme_snapshot,
+    )
+
+    state = theme_snapshot(guild_id, user_id)
+    theme = recommended(state)
+    target = next_target(theme, state)
+    count = theme.count(state["names"])
+    summary = (
+        f"{min(count, target)} / {target} {theme.unit}，再探索 {max(0, target - count)} {theme.unit}就達標！"
+        if target
+        else "已精通！仲可以慢慢探索酒單其他款式。"
+    )
+    embed.add_field(
+        name=f"🗺️ {theme.label}",
+        value=summary + "\n舊收藏照計，按「主題酒單」睇詳情。",
+        inline=False,
+    )
     return embed
 
 
@@ -193,7 +215,10 @@ def build_drink_milestones_embed(
         color=0xD4AF37,
     )
     archived = [
-        a for a in snapshot["awards"] if a["milestone_id"] not in {g.key for g in goals}
+        a
+        for a in snapshot["awards"]
+        if a["milestone_id"] not in {g.key for g in goals}
+        and not a["milestone_id"].startswith("theme:")
     ]
     if archived:
         embed.add_field(
@@ -202,6 +227,15 @@ def build_drink_milestones_embed(
                 f"🏅 {a['label']} · 當時共 {a['catalog_total']:,} 款 · {a['unlocked_at'][:10]}"
                 for a in archived[-6:]
             ),
+            inline=False,
+        )
+    theme_titles = [
+        a for a in snapshot["awards"] if a["milestone_id"].startswith("theme:")
+    ]
+    if theme_titles:
+        embed.add_field(
+            name="🗺️ 主題精通稱號",
+            value="\n".join(f"🏅 {a['label']}" for a in theme_titles),
             inline=False,
         )
     embed.set_footer(

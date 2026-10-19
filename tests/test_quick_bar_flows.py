@@ -141,6 +141,56 @@ class DrinkDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["allowed_mentions"].users, [target])
         self.assertFalse(payload["allowed_mentions"].everyone)
 
+    def enable_theme_award(self):
+        def recorded(**kwargs):
+            kwargs["progress"].update(
+                is_new=True,
+                unlocked=[],
+                total=1,
+                theme_awards=[
+                    {"award_id": "theme:v1:classics:1", "label": "經典巡禮 · 入門完成"}
+                ],
+            )
+            return True
+
+        self.record.side_effect = recorded
+
+    async def test_theme_awards_are_private_and_acknowledged_after_delivery(self):
+        self.enable_theme_award()
+        i = interaction()
+        with patch("features.theme_collections.acknowledge") as ack:
+            self.assertTrue(await self.cog.do_drink(i))
+            ack.assert_called_once_with(i.guild_id, i.user.id, ["theme:v1:classics:1"])
+        self.assertTrue(i.followup.send.await_args.kwargs["ephemeral"])
+        self.assertIn("經典巡禮", i.followup.send.await_args.args[0])
+        public = i.edit_original_response.await_args.kwargs["embed"]
+        self.assertNotIn("經典巡禮", str(public.to_dict()))
+
+    async def test_theme_notice_failure_keeps_pending_and_successful_drink(self):
+        self.enable_theme_award()
+        i = interaction()
+        i.followup.send.side_effect = discord.HTTPException(
+            MagicMock(status=503, reason="Unavailable"), "fail"
+        )
+        with (
+            patch("features.theme_collections.acknowledge") as ack,
+            self.assertLogs("con9sole-bartender.drink", level="ERROR"),
+        ):
+            self.assertTrue(await self.cog.do_drink(i))
+            ack.assert_not_called()
+        self.record.assert_called_once()
+        self.touch.assert_called_once()
+
+    async def test_gift_does_not_deliver_recipient_private_awards_to_giver(self):
+        self.enable_theme_award()
+        i = interaction()
+        target = member(20, guild=i.guild)
+        i.guild.get_member.return_value = target
+        with patch("features.theme_collections.acknowledge") as ack:
+            self.assertTrue(await self.cog.do_drink(i, target))
+            ack.assert_not_called()
+        i.followup.send.assert_not_awaited()
+
     async def test_concurrent_clicks_only_deliver_once(self):
         entered, release = asyncio.Event(), asyncio.Event()
 

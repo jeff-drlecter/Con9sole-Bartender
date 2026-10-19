@@ -9,6 +9,7 @@ import discord
 from core.sqlite_storage import connect_sqlite, enable_wal
 from core.storage_paths import DATA_DIR, STATS_DB
 from data.drink_data import DrinkEntry
+from features import theme_collections
 from features.collection_milestones import guild_key, initialize, reconcile
 
 log = logging.getLogger("con9sole-bartender.drink.storage")
@@ -68,6 +69,7 @@ def init_drink_events_db() -> None:
         )
 
         initialize(conn)
+        theme_collections.initialize(conn)
 
 
 def record_drink_event(
@@ -84,6 +86,7 @@ def record_drink_event(
         with connect_sqlite(STATS_DB) as conn:
             conn.execute("BEGIN IMMEDIATE")
             reconcile(conn, guild_id, target_id)
+            theme_collections.reconcile(conn, guild_id, target_id)
             timestamp = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 """
@@ -122,12 +125,17 @@ def record_drink_event(
                 ),
             ).rowcount
             unlocked = reconcile(conn, guild_id, target_id)
+            theme_awards = theme_collections.reconcile(
+                conn, guild_id, target_id, backfill=False
+            )
             total = conn.execute(
                 "SELECT COUNT(*) FROM drink_collection WHERE guild_key=? AND user_id=?",
                 (guild_key(guild_id), target_id),
             ).fetchone()[0]
         if progress is not None:
             progress.update(is_new=bool(inserted), unlocked=unlocked, total=total)
+            if theme_awards:
+                progress["theme_awards"] = theme_awards
         return True
     except Exception:
         # Stats failure should never block drink flow.

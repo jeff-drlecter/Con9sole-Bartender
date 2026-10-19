@@ -261,6 +261,25 @@ class Drink(commands.Cog):
                         "Saved collection, but could not update milestone hint: interaction=%s",
                         interaction.id,
                     )
+            if recorded and progress.get("theme_awards") and not is_gift:
+                # Collection writes have committed; notification failure must not undo them.
+                from features.theme_collections import acknowledge, notice_text
+
+                try:
+                    await interaction.followup.send(
+                        notice_text(progress["theme_awards"]),
+                        ephemeral=True,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                    acknowledge(
+                        interaction.guild_id,
+                        interaction.user.id,
+                        [a["award_id"] for a in progress["theme_awards"]],
+                    )
+                except Exception:
+                    log.exception(
+                        "Theme notice remains pending: interaction=%s", interaction.id
+                    )
             await self._record_usage(interaction, feature=usage_feature)
             await self._complete_daily_bar(interaction, usage_feature)
             return True
@@ -291,6 +310,8 @@ class Drink(commands.Cog):
         await send_or_followup(interaction, embed=embed, ephemeral=True)
 
     async def collection_entry(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(thinking=True, ephemeral=True)
         await self._record_usage(interaction, feature="drink_collection")
         embed = build_drink_collection_embed(interaction.guild, interaction.user)
         view = DrinkCollectionView(
@@ -299,6 +320,9 @@ class Drink(commands.Cog):
             target_user=interaction.user,
         )
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+        from features.theme_views import deliver_pending_notice
+
+        await deliver_pending_notice(interaction)
         await self._complete_daily_bar(interaction, "drink_collection")
 
     async def leaderboard_entry(self, interaction: discord.Interaction) -> None:
@@ -341,6 +365,8 @@ class Drink(commands.Cog):
     async def drink_collection(
         self, interaction: discord.Interaction, user: discord.Member | None = None
     ) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(thinking=True, ephemeral=True)
         target = user or interaction.user
         await self._record_usage(interaction, feature="drink_collection")
         embed = build_drink_collection_embed(interaction.guild, target)
@@ -349,6 +375,9 @@ class Drink(commands.Cog):
         )
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
         if target.id == interaction.user.id:
+            from features.theme_views import deliver_pending_notice
+
+            await deliver_pending_notice(interaction)
             await self._complete_daily_bar(interaction, "drink_collection")
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
