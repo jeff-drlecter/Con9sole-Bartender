@@ -13,12 +13,8 @@ from features.drink_catalog import (
 from features.drink_constants import COLLECTION_PAGE_LIMIT
 from features.drink_storage import (
     count_given_drinks,
-    count_given_unique_drinks,
     count_received_drinks,
-    count_received_unique_drinks,
     count_self_drinks,
-    count_self_unique_drinks,
-    fetch_collection_rarity_counts,
     fetch_collection_rows,
     format_member_ref,
     format_recent_event,
@@ -44,7 +40,9 @@ def build_gift_prompt_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
-def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
+def build_drink_stats_embed(
+    guild: discord.Guild | None, user: discord.Member | discord.User
+) -> discord.Embed:
     guild_id = guild.id if guild else None
     user_id = user.id
 
@@ -62,11 +60,15 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
 
     top_given_text = "暫時未有紀錄"
     if top_given is not None:
-        top_given_text = f"{format_member_ref(guild, top_given[0])}｜`{top_given[1]}` 次"
+        top_given_text = (
+            f"{format_member_ref(guild, top_given[0])}｜`{top_given[1]}` 次"
+        )
 
     top_received_text = "暫時未有紀錄"
     if top_received is not None:
-        top_received_text = f"{format_member_ref(guild, top_received[0])}｜`{top_received[1]}` 次"
+        top_received_text = (
+            f"{format_member_ref(guild, top_received[0])}｜`{top_received[1]}` 次"
+        )
 
     embed = discord.Embed(
         title=f"🥂 {user.display_name} 的酒保紀錄",
@@ -81,58 +83,130 @@ def build_drink_stats_embed(guild: discord.Guild | None, user: discord.Member | 
     )
     embed.add_field(name="最常賜酒對象", value=top_given_text, inline=False)
     embed.add_field(name="最常收到來自", value=top_received_text, inline=False)
-    embed.add_field(name="最近自己叫酒", value=format_recent_event(guild, recent_self, user_id=user_id, kind="self"), inline=False)
-    embed.add_field(name="最近賜酒", value=format_recent_event(guild, recent_given, user_id=user_id, kind="given"), inline=False)
-    embed.add_field(name="最近收到賜酒", value=format_recent_event(guild, recent_received, user_id=user_id, kind="received"), inline=False)
+    embed.add_field(
+        name="最近自己叫酒",
+        value=format_recent_event(guild, recent_self, user_id=user_id, kind="self"),
+        inline=False,
+    )
+    embed.add_field(
+        name="最近賜酒",
+        value=format_recent_event(guild, recent_given, user_id=user_id, kind="given"),
+        inline=False,
+    )
+    embed.add_field(
+        name="最近收到賜酒",
+        value=format_recent_event(
+            guild, recent_received, user_id=user_id, kind="received"
+        ),
+        inline=False,
+    )
     embed.set_footer(text="Con9sole Bartender｜酒保紀錄 v1")
     return embed
 
 
-def build_drink_collection_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
+def build_drink_collection_embed(
+    guild: discord.Guild | None, user: discord.Member | discord.User
+) -> discord.Embed:
     guild_id = guild.id if guild else None
     user_id = user.id
 
+    from features.collection_milestones import collection_snapshot, milestones
+
+    snapshot = collection_snapshot(guild_id, user_id)
     catalog = drink_catalog()
-    grouped_catalog = catalog_by_rarity()
-    total_catalog = len(catalog)
-
-    all_rows = fetch_collection_rows(guild_id, user_id)
-    unlocked_total = len(all_rows)
-    progress = (unlocked_total / total_catalog * 100) if total_catalog else 0.0
-    bar = progress_bar(unlocked_total, total_catalog)
-
-    self_unique = count_self_unique_drinks(guild_id, user_id)
-    given_unique = count_given_unique_drinks(guild_id, user_id)
-    received_unique = count_received_unique_drinks(guild_id, user_id)
-
-    unlocked_by_rarity = fetch_collection_rarity_counts(guild_id, user_id)
-    rarity_lines: list[str] = []
-    for rarity, drinks in grouped_catalog.items():
-        total = len(drinks)
-        unlocked = unlocked_by_rarity.get(rarity, 0)
-        rarity_lines.append(f"{rarity_label(rarity)}：`{unlocked}` / `{total}`")
-
-    recent_rows = all_rows[:5]
-    recent_text = "暫時未有解鎖紀錄"
-    if recent_rows:
-        recent_text = "\n".join(format_collection_row(row) for row in recent_rows)
-
-    embed = discord.Embed(
-        title=f"🍾 {user.display_name} 的酒單收藏",
-        description=(
-            f"**已解鎖酒款：** `{unlocked_total}` / `{total_catalog}`\n"
-            f"**收藏進度：** `{progress:.1f}%`\n"
-            f"`{bar}`\n\n"
-            f"🍹 **自己叫酒解鎖：** `{self_unique}` 款\n"
-            f"🍷 **收到賜酒解鎖：** `{received_unique}` 款\n"
-            f"🥂 **賜酒畀人解鎖：** `{given_unique}` 款"
+    names = snapshot["names"]
+    current = len(names & catalog.keys())
+    awards = {award["milestone_id"]: award for award in snapshot["awards"]}
+    next_goal = next(
+        (
+            goal
+            for goal in sorted(milestones(), key=lambda g: g.target)
+            if goal.key not in awards
         ),
-        color=0x2B2D31,
-        timestamp=discord.utils.utcnow(),
+        None,
     )
-    embed.add_field(name="稀有度收藏", value="\n".join(rarity_lines) or "暫時未有資料", inline=False)
-    embed.add_field(name="最近解鎖", value=recent_text, inline=False)
-    embed.set_footer(text="Con9sole Bartender｜🍹 自己叫酒｜🍷 收到賜酒｜🥂 賜酒畀人")
+    title = awards.get(snapshot["selected"])
+    description = f"已收藏 **{len(names):,} 款**不同酒\n目前酒譜：**{current:,}／{len(catalog):,}**（{current / max(1, len(catalog)):.1%}）"
+    if title:
+        description += f"\n🏅 {title['label']}"
+    embed = discord.Embed(
+        title=f"🍹 {user.display_name} 嘅酒譜", description=description, color=0x2B2D31
+    )
+    if next_goal:
+        count = len(
+            names
+            if next_goal.catalog_names is None
+            else names & next_goal.catalog_names
+        )
+        embed.add_field(
+            name=f"下一站：{next_goal.label}",
+            value=f"再收藏 **{max(0, next_goal.target - count):,} 款**新酒\n{progress_bar(count, next_goal.target)} {count:,}／{next_goal.target:,}",
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="🏆 今版里程碑全部達成！",
+            value="新酒款加入後，仍然可以繼續探索。",
+            inline=False,
+        )
+    rows = fetch_collection_rows(guild_id, user_id, limit=3)
+    embed.add_field(
+        name="最近收藏",
+        value="\n".join(format_collection_row(row) for row in rows)
+        or "飲一杯，或者收朋友請你飲嘅酒，就可以開始。",
+        inline=False,
+    )
+    embed.add_field(
+        name="🏅 收藏徽章",
+        value=f"已解鎖 **{len(awards)} 個**，按「里程碑」睇詳情同揀展示稱號。",
+        inline=False,
+    )
+    embed.set_footer(text="同款唔重複計｜舊收藏照計｜新送酒只計收酒者｜季節酒輪流供應")
+    return embed
+
+
+def build_drink_milestones_embed(
+    guild: discord.Guild | None, user: discord.Member | discord.User
+) -> discord.Embed:
+    from features.collection_milestones import collection_snapshot, milestones
+
+    snapshot = collection_snapshot(guild.id if guild else None, user.id)
+    awards = {a["milestone_id"]: a for a in snapshot["awards"]}
+    goals = milestones()
+    lines = []
+    for goal in goals:
+        award = awards.get(goal.key)
+        count = len(
+            snapshot["names"]
+            if goal.catalog_names is None
+            else snapshot["names"] & goal.catalog_names
+        )
+        suffix = (
+            f"達成於 {award['unlocked_at'][:10]}"
+            if award
+            else f"{min(count, goal.target):,}／{goal.target:,} 款"
+        )
+        lines.append(f"{'🏅' if award else '▫️'} **{goal.label}** · {suffix}")
+    embed = discord.Embed(
+        title=f"🏅 {user.display_name} 嘅收藏里程碑",
+        description="\n".join(lines),
+        color=0xD4AF37,
+    )
+    archived = [
+        a for a in snapshot["awards"] if a["milestone_id"] not in {g.key for g in goals}
+    ]
+    if archived:
+        embed.add_field(
+            name="歷代酒譜紀念",
+            value="\n".join(
+                f"🏅 {a['label']} · 當時共 {a['catalog_total']:,} 款 · {a['unlocked_at'][:10]}"
+                for a in archived[-6:]
+            ),
+            inline=False,
+        )
+    embed.set_footer(
+        text="自動解鎖，唔使領獎｜舊紀錄補計，唔會補發通知｜紀念日期以 UTC 記錄"
+    )
     return embed
 
 
@@ -154,11 +228,15 @@ def build_drink_collection_rarity_embed(
     if shown_rows:
         list_text = "\n".join(format_collection_row(row) for row in shown_rows)
         if unlocked > COLLECTION_PAGE_LIMIT:
-            list_text += f"\n…仲有 `{unlocked - COLLECTION_PAGE_LIMIT}` 款已解鎖未顯示。"
+            list_text += (
+                f"\n…仲有 `{unlocked - COLLECTION_PAGE_LIMIT}` 款已解鎖未顯示。"
+            )
     else:
         list_text = "暫時未解鎖呢個稀有度嘅酒款。"
 
-    hidden_text = f"❔ `{locked}` 款仍藏喺吧枱深處。" if locked else "✅ 呢個稀有度已全部解鎖。"
+    hidden_text = (
+        f"❔ `{locked}` 款仍藏喺吧枱深處。" if locked else "✅ 呢個稀有度已全部解鎖。"
+    )
 
     embed = discord.Embed(
         title=f"🍾 {user.display_name} 的{rarity_label(rarity)}收藏",
@@ -177,7 +255,9 @@ def build_drink_collection_rarity_embed(
     return embed
 
 
-def build_drink_collection_recent_embed(guild: discord.Guild | None, user: discord.Member | discord.User) -> discord.Embed:
+def build_drink_collection_recent_embed(
+    guild: discord.Guild | None, user: discord.Member | discord.User
+) -> discord.Embed:
     guild_id = guild.id if guild else None
     user_id = user.id
     rows = fetch_collection_rows(guild_id, user_id, limit=COLLECTION_PAGE_LIMIT)
@@ -193,5 +273,5 @@ def build_drink_collection_recent_embed(guild: discord.Guild | None, user: disco
         color=0x2B2D31,
         timestamp=discord.utils.utcnow(),
     )
-    embed.set_footer(text="Con9sole Bartender｜最近解鎖會按最後互動時間排序。")
+    embed.set_footer(text="Con9sole Bartender｜最近收藏按首次解鎖時間排序。")
     return embed

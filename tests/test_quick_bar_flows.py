@@ -28,10 +28,14 @@ class DrinkDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.touch = stub("touch_drink_cooldown")
         self.touch_gift = stub("touch_gift_drink_cooldown")
         self.history = stub("save_recent_draws")
-        self.record = stub("record_drink_event")
+
+        def recorded(**kwargs):
+            kwargs["progress"].update(is_new=True, unlocked=["初嚐一杯"], total=1)
+            return True
+
+        self.record = stub("record_drink_event", side_effect=recorded)
         stub("init_drink_events_db")
         stub("load_recent_draw_map", return_value={})
-        stub("has_collected_drink", return_value=False)
         stub("pick_rarity", return_value="Rare")
         self.drink = DrinkEntry(
             eng="Test", zh="測試", desc="Test", typ="short", rarity="Rare"
@@ -52,9 +56,33 @@ class DrinkDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.touch.assert_called_once_with(i.user.id)
         self.history.assert_called_once()
         self.record.assert_called_once()
-        payload = i.edit_original_response.await_args.kwargs
+        payload = i.edit_original_response.await_args_list[0].kwargs
         self.assertEqual(payload["embed"].fields[0].name, "✨ 新收藏")
         self.assertNotIn("file", payload)
+
+    async def test_storage_failure_never_claims_collection_or_milestone(self):
+        self.record.side_effect = None
+        self.record.return_value = False
+        i = interaction()
+        self.assertTrue(await self.cog.do_drink(i))
+        self.assertEqual(i.edit_original_response.await_count, 1)
+        self.assertEqual(
+            len(i.edit_original_response.await_args.kwargs["embed"].fields), 0
+        )
+        self.assertIn("保存唔到", i.followup.send.await_args.args[0])
+
+    async def test_notice_edit_failure_does_not_undo_saved_drink(self):
+        i = interaction()
+        i.edit_original_response.side_effect = [
+            None,
+            discord.HTTPException(
+                MagicMock(status=503, reason="Unavailable"), "failed"
+            ),
+        ]
+        with self.assertLogs("con9sole-bartender.drink", level="WARNING"):
+            self.assertTrue(await self.cog.do_drink(i))
+        self.record.assert_called_once()
+        self.touch.assert_called_once()
 
     async def test_delivery_failure_does_not_charge_or_record(self):
         i = interaction()
@@ -108,7 +136,7 @@ class DrinkDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.cog.do_drink(i, target))
         self.touch_gift.assert_called_once()
         self.touch.assert_not_called()
-        payload = i.edit_original_response.await_args.kwargs
+        payload = i.edit_original_response.await_args_list[0].kwargs
         self.assertEqual(payload["content"], "<@20>")
         self.assertEqual(payload["allowed_mentions"].users, [target])
         self.assertFalse(payload["allowed_mentions"].everyone)
