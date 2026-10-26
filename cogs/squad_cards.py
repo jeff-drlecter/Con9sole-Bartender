@@ -14,6 +14,7 @@ from discord.ext import commands, tasks
 import config
 from core.json_storage import atomic_write_json, load_json_object
 from core.permissions import is_admin_or_helper
+from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
 TARGET = discord.Object(id=config.GUILD_ID)
@@ -75,7 +76,7 @@ class CardView(discord.ui.View):
 class SquadCards(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.path = os.getenv("SQUAD_CARDS_PATH", "/data/squad_cards.json")
+        self.path = os.getenv("SQUAD_CARDS_PATH", str(DATA_DIR / "squad_cards.json"))
         self.state = load_json_object(self.path, lambda: {"settings": {}, "sessions": {}})
         self.lock = asyncio.Lock()
         for key, session in self.state["sessions"].items():
