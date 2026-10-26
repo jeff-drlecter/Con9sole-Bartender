@@ -63,6 +63,7 @@ asyncio.run(run())
                     "DRINK_STATE_PATH": str(Path(folder) / "drinks.json"),
                     "ACTIVITY_REMINDER_PATH": str(Path(folder) / "activity.json"),
                     "GAME_ANNOUNCEMENTS_PATH": str(Path(folder) / "games.json"),
+                    "SQUAD_CARDS_PATH": str(Path(folder) / "squads.json"),
                     "TWITCH_RELAY_CONFIG": "[]",
                     "PYTHONDONTWRITEBYTECODE": "1",
                 }
@@ -77,7 +78,7 @@ asyncio.run(run())
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(report["extensions"], 17, result.stderr)
+        self.assertEqual(report["extensions"], 18, result.stderr)
         self.assertEqual(report["missing"], [])
         self.assertTrue(report["sweeper_restarted"])
-        self.assertEqual(report["command_count"], 25)
+        self.assertEqual(report["command_count"], 26)
