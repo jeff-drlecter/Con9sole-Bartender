@@ -127,9 +127,12 @@ class SquadCards(commands.Cog):
         settings = self.state["settings"]
         if not guild or not settings:
             return
+        routes = settings.get("routes", {})
+        if "category" in settings:
+            routes = {str(settings["category"]): settings["destination"], **routes}
         now = time.time()
         channels = {str(c.id): c for c in guild.voice_channels
-                    if c.category_id == settings["category"] and c.id != guild.afk_channel_id}
+                    if str(c.category_id) in routes and c.id != guild.afk_channel_id}
         for key in list(set(channels) | set(self.state["sessions"])):
             channel = channels.get(key)
             members = humans(channel) if channel else []
@@ -146,7 +149,7 @@ class SquadCards(commands.Cog):
                 if len(members) < 2:
                     continue
                 session = dict(id=uuid.uuid4().hex, started=now, qualified=now,
-                               participants={}, destination=settings["destination"])
+                               participants={}, destination=routes[str(channel.category_id)])
                 self.state["sessions"][key] = session
             before = dict(session["participants"])
             session["participants"].update({str(m.id): m.display_name for m in members})
@@ -209,7 +212,12 @@ class SquadCards(commands.Cog):
             await interaction.response.send_message("Bot 喺狀態卡頻道需要查看、發訊息、嵌入連結及讀取歷史權限。", ephemeral=True)
             return
         async with self.lock:
-            self.state["settings"] = dict(category=category.id, destination=destination.id)
+            settings = self.state["settings"]
+            routes = dict(settings.get("routes", {}))
+            if "category" in settings:
+                routes.setdefault(str(settings["category"]), settings["destination"])
+            routes[str(category.id)] = destination.id
+            self.state["settings"] = {"routes": routes}
             self.save()
         await interaction.response.send_message(
             f"已設定：監察 {category.name}；組隊卡發到 {destination.mention}。兩人以上連續10分鐘先問；散 band 轉足跡。", ephemeral=True)
