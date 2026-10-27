@@ -64,13 +64,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         members = [types.SimpleNamespace(id=i, display_name=str(i), bot=False) for i in (1, 2)]
         channels = [types.SimpleNamespace(id=i, category_id=category, members=members[:])
                     for i, category in ((10, 20), (11, 21), (12, 22))]
-        guild = types.SimpleNamespace(voice_channels=channels, afk_channel=None)
+        guild = types.SimpleNamespace(voice_channels=channels, afk_channel=channels[2])
         calls = []
         async def render(channel, session, ended=False):
             calls.append((channel.id, session['destination'], ended))
             session['message'] = channel.id
         cog = types.SimpleNamespace(
-            state={'settings': {'routes': {'20': 30, '21': 31}}, 'sessions': {}},
+            state={'settings': {'routes': {'20': 30, '21': 31, '22': 32}}, 'sessions': {}},
             bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render)
         await namespace['reconcile'](cog)
         now[0] += 60
