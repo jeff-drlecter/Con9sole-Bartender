@@ -95,7 +95,7 @@ class SquadCards(commands.Cog):
         names = session["participants"] if ended else {str(m.id): m.display_name for m in members}
         roster = "、".join(discord.utils.escape_markdown(n) for n in names.values()) or "—"
         game = discord.utils.escape_markdown(session.get("game", ""))
-        title = "👣 開團足跡" if ended else ("🎮 在 call 玩緊" if session.get("game") else "🎧 有人開緊 call")
+        title = "👣 開團足跡" if ended else ("🎮 在 call 玩緊" if session.get("game") else "👋 要唔要隊友？")
         embed = discord.Embed(title=title, colour=0x808080 if ended else 0x57F287)
         if game:
             embed.add_field(name="玩緊", value=game, inline=False)
@@ -145,7 +145,7 @@ class SquadCards(commands.Cog):
                     self.save()
                 continue
             if not session:
-                if len(members) < 2:
+                if len(members) < 1:
                     continue
                 session = dict(id=uuid.uuid4().hex, started=now, qualified=now,
                                participants={}, destination=routes[str(channel.category_id)])
@@ -156,11 +156,11 @@ class SquadCards(commands.Cog):
             changed = roster != session.get("roster")
             session["roster"] = roster
             if not session.get("message"):
-                if len(members) < 2:
+                if len(members) < 1:
                     session["qualified"] = None
                 elif session.get("qualified") is None:
                     session["qualified"] = now
-                elif now - session["qualified"] >= 600:
+                elif now - session["qualified"] >= 60:
                     await self.render(channel, session)
             elif changed:
                 await self.render(channel, session)
@@ -200,7 +200,7 @@ class SquadCards(commands.Cog):
             async with self.lock:
                 await self.reconcile()
 
-    @app_commands.command(name="squad_setup", description="設定自動組隊卡：兩人同場10分鐘後詢問招募")
+    @app_commands.command(name="squad_setup", description="設定自動組隊卡：一人留滿1分鐘後詢問隊友")
     @app_commands.guild_only()
     @app_commands.check(lambda i: is_admin_or_helper(i.user))
     async def squad_setup(self, interaction: discord.Interaction,
@@ -219,7 +219,7 @@ class SquadCards(commands.Cog):
             self.state["settings"] = {"routes": routes}
             self.save()
         await interaction.response.send_message(
-            f"已設定：監察 {category.name}；組隊卡發到 {destination.mention}。兩人以上連續10分鐘先問；散 band 轉足跡。", ephemeral=True)
+            f"已設定：監察 {category.name}；組隊卡發到 {destination.mention}。一人以上連續1分鐘先問；散 band 轉足跡。", ephemeral=True)
 
 
 async def setup(bot):
