@@ -43,8 +43,8 @@ class Details(discord.ui.Modal, title="組隊狀態"):
         async with self.cog.lock:
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
-            if session is not self.session or not channel or interaction.user not in humans(channel):
-                await interaction.followup.send("呢場已結束，或者你已離開個 call。", ephemeral=True)
+            if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+                await interaction.followup.send("呢場已結束，或者你冇修改權限（需為在場成員、Admin 或 Helper）。", ephemeral=True)
                 return
             session.update(game=str(self.game.value).strip(), missing=int(value) if value else None)
             self.cog.save()
@@ -64,8 +64,8 @@ class CardView(discord.ui.View):
     async def edit(self, interaction):
         session = self.cog.state["sessions"].get(self.key)
         channel = self.cog.bot.get_channel(int(self.key))
-        if session is not self.session or not channel or interaction.user not in humans(channel):
-            await interaction.response.send_message("只限呢個 call 嘅在場成員修改。", ephemeral=True)
+        if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+            await interaction.response.send_message("只限呢個 call 嘅在場成員、Admin 或 Helper 修改。", ephemeral=True)
             return
         await interaction.response.send_modal(Details(self.cog, self.key, session))
 
