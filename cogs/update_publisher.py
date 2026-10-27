@@ -344,6 +344,8 @@ class DraftReviewView(discord.ui.View):
         self.draft = draft
         self.games = games
         self.message: discord.InteractionMessage | None = None
+        self.publishing = False
+        self.published_message = None
 
     def embed(self) -> discord.Embed:
         return build_announcement_embed(self.draft, games=self.games)
@@ -379,40 +381,56 @@ class DraftReviewView(discord.ui.View):
             await interaction.response.send_message("❌ 呢個功能只可喺伺服器內使用。", ephemeral=True)
             return
 
-        channel = guild.get_channel(channel_id)
-        if channel is None:
-            try:
-                fetched = await interaction.client.fetch_channel(channel_id)
-            except discord.DiscordException:
-                log.exception("Unable to fetch announcement channel: channel=%s", channel_id)
-                await interaction.response.send_message("❌ 搵唔到已設定的公告頻道，未有發佈。", ephemeral=True)
-                return
-            channel = fetched
-
-        if not isinstance(channel, discord.TextChannel) or channel.guild.id != guild.id:
-            await interaction.response.send_message("❌ 公告頻道必須係此伺服器的文字／公告頻道。", ephemeral=True)
+        # Acknowledge before any Discord request can exceed the interaction deadline.
+        await interaction.response.defer()
+        if self.published_message is not None:
+            await interaction.followup.send(
+                f"✅ 呢份草稿已發佈，唔會重複發送：{self.published_message.jump_url}", ephemeral=True)
             return
-
+        if self.publishing:
+            await interaction.followup.send("⏳ 正在發佈，請稍候，唔使再撳。", ephemeral=True)
+            return
+        self.publishing = True
         try:
-            published_message = await channel.send(content=self.announcement_text())
-        except discord.DiscordException:
-            log.exception("Unable to publish update: channel=%s guild=%s", channel.id, guild.id)
-            await interaction.response.send_message("❌ 發佈失敗；請檢查 Bot 喺公告頻道的發訊息及 Embed 權限。", ephemeral=True)
-            return
+            channel = guild.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await interaction.client.fetch_channel(channel_id)
+                except discord.DiscordException:
+                    log.exception("Unable to fetch announcement channel: channel=%s", channel_id)
+                    await interaction.followup.send("❌ 搵唔到已設定的公告頻道，未有發佈。", ephemeral=True)
+                    return
 
-        record_warning = ""
-        if self.draft.kind == "game":
+            if not isinstance(channel, discord.TextChannel) or channel.guild.id != guild.id:
+                await interaction.followup.send("❌ 公告頻道必須係此伺服器的文字／公告頻道。", ephemeral=True)
+                return
+
             try:
-                mark_games_published(guild.id, self.draft.game_ids, message_id=published_message.id)
-            except Exception:
-                log.exception("Published update but could not clear pending game records: message=%s", published_message.id)
-                record_warning = " 待公告紀錄未更新，請勿重複發佈，先檢查 `/data/game_announcements.json`。"
-        self.stop()
-        await interaction.response.edit_message(
-            content=f"✅ 已發佈到 {channel.mention}。{record_warning}",
-            embed=None,
-            view=None,
-        )
+                published_message = await channel.send(content=self.announcement_text())
+            except discord.DiscordException:
+                log.exception("Unable to publish update: channel=%s guild=%s", channel.id, guild.id)
+                await interaction.followup.send("❌ 發佈未能確認；請先查看公告頻道，確認冇出文先重試。", ephemeral=True)
+                return
+
+            # Remember success before bookkeeping or confirmation can fail.
+            self.published_message = published_message
+            record_warning = ""
+            if self.draft.kind == "game":
+                try:
+                    mark_games_published(guild.id, self.draft.game_ids, message_id=published_message.id)
+                except Exception:
+                    log.exception("Published update but could not clear pending game records: message=%s", published_message.id)
+                    record_warning = " 待公告紀錄未更新，請勿重複發佈，先檢查待公告清單。"
+            for item in self.children:
+                item.disabled = True
+            await interaction.edit_original_response(
+                content=f"✅ 已發佈到 {channel.mention}。{record_warning}",
+                embed=None,
+                view=None,
+            )
+            self.stop()
+        finally:
+            self.publishing = False
 
     @discord.ui.button(label="取消", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def cancel_draft(self, interaction: discord.Interaction, _: discord.ui.Button["DraftReviewView"]) -> None:
