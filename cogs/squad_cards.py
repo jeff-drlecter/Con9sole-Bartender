@@ -1,4 +1,4 @@
-"""Voice recruitment cards. Configure with /squad_setup; no automatic role pings."""
+"""Voice recruitment cards. Configure with /squad_setup; first-arrival user ping only."""
 from __future__ import annotations
 
 import asyncio
@@ -76,6 +76,7 @@ class SquadCards(commands.Cog):
         self.path = os.getenv("SQUAD_CARDS_PATH", str(DATA_DIR / "squad_cards.json"))
         self.state = load_json_object(self.path, lambda: {"settings": {}, "sessions": {}})
         self.lock = asyncio.Lock()
+        self.arrivals = {}
         for key, session in self.state["sessions"].items():
             if session.get("message"):
                 bot.add_view(CardView(self, key, session), message_id=session["message"])
@@ -112,11 +113,17 @@ class SquadCards(commands.Cog):
         if session.get("message"):
             try:
                 message = await destination.fetch_message(session["message"])
-                await message.edit(**kwargs)
+                await message.edit(content=None if ended else message.content, **kwargs)
                 return
             except discord.NotFound:
                 if ended:
                     return  # Do not repost a deliberately deleted card as a footprint.
+        # Notify only on the original card, never on edits or replacement cards.
+        first_id = session.get("first_member")
+        if not ended and not session.get("message") and first_id in {m.id for m in members}:
+            kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？"
+            kwargs["allowed_mentions"] = discord.AllowedMentions(
+                users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
         message = await destination.send(**kwargs)
         session["message"] = message.id
         self.save()
@@ -148,7 +155,9 @@ class SquadCards(commands.Cog):
                 if len(members) < 1:
                     continue
                 session = dict(id=uuid.uuid4().hex, started=now, qualified=now,
-                               participants={}, destination=routes[str(channel.category_id)])
+                               participants={}, destination=routes[str(channel.category_id)],
+                               first_member=min(members, key=lambda m: getattr(self, "arrivals", {}).get(
+                                   (channel.id, m.id), now)).id)
                 self.state["sessions"][key] = session
             before = dict(session["participants"])
             session["participants"].update({str(m.id): m.display_name for m in members})
@@ -190,6 +199,10 @@ class SquadCards(commands.Cog):
             return
         try:
             async with self.lock:
+                if before.channel:
+                    self.arrivals.pop((before.channel.id, member.id), None)
+                if after.channel and not member.bot:
+                    self.arrivals[(after.channel.id, member.id)] = time.time()
                 await self.reconcile()
         except Exception:
             log.exception("Failed to update squad card after voice change")
