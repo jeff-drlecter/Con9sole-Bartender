@@ -120,7 +120,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                 return cls()
         embeds = []
         def make_embed(**kwargs):
-            embed = types.SimpleNamespace(**kwargs, add_field=lambda **kw: None)
+            embed = types.SimpleNamespace(**kwargs, fields=[], add_field=lambda **kw: embed.fields.append(kw))
             embeds.append(embed)
             return embed
         fake_discord = types.SimpleNamespace(
@@ -128,7 +128,8 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             Embed=make_embed,
             AllowedMentions=Mentions, Object=lambda **kw: types.SimpleNamespace(**kw),
             NotFound=type('NotFound', (Exception,), {}))
-        scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None)
+        scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None,
+                     game_profile=lambda *a: '', GAME_LABELS={})
         exec(compile(ast.Module(body=[render_method], type_ignores=[]), str(source), 'exec'), scope)
         message = types.SimpleNamespace(id=99, content='<@1> prompt', edit=AsyncMock())
         destination = types.SimpleNamespace(send=AsyncMock(return_value=message),
@@ -142,7 +143,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        started=1000, ended=2000)
         await scope['render'](cog, channel, session)
         sent = destination.send.call_args.kwargs
-        self.assertEqual(sent['embed'].title, '🙌 歡迎加入，一齊玩！')
+        self.assertEqual(sent['embed'].title, '🟢 開緊團 · 歡迎加入')
         self.assertIn('<@1>', sent['content'])
         self.assertNotIn('<@2>', sent['content'])
         self.assertEqual([u.id for u in sent['allowed_mentions'].users], [1])
@@ -154,9 +155,14 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embeds[-1].title, '🙌 缺 2 人，一齊玩！')
         session['missing'] = 0
         await scope['render'](cog, channel, session)
-        self.assertEqual(embeds[-1].title, '🙌 歡迎加入，一齊玩！')
+        self.assertEqual(embeds[-1].title, '🟢 開緊團 · 歡迎加入')
+        session['mode'] = 'Clubs Rush'
+        await scope['render'](cog, channel, session)
+        self.assertIn({'name': '🏟️ 模式', 'value': 'Clubs Rush', 'inline': False}, embeds[-1].fields)
         await scope['render'](cog, channel, session, ended=True)
-        self.assertEqual(embeds[-1].title, '👣 開團足跡')
+        self.assertEqual(embeds[-1].title, '🏁 今晚收工，下次再戰！')
+        self.assertIn({'name': '🏟️ 模式', 'value': 'Clubs Rush', 'inline': False}, embeds[-1].fields)
+        self.assertTrue(any('16 分鐘' in f['name'] for f in embeds[-1].fields))
         self.assertIsNone(message.edit.call_args.kwargs['view'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])
 
@@ -185,7 +191,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                     bot=types.SimpleNamespace(get_channel=lambda _: channel),
                     lock=asyncio.Lock(), save=lambda: None, render=AsyncMock())
                 view = types.SimpleNamespace(cog=cog, key='10', session=session,
-                    game=types.SimpleNamespace(value='Game'), missing=types.SimpleNamespace(value='2'))
+                    game=types.SimpleNamespace(value='Game'), mode=types.SimpleNamespace(value='Custom mode'), missing=types.SimpleNamespace(value='2'))
                 inter = types.SimpleNamespace(user=user,
                     response=types.SimpleNamespace(send_modal=AsyncMock(), send_message=AsyncMock(),
                                                    defer=AsyncMock()),
@@ -224,6 +230,73 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(cog.render.await_count, int(allowed))
                     self.assertEqual(session['missing'], count if allowed else 9)
                     self.assertEqual(session['game'], 'FC')
+
+
+    async def test_mode_selection_permissions_clear_and_stale_profile(self):
+        from unittest.mock import AsyncMock
+        parsed = ast.parse(source.read_text())
+        definitions = [n for n in parsed.body if
+                       isinstance(n, ast.FunctionDef) and n.name == 'game_profile' or
+                       isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in
+                       ('GAME_LABELS', 'MODE_PRESETS') for a in n.targets)]
+        scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), scope)
+        method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'ModePicker'
+                      for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'callback')
+        exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), scope)
+        self.assertNotIn('Crew HQ', scope['MODE_PRESETS']['2k'])
+        self.assertIn('Crew HQ', scope['MODE_PRESETS']['2k27'])
+        for kind, in_call, active, stale, allowed in [
+                ('admin', False, True, False, True), ('helper', False, True, False, True),
+                ('player', True, True, False, True), ('player', False, True, False, False),
+                ('admin', False, False, False, False), ('admin', False, True, True, False)]:
+            for selected in ('Clubs Rush', '__none__'):
+                with self.subTest(kind=kind, active=active, stale=stale, selected=selected):
+                    user = types.SimpleNamespace(kind=kind, bot=False)
+                    session = {'mode': 'Clubs 球會', 'profile': '2k27' if stale else 'fc', 'missing': 2}
+                    channel = types.SimpleNamespace(members=[user] if in_call else [])
+                    cog = types.SimpleNamespace(state={'sessions': {'10': session} if active else {}},
+                        bot=types.SimpleNamespace(get_channel=lambda _: channel),
+                        lock=asyncio.Lock(), save=lambda: None, render=AsyncMock())
+                    view = types.SimpleNamespace(cog=cog, key='10', session=session, profile='fc', values=[selected])
+                    inter = types.SimpleNamespace(user=user,
+                        response=types.SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+                        followup=types.SimpleNamespace(send=AsyncMock()))
+                    await scope['callback'](view, inter)
+                    self.assertEqual(cog.render.await_count, int(allowed))
+                    self.assertEqual(session['mode'], ('' if selected == '__none__' else selected) if allowed else 'Clubs 球會')
+                    self.assertEqual(session['missing'], 2)
+
+
+    async def test_discord_menu_layout_and_option_callbacks(self):
+        try:
+            import discord
+        except ImportError:
+            self.skipTest('discord.py is installed by CI')
+        parsed = ast.parse(source.read_text())
+        names = {'game_profile', 'ModePicker', 'GamePicker', 'RecruitmentChoices'}
+        nodes = [n for n in parsed.body if
+                 isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in names or
+                 isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in
+                 ('GAME_LABELS', 'MODE_PRESETS') for a in n.targets)]
+        scope = dict(discord=discord)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
+        channel = types.SimpleNamespace(category=types.SimpleNamespace(name='NBA 2K'))
+        cog = types.SimpleNamespace(bot=types.SimpleNamespace(get_channel=lambda _: channel))
+        for profile in ('fc', '2k', '2k27', 'other'):
+            view = scope['RecruitmentChoices'](cog, '10', {'profile': profile})
+            self.assertEqual(len(view.children), 7)
+            self.assertEqual([item.row for item in view.children], [0, 1, 2, 2, 2, 2, 2])
+            self.assertEqual(len(view.children[1].options),
+                             len(scope['MODE_PRESETS'].get(profile, ())) + 2)
+            chosen = []
+            async def capture(interaction, value):
+                chosen.append(value)
+            view.set_count = capture
+            for button in view.children[2:6]:
+                await button.callback(None)
+            self.assertEqual(chosen, [1, 2, 3, None])
+            view.stop()
 
 if __name__ == '__main__':
     unittest.main()
