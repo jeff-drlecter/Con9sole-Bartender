@@ -92,9 +92,10 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             arg.annotation = None
         scope = {}
         exec(compile(ast.Module(body=[setup_method], type_ignores=[]), str(source), 'exec'), scope)
-        cog = types.SimpleNamespace(state={'settings': {'category': 20, 'destination': 30}},
-                                    lock=asyncio.Lock(), save=lambda: None)
-        inter = types.SimpleNamespace(guild=types.SimpleNamespace(me=object()),
+        cog = types.SimpleNamespace(state={'settings': {'category': 20, 'destination': 30}, 'sessions': {}},
+                                    lock=asyncio.Lock(), save=lambda: None, last_error=None,
+                                    tick=types.SimpleNamespace(get_task=lambda: None, is_running=lambda: True))
+        inter = types.SimpleNamespace(guild=types.SimpleNamespace(me=object(), voice_channels=[]),
                                       response=types.SimpleNamespace(send_message=AsyncMock()))
         permissions = types.SimpleNamespace(view_channel=True, send_messages=True,
                                              embed_links=True, read_message_history=True)

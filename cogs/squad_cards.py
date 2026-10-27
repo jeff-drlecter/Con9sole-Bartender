@@ -77,6 +77,7 @@ class SquadCards(commands.Cog):
         self.state = load_json_object(self.path, lambda: {"settings": {}, "sessions": {}})
         self.lock = asyncio.Lock()
         self.arrivals = {}
+        self.last_error = None
         for key, session in self.state["sessions"].items():
             if session.get("message"):
                 bot.add_view(CardView(self, key, session), message_id=session["message"])
@@ -181,7 +182,8 @@ class SquadCards(commands.Cog):
         try:
             async with self.lock:
                 await self.reconcile()
-        except Exception:
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
             log.exception("Failed to reconcile squad cards; retrying next tick")
 
     @tick.before_loop
@@ -231,7 +233,15 @@ class SquadCards(commands.Cog):
             routes[str(category.id)] = destination.id
             self.state["settings"] = {"routes": routes}
             self.save()
+        task = self.tick.get_task()
+        loop_status = "running" if self.tick.is_running() else "stopped"
+        if task and task.done() and not task.cancelled() and task.exception():
+            self.last_error = str(task.exception())
+        channels = [c for c in interaction.guild.voice_channels if c.category_id == category.id]
+        diagnostics = [f"{c.name}: humans={len(humans(c))}, session={self.state['sessions'].get(str(c.id), {}).get('qualified')}, card={self.state['sessions'].get(str(c.id), {}).get('message')}" for c in channels]
+        diagnostic_text = "\\n".join(diagnostics)[:1000]
         await interaction.response.send_message(
+            f"loop={loop_status}; error={self.last_error}\\n{diagnostic_text}\\n"
             f"已設定：監察 {category.name}；組隊卡發到 {destination.mention}。一人以上連續1分鐘先問；散 band 轉足跡。", ephemeral=True)
 
 
