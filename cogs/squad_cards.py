@@ -26,18 +26,18 @@ def humans(channel):
 
 class Details(discord.ui.Modal, title="組隊狀態"):
     game = discord.ui.TextInput(label="玩緊乜？（選填）", max_length=100, required=False)
-    missing = discord.ui.TextInput(label="仲缺幾人？（選填；0 = 齊人）", max_length=2, required=False)
+    missing = discord.ui.TextInput(label="仲缺幾人？（留空＝不限人數）", max_length=2, required=False)
 
     def __init__(self, cog, key, session):
         super().__init__()
         self.cog, self.key, self.session = cog, key, session
         self.game.default = session.get("game", "")
-        self.missing.default = "" if session.get("missing") is None else str(session["missing"])
+        self.missing.default = "" if not session.get("missing") else str(session["missing"])
 
     async def on_submit(self, interaction):
         value = str(self.missing.value).strip()
-        if value and (not value.isascii() or not value.isdecimal() or not 0 <= int(value) <= 99):
-            await interaction.response.send_message("請填 0–99；0 代表齊人。", ephemeral=True)
+        if value and (not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 99):
+            await interaction.response.send_message("請填 1–99，或者留空代表不限人數。", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         async with self.cog.lock:
@@ -57,7 +57,7 @@ class CardView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog, self.key, self.session = cog, key, session
         self.add_item(discord.ui.Button(
-            label="入 call 吹水" if session.get("missing") == 0 else "一齊玩 · 入 call",
+            label="一齊玩 · 入 call",
             style=discord.ButtonStyle.link,
             url=f"https://discord.com/channels/{config.GUILD_ID}/{key}"))
         button = discord.ui.Button(label="更新招募", style=discord.ButtonStyle.secondary,
@@ -104,12 +104,10 @@ class SquadCards(commands.Cog):
         missing = session.get("missing")
         if ended:
             title, description, colour = "👣 開團足跡", "今次散 band，下次再一齊玩！", 0x808080
-        elif missing == 0:
-            title, description, colour = "✅ 今團齊人啦", "隊伍暫時齊人，可以入 call 吹水。", 0xFEE75C
-        elif missing is not None:
+        elif missing is not None and missing > 0:
             title, description, colour = f"🙌 缺 {missing} 人，一齊玩！", "想加入？撳下面按鈕開啟語音頻道。", 0x57F287
         else:
-            title, description, colour = "🎮 有人開咗 call，一齊玩？", "想一齊玩？入 call 問吓，唔使等人邀請。", 0x5865F2
+            title, description, colour = "🙌 歡迎加入，一齊玩！", "不限人數，想玩就入 call，唔使等人邀請。", 0x5865F2
         embed = discord.Embed(title=title, description=description, colour=colour)
         if game:
             embed.add_field(name="🎮 玩緊", value=game, inline=False)
