@@ -20,7 +20,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         now = [1000]
         namespace['time'] = types.SimpleNamespace(time=lambda: now[0])
         members = [types.SimpleNamespace(id=i, display_name=str(i), bot=False) for i in (1, 2)]
-        channel = types.SimpleNamespace(id=10, category_id=20, members=members[:])
+        channel = types.SimpleNamespace(id=10, category_id=20, members=members[:1])
         guild = types.SimpleNamespace(voice_channels=[channel], afk_channel_id=None)
         calls = []
         async def render(channel, session, ended=False):
@@ -32,15 +32,15 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         async def tick():
             await namespace['reconcile'](cog)
         await tick()
-        now[0] += 599
+        now[0] += 59
         await tick()
         self.assertEqual(calls, [])
-        channel.members = members[:1]
+        channel.members = []
         await tick()
         now[0] += 5
         channel.members = members[:]
         await tick()
-        now[0] += 599
+        now[0] += 59
         await tick()
         self.assertEqual(calls, [])
         now[0] += 1
@@ -73,7 +73,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             state={'settings': {'routes': {'20': 30, '21': 31}}, 'sessions': {}},
             bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render)
         await namespace['reconcile'](cog)
-        now[0] += 600
+        now[0] += 60
         await namespace['reconcile'](cog)
         self.assertEqual(set(calls), {(10, 30, False), (11, 31, False)})
         channels[0].members = []
