@@ -139,7 +139,7 @@ class SquadCards(commands.Cog):
             routes = {str(settings["category"]): settings["destination"], **routes}
         now = time.time()
         channels = {str(c.id): c for c in guild.voice_channels
-                    if str(c.category_id) in routes and c.id != guild.afk_channel_id}
+                    if str(c.category_id) in routes and c != guild.afk_channel}
         for key in list(set(channels) | set(self.state["sessions"])):
             channel = channels.get(key)
             members = humans(channel) if channel else []
@@ -239,9 +239,9 @@ class SquadCards(commands.Cog):
             self.last_error = str(task.exception())
         channels = [c for c in interaction.guild.voice_channels if c.category_id == category.id]
         diagnostics = [f"{c.name}: humans={len(humans(c))}, session={self.state['sessions'].get(str(c.id), {}).get('qualified')}, card={self.state['sessions'].get(str(c.id), {}).get('message')}" for c in channels]
-        diagnostic_text = "\\n".join(diagnostics)[:1000]
+        diagnostic_text = "\n".join(diagnostics)[:1000]
         await interaction.response.send_message(
-            f"loop={loop_status}; error={self.last_error}\\n{diagnostic_text}\\n"
+            f"loop={loop_status}; error={self.last_error}\n{diagnostic_text}\n"
             f"已設定：監察 {category.name}；組隊卡發到 {destination.mention}。一人以上連續1分鐘先問；散 band 轉足跡。", ephemeral=True)
 
 

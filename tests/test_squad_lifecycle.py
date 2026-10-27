@@ -21,7 +21,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         namespace['time'] = types.SimpleNamespace(time=lambda: now[0])
         members = [types.SimpleNamespace(id=i, display_name=str(i), bot=False) for i in (1, 2)]
         channel = types.SimpleNamespace(id=10, category_id=20, members=members[:1])
-        guild = types.SimpleNamespace(voice_channels=[channel], afk_channel_id=None)
+        guild = types.SimpleNamespace(voice_channels=[channel], afk_channel=None)
         calls = []
         async def render(channel, session, ended=False):
             calls.append((ended, dict(session['participants'])))
@@ -64,13 +64,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         members = [types.SimpleNamespace(id=i, display_name=str(i), bot=False) for i in (1, 2)]
         channels = [types.SimpleNamespace(id=i, category_id=category, members=members[:])
                     for i, category in ((10, 20), (11, 21), (12, 22))]
-        guild = types.SimpleNamespace(voice_channels=channels, afk_channel_id=None)
+        guild = types.SimpleNamespace(voice_channels=channels, afk_channel=channels[2])
         calls = []
         async def render(channel, session, ended=False):
             calls.append((channel.id, session['destination'], ended))
             session['message'] = channel.id
         cog = types.SimpleNamespace(
-            state={'settings': {'routes': {'20': 30, '21': 31}}, 'sessions': {}},
+            state={'settings': {'routes': {'20': 30, '21': 31, '22': 32}}, 'sessions': {}},
             bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render)
         await namespace['reconcile'](cog)
         now[0] += 60
