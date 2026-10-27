@@ -118,9 +118,14 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             @classmethod
             def none(cls):
                 return cls()
+        embeds = []
+        def make_embed(**kwargs):
+            embed = types.SimpleNamespace(**kwargs, add_field=lambda **kw: None)
+            embeds.append(embed)
+            return embed
         fake_discord = types.SimpleNamespace(
             utils=types.SimpleNamespace(escape_markdown=lambda s: s),
-            Embed=lambda **kw: types.SimpleNamespace(add_field=lambda **kw: None),
+            Embed=make_embed,
             AllowedMentions=Mentions, Object=lambda **kw: types.SimpleNamespace(**kw),
             NotFound=type('NotFound', (Exception,), {}))
         scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None)
@@ -137,13 +142,22 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        started=1000, ended=2000)
         await scope['render'](cog, channel, session)
         sent = destination.send.call_args.kwargs
+        self.assertEqual(sent['embed'].title, '🎮 有人開咗 call，一齊玩？')
         self.assertIn('<@1>', sent['content'])
         self.assertNotIn('<@2>', sent['content'])
         self.assertEqual([u.id for u in sent['allowed_mentions'].users], [1])
         await scope['render'](cog, channel, session)
         self.assertEqual(destination.send.await_count, 1)
         self.assertEqual(message.edit.call_args.kwargs['allowed_mentions'].users, [])
+        session['missing'] = 2
+        await scope['render'](cog, channel, session)
+        self.assertEqual(embeds[-1].title, '🙌 缺 2 人，一齊玩！')
+        session['missing'] = 0
+        await scope['render'](cog, channel, session)
+        self.assertEqual(embeds[-1].title, '✅ 今團齊人啦')
         await scope['render'](cog, channel, session, ended=True)
+        self.assertEqual(embeds[-1].title, '👣 開團足跡')
+        self.assertIsNone(message.edit.call_args.kwargs['view'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])
 
 
