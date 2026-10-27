@@ -170,7 +170,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'on_submit')
         scope = dict(humans=namespace['humans'],
                      is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'),
-                     Details=lambda *args: object())
+                     Details=lambda *args: object(), RecruitmentChoices=lambda *args: object())
         exec(compile(ast.Module(body=[edit, submit], type_ignores=[]), str(source), 'exec'), scope)
         for kind, in_call, active, allowed in [
                 ('admin', False, True, True), ('helper', False, True, True),
@@ -191,9 +191,39 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                                                    defer=AsyncMock()),
                     followup=types.SimpleNamespace(send=AsyncMock()))
                 await scope['edit'](view, inter)
-                self.assertEqual(inter.response.send_modal.await_count, int(allowed))
+                self.assertEqual(inter.response.send_message.call_args.kwargs.get('view') is not None, allowed)
                 await scope['on_submit'](view, inter)
                 self.assertEqual(cog.render.await_count, int(allowed))
+
+
+    async def test_quick_counts_recheck_permissions_and_preserve_game(self):
+        from unittest.mock import AsyncMock
+        parsed = ast.parse(source.read_text())
+        method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'RecruitmentChoices'
+                      for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'set_count')
+        scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), scope)
+        for kind, in_call, active, allowed in [
+                ('admin', False, True, True), ('helper', False, True, True),
+                ('player', True, True, True), ('player', False, True, False),
+                ('player', False, False, False), ('admin', False, False, False)]:
+            for count in (1, 2, 3, None):
+                with self.subTest(kind=kind, active=active, count=count):
+                    user = types.SimpleNamespace(kind=kind, bot=False)
+                    session = {'game': 'FC', 'missing': 9}
+                    channel = types.SimpleNamespace(members=[user] if in_call else [])
+                    cog = types.SimpleNamespace(
+                        state={'sessions': {'10': session} if active else {}},
+                        bot=types.SimpleNamespace(get_channel=lambda _: channel),
+                        lock=asyncio.Lock(), save=lambda: None, render=AsyncMock())
+                    view = types.SimpleNamespace(cog=cog, key='10', session=session)
+                    inter = types.SimpleNamespace(user=user,
+                        response=types.SimpleNamespace(defer=AsyncMock()),
+                        followup=types.SimpleNamespace(send=AsyncMock()))
+                    await scope['set_count'](view, inter, count)
+                    self.assertEqual(cog.render.await_count, int(allowed))
+                    self.assertEqual(session['missing'], count if allowed else 9)
+                    self.assertEqual(session['game'], 'FC')
 
 if __name__ == '__main__':
     unittest.main()
