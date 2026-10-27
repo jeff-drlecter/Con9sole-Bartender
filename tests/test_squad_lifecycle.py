@@ -142,7 +142,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        started=1000, ended=2000)
         await scope['render'](cog, channel, session)
         sent = destination.send.call_args.kwargs
-        self.assertEqual(sent['embed'].title, '🎮 有人開咗 call，一齊玩？')
+        self.assertEqual(sent['embed'].title, '🙌 歡迎加入，一齊玩！')
         self.assertIn('<@1>', sent['content'])
         self.assertNotIn('<@2>', sent['content'])
         self.assertEqual([u.id for u in sent['allowed_mentions'].users], [1])
@@ -154,7 +154,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embeds[-1].title, '🙌 缺 2 人，一齊玩！')
         session['missing'] = 0
         await scope['render'](cog, channel, session)
-        self.assertEqual(embeds[-1].title, '✅ 今團齊人啦')
+        self.assertEqual(embeds[-1].title, '🙌 歡迎加入，一齊玩！')
         await scope['render'](cog, channel, session, ended=True)
         self.assertEqual(embeds[-1].title, '👣 開團足跡')
         self.assertIsNone(message.edit.call_args.kwargs['view'])
