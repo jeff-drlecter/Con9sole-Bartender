@@ -146,5 +146,40 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await scope['render'](cog, channel, session, ended=True)
         self.assertIsNone(message.edit.call_args.kwargs['content'])
 
+
+    async def test_edit_permissions_checked_on_button_and_submission(self):
+        from unittest.mock import AsyncMock
+        parsed = ast.parse(source.read_text())
+        edit = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'CardView'
+                    for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'edit')
+        submit = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'Details'
+                      for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'on_submit')
+        scope = dict(humans=namespace['humans'],
+                     is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'),
+                     Details=lambda *args: object())
+        exec(compile(ast.Module(body=[edit, submit], type_ignores=[]), str(source), 'exec'), scope)
+        for kind, in_call, active, allowed in [
+                ('admin', False, True, True), ('helper', False, True, True),
+                ('player', True, True, True), ('player', False, True, False),
+                ('admin', False, False, False), ('helper', False, False, False)]:
+            with self.subTest(kind=kind, active=active, in_call=in_call):
+                user = types.SimpleNamespace(kind=kind, bot=False)
+                session = {}
+                channel = types.SimpleNamespace(members=[user] if in_call else [])
+                cog = types.SimpleNamespace(
+                    state={'sessions': {'10': session} if active else {}},
+                    bot=types.SimpleNamespace(get_channel=lambda _: channel),
+                    lock=asyncio.Lock(), save=lambda: None, render=AsyncMock())
+                view = types.SimpleNamespace(cog=cog, key='10', session=session,
+                    game=types.SimpleNamespace(value='Game'), missing=types.SimpleNamespace(value='2'))
+                inter = types.SimpleNamespace(user=user,
+                    response=types.SimpleNamespace(send_modal=AsyncMock(), send_message=AsyncMock(),
+                                                   defer=AsyncMock()),
+                    followup=types.SimpleNamespace(send=AsyncMock()))
+                await scope['edit'](view, inter)
+                self.assertEqual(inter.response.send_modal.await_count, int(allowed))
+                await scope['on_submit'](view, inter)
+                self.assertEqual(cog.render.await_count, int(allowed))
+
 if __name__ == '__main__':
     unittest.main()
