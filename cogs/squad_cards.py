@@ -52,6 +52,46 @@ class Details(discord.ui.Modal, title="組隊狀態"):
         await interaction.followup.send("已更新組隊狀態。", ephemeral=True)
 
 
+class RecruitmentChoices(discord.ui.View):
+    def __init__(self, cog, key, session):
+        super().__init__(timeout=180)
+        self.cog, self.key, self.session = cog, key, session
+        for count in (1, 2, 3, None):
+            button = discord.ui.Button(
+                label=f"缺 {count} 人" if count else "不限人數",
+                style=discord.ButtonStyle.primary)
+            async def choose(interaction, value=count):
+                await self.set_count(interaction, value)
+            button.callback = choose
+            self.add_item(button)
+        button = discord.ui.Button(label="其他數量／遊戲", style=discord.ButtonStyle.secondary)
+        button.callback = self.details
+        self.add_item(button)
+
+    async def set_count(self, interaction, value):
+        await interaction.response.defer(ephemeral=True)
+        async with self.cog.lock:
+            session = self.cog.state["sessions"].get(self.key)
+            channel = self.cog.bot.get_channel(int(self.key))
+            if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+                await interaction.followup.send("呢場已結束，或者你冇修改權限。", ephemeral=True)
+                return
+            session["missing"] = value
+            self.cog.save()
+            await self.cog.render(channel, session)
+        await interaction.followup.send(
+            f"已更新：缺 {value} 人。" if value else "已更新：不限人數，歡迎加入！",
+            ephemeral=True)
+
+    async def details(self, interaction):
+        session = self.cog.state["sessions"].get(self.key)
+        channel = self.cog.bot.get_channel(int(self.key))
+        if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+            await interaction.response.send_message("呢場已結束，或者你冇修改權限。", ephemeral=True)
+            return
+        await interaction.response.send_modal(Details(self.cog, self.key, session))
+
+
 class CardView(discord.ui.View):
     def __init__(self, cog, key, session):
         super().__init__(timeout=None)
@@ -71,7 +111,9 @@ class CardView(discord.ui.View):
         if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
             await interaction.response.send_message("只限呢個 call 嘅在場成員、Admin 或 Helper 修改。", ephemeral=True)
             return
-        await interaction.response.send_modal(Details(self.cog, self.key, session))
+        await interaction.response.send_message(
+            "仲缺幾人？撳一下更新；遊戲名稱可以唔填。",
+            view=RecruitmentChoices(self.cog, self.key, session), ephemeral=True)
 
 
 class SquadCards(commands.Cog):
