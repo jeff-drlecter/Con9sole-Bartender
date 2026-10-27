@@ -105,5 +105,45 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await scope['squad_setup'](cog, inter, types.SimpleNamespace(id=21, name='2K'), destination)
         self.assertEqual(cog.state['settings']['routes'], {'20': 30, '21': 32})
 
+
+    async def test_first_player_ping_only_on_initial_send(self):
+        from unittest.mock import AsyncMock
+        render_method = next(n for c in ast.parse(source.read_text()).body
+                             if isinstance(c, ast.ClassDef) and c.name == 'SquadCards'
+                             for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'render')
+        class Mentions:
+            def __init__(self, **kwargs):
+                self.users = kwargs.get('users', [])
+            @classmethod
+            def none(cls):
+                return cls()
+        fake_discord = types.SimpleNamespace(
+            utils=types.SimpleNamespace(escape_markdown=lambda s: s),
+            Embed=lambda **kw: types.SimpleNamespace(add_field=lambda **kw: None),
+            AllowedMentions=Mentions, Object=lambda **kw: types.SimpleNamespace(**kw),
+            NotFound=type('NotFound', (Exception,), {}))
+        scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None)
+        exec(compile(ast.Module(body=[render_method], type_ignores=[]), str(source), 'exec'), scope)
+        message = types.SimpleNamespace(id=99, content='<@1> prompt', edit=AsyncMock())
+        destination = types.SimpleNamespace(send=AsyncMock(return_value=message),
+                                             fetch_message=AsyncMock(return_value=message))
+        cog = types.SimpleNamespace(bot=types.SimpleNamespace(get_channel=lambda _: destination),
+                                    save=lambda: None)
+        channel = types.SimpleNamespace(id=10, members=[
+            types.SimpleNamespace(id=1, display_name='A', bot=False),
+            types.SimpleNamespace(id=2, display_name='B', bot=False)])
+        session = dict(destination=30, first_member=1, participants={'1': 'A', '2': 'B'},
+                       started=1000, ended=2000)
+        await scope['render'](cog, channel, session)
+        sent = destination.send.call_args.kwargs
+        self.assertIn('<@1>', sent['content'])
+        self.assertNotIn('<@2>', sent['content'])
+        self.assertEqual([u.id for u in sent['allowed_mentions'].users], [1])
+        await scope['render'](cog, channel, session)
+        self.assertEqual(destination.send.await_count, 1)
+        self.assertEqual(message.edit.call_args.kwargs['allowed_mentions'].users, [])
+        await scope['render'](cog, channel, session, ended=True)
+        self.assertIsNone(message.edit.call_args.kwargs['content'])
+
 if __name__ == '__main__':
     unittest.main()
