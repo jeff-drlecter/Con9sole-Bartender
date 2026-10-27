@@ -24,14 +24,101 @@ def humans(channel):
     return [m for m in channel.members if not m.bot]
 
 
+# Shared labels are kept separate from version-specific options.
+GAME_LABELS = {"fc": "EA SPORTS FC", "2k": "NBA 2K", "2k27": "NBA 2K27"}
+MODE_PRESETS = {
+    "fc": ("Clubs 球會", "Clubs Rush", "UT Rush", "合作賽季", "友誼賽"),
+    "2k": ("REC", "Park", "The Theatre", "MyTEAM 合作"),
+    "2k27": ("REC", "Park", "The Theatre", "Crew HQ", "MyTEAM 合作", "Street Kings 打電腦"),
+}
+
+
+def game_profile(channel, session):
+    if session.get("profile") == "other":
+        return ""
+    if session.get("profile") in GAME_LABELS:
+        return session["profile"]
+    name = str(getattr(getattr(channel, "category", None), "name", "")).casefold()
+    if "2k" in name:
+        return "2k"
+    if "fc" in name:
+        return "fc"
+    return ""
+
+
+class ModePicker(discord.ui.Select):
+    def __init__(self, cog, key, session, profile):
+        self.cog, self.key, self.session, self.profile = cog, key, session, profile
+        options = [discord.SelectOption(label="未定／唔填", value="__none__")]
+        options += [discord.SelectOption(label=mode, value=mode,
+                                        default=mode == session.get("mode"))
+                    for mode in MODE_PRESETS.get(profile, ())]
+        options.append(discord.SelectOption(label="自訂模式", value="__custom__"))
+        super().__init__(placeholder="玩咩模式？（選填）", options=options, row=1)
+
+    async def callback(self, interaction):
+        async with self.cog.lock:
+            session = self.cog.state["sessions"].get(self.key)
+            channel = self.cog.bot.get_channel(int(self.key))
+            if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+                await interaction.response.send_message("呢場已結束，或者你冇修改權限。", ephemeral=True)
+                return
+            value = self.values[0]
+            if value == "__custom__":
+                await interaction.response.send_modal(Details(self.cog, self.key, session))
+                return
+            if self.profile != game_profile(channel, session):
+                await interaction.response.send_message("遊戲設定已改，請重新開啟招募設定。", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True)
+            session["mode"] = "" if value == "__none__" else value
+            if self.profile:
+                session["profile"] = self.profile
+            self.cog.save()
+            await self.cog.render(channel, session)
+        await interaction.followup.send("已更新遊戲模式。", ephemeral=True)
+
+
+class GamePicker(discord.ui.Select):
+    def __init__(self, cog, key, session, profile):
+        self.cog, self.key, self.session = cog, key, session
+        options = [discord.SelectOption(label=label, value=value, default=profile == value)
+                   for value, label in GAME_LABELS.items()]
+        options.append(discord.SelectOption(label="其他遊戲／自訂", value="other"))
+        super().__init__(placeholder="遊戲／版本（選填）", options=options, row=0)
+
+    async def callback(self, interaction):
+        await interaction.response.defer(ephemeral=True)
+        async with self.cog.lock:
+            session = self.cog.state["sessions"].get(self.key)
+            channel = self.cog.bot.get_channel(int(self.key))
+            if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+                await interaction.followup.send("呢場已結束，或者你冇修改權限。", ephemeral=True)
+                return
+            profile = self.values[0]
+            if profile == "other":
+                session["profile"] = "other"
+                session["mode"] = ""
+                session["game"] = ""
+            else:
+                session.update(profile=profile, game=GAME_LABELS[profile], mode="")
+            self.cog.save()
+            await self.cog.render(channel, session)
+        await interaction.edit_original_response(
+            content="遊戲已更新，模式同人數都可以唔填。",
+            view=RecruitmentChoices(self.cog, self.key, session))
+
+
 class Details(discord.ui.Modal, title="組隊狀態"):
     game = discord.ui.TextInput(label="玩緊乜？（選填）", max_length=100, required=False)
+    mode = discord.ui.TextInput(label="模式（選填／自訂）", max_length=100, required=False)
     missing = discord.ui.TextInput(label="仲缺幾人？（留空＝不限人數）", max_length=2, required=False)
 
     def __init__(self, cog, key, session):
         super().__init__()
         self.cog, self.key, self.session = cog, key, session
         self.game.default = session.get("game", "")
+        self.mode.default = session.get("mode", "")
         self.missing.default = "" if not session.get("missing") else str(session["missing"])
 
     async def on_submit(self, interaction):
@@ -46,7 +133,8 @@ class Details(discord.ui.Modal, title="組隊狀態"):
             if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
                 await interaction.followup.send("呢場已結束，或者你冇修改權限（需為在場成員、Admin 或 Helper）。", ephemeral=True)
                 return
-            session.update(game=str(self.game.value).strip(), missing=int(value) if value else None)
+            session.update(game=str(self.game.value).strip(), mode=str(self.mode.value).strip(),
+                           missing=int(value) if value else None)
             self.cog.save()
             await self.cog.render(channel, session)
         await interaction.followup.send("已更新組隊狀態。", ephemeral=True)
@@ -56,15 +144,18 @@ class RecruitmentChoices(discord.ui.View):
     def __init__(self, cog, key, session):
         super().__init__(timeout=180)
         self.cog, self.key, self.session = cog, key, session
+        profile = game_profile(cog.bot.get_channel(int(key)), session)
+        self.add_item(GamePicker(cog, key, session, profile))
+        self.add_item(ModePicker(cog, key, session, profile))
         for count in (1, 2, 3, None):
             button = discord.ui.Button(
                 label=f"缺 {count} 人" if count else "不限人數",
-                style=discord.ButtonStyle.primary)
+                style=discord.ButtonStyle.primary, row=2)
             async def choose(interaction, value=count):
                 await self.set_count(interaction, value)
             button.callback = choose
             self.add_item(button)
-        button = discord.ui.Button(label="其他數量／遊戲", style=discord.ButtonStyle.secondary)
+        button = discord.ui.Button(label="其他數量／自訂", style=discord.ButtonStyle.secondary, row=2)
         button.callback = self.details
         self.add_item(button)
 
@@ -97,10 +188,10 @@ class CardView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog, self.key, self.session = cog, key, session
         self.add_item(discord.ui.Button(
-            label="一齊玩 · 入 call",
+            label="🎮 即刻入隊",
             style=discord.ButtonStyle.link,
             url=f"https://discord.com/channels/{config.GUILD_ID}/{key}"))
-        button = discord.ui.Button(label="更新招募", style=discord.ButtonStyle.secondary,
+        button = discord.ui.Button(label="⚙️ 招募設定", style=discord.ButtonStyle.secondary,
                                    custom_id=f"squad:{session['id']}")
         button.callback = self.edit
         self.add_item(button)
@@ -112,7 +203,7 @@ class CardView(discord.ui.View):
             await interaction.response.send_message("只限呢個 call 嘅在場成員、Admin 或 Helper 修改。", ephemeral=True)
             return
         await interaction.response.send_message(
-            "仲缺幾人？撳一下更新；遊戲名稱可以唔填。",
+            "揀遊戲模式或快捷人數；全部選填，唔填都歡迎加入。",
             view=RecruitmentChoices(self.cog, self.key, session), ephemeral=True)
 
 
@@ -142,21 +233,29 @@ class SquadCards(commands.Cog):
         members = humans(channel) if channel else []
         names = session["participants"] if ended else {str(m.id): m.display_name for m in members}
         roster = "、".join(discord.utils.escape_markdown(n) for n in names.values()) or "—"
-        game = discord.utils.escape_markdown(session.get("game", ""))
+        profile = game_profile(channel, session)
+        game = discord.utils.escape_markdown(session.get("game") or GAME_LABELS.get(profile, ""))
+        mode = discord.utils.escape_markdown(session.get("mode", ""))
         missing = session.get("missing")
         if ended:
-            title, description, colour = "👣 開團足跡", "今次散 band，下次再一齊玩！", 0x808080
+            title, description, colour = "🏁 今晚收工，下次再戰！", "👣 今次留個足跡，下次預埋你。", 0x808080
         elif missing is not None and missing > 0:
             title, description, colour = f"🙌 缺 {missing} 人，一齊玩！", "想加入？撳下面按鈕開啟語音頻道。", 0x57F287
         else:
-            title, description, colour = "🙌 歡迎加入，一齊玩！", "不限人數，想玩就入 call，唔使等人邀請。", 0x5865F2
+            title, description, colour = "🟢 開緊團 · 歡迎加入", "有位，一齊玩！", 0x57F287
         embed = discord.Embed(title=title, description=description, colour=colour)
         if game:
             embed.add_field(name="🎮 玩緊", value=game, inline=False)
+        if mode:
+            embed.add_field(name="🏟️ 模式", value=mode, inline=False)
         embed.add_field(name="一齊玩過" if ended else f"👥 而家有 {len(members)} 人",
                         value=roster[:1024], inline=False)
         if ended:
-            embed.add_field(name="時間", value=f"<t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t>")
+            minutes = max(0, int((session["ended"] - session["started"]) // 60))
+            hours, remaining = divmod(minutes, 60)
+            duration = f"{hours} 小時 {remaining} 分鐘" if hours else f"{remaining} 分鐘"
+            embed.add_field(name=f"⏱️ 一齊玩咗 {duration}",
+                            value=f"<t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t>")
         else:
             embed.add_field(name="📍 入呢個 call", value=f"<#{channel.id}>", inline=False)
         view = None if ended else CardView(self, str(channel.id), session)
@@ -172,7 +271,7 @@ class SquadCards(commands.Cog):
         # Notify only on the original card, never on edits or replacement cards.
         first_id = session.get("first_member")
         if not ended and not session.get("message") and first_id in {m.id for m in members}:
-            kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？可撳「更新招募」，遊戲同缺幾人都可以留空。"
+            kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？可撳「招募設定」，遊戲同缺幾人都可以留空。"
             kwargs["allowed_mentions"] = discord.AllowedMentions(
                 users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
         message = await destination.send(**kwargs)
