@@ -56,7 +56,11 @@ class CardView(discord.ui.View):
     def __init__(self, cog, key, session):
         super().__init__(timeout=None)
         self.cog, self.key, self.session = cog, key, session
-        button = discord.ui.Button(label="填寫／更新招募", style=discord.ButtonStyle.primary,
+        self.add_item(discord.ui.Button(
+            label="入 call 吹水" if session.get("missing") == 0 else "一齊玩 · 入 call",
+            style=discord.ButtonStyle.link,
+            url=f"https://discord.com/channels/{config.GUILD_ID}/{key}"))
+        button = discord.ui.Button(label="更新招募", style=discord.ButtonStyle.secondary,
                                    custom_id=f"squad:{session['id']}")
         button.callback = self.edit
         self.add_item(button)
@@ -97,18 +101,24 @@ class SquadCards(commands.Cog):
         names = session["participants"] if ended else {str(m.id): m.display_name for m in members}
         roster = "、".join(discord.utils.escape_markdown(n) for n in names.values()) or "—"
         game = discord.utils.escape_markdown(session.get("game", ""))
-        title = "👣 開團足跡" if ended else ("🎮 在 call 玩緊" if session.get("game") else "👋 要唔要隊友？")
-        embed = discord.Embed(title=title, colour=0x808080 if ended else 0x57F287)
+        missing = session.get("missing")
+        if ended:
+            title, description, colour = "👣 開團足跡", "今次散 band，下次再一齊玩！", 0x808080
+        elif missing == 0:
+            title, description, colour = "✅ 今團齊人啦", "隊伍暫時齊人，可以入 call 吹水。", 0xFEE75C
+        elif missing is not None:
+            title, description, colour = f"🙌 缺 {missing} 人，一齊玩！", "想加入？撳下面按鈕開啟語音頻道。", 0x57F287
+        else:
+            title, description, colour = "🎮 有人開咗 call，一齊玩？", "想一齊玩？入 call 問吓，唔使等人邀請。", 0x5865F2
+        embed = discord.Embed(title=title, description=description, colour=colour)
         if game:
-            embed.add_field(name="玩緊", value=game, inline=False)
-        embed.add_field(name="一齊玩過" if ended else f"在 call · {len(members)} 人", value=roster[:1024], inline=False)
+            embed.add_field(name="🎮 玩緊", value=game, inline=False)
+        embed.add_field(name="一齊玩過" if ended else f"👥 而家有 {len(members)} 人",
+                        value=roster[:1024], inline=False)
         if ended:
             embed.add_field(name="時間", value=f"<t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t>")
         else:
-            missing = session.get("missing")
-            if missing is not None:
-                embed.add_field(name="招募", value=f"缺 {missing} 人" if missing else "齊人啦")
-            embed.add_field(name="語音頻道", value=f"<#{channel.id}>")
+            embed.add_field(name="📍 入呢個 call", value=f"<#{channel.id}>", inline=False)
         view = None if ended else CardView(self, str(channel.id), session)
         kwargs = dict(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         if session.get("message"):
@@ -122,7 +132,7 @@ class SquadCards(commands.Cog):
         # Notify only on the original card, never on edits or replacement cards.
         first_id = session.get("first_member")
         if not ended and not session.get("message") and first_id in {m.id for m in members}:
-            kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？"
+            kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？可撳「更新招募」，遊戲同缺幾人都可以留空。"
             kwargs["allowed_mentions"] = discord.AllowedMentions(
                 users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
         message = await destination.send(**kwargs)
@@ -193,6 +203,8 @@ class SquadCards(commands.Cog):
         for session in self.state["sessions"].values():
             if not session.get("message"):
                 session["qualified"] = None
+            else:
+                session.pop("roster", None)  # Refresh existing cards after a deployment.
         self.save()
 
     @commands.Cog.listener()
