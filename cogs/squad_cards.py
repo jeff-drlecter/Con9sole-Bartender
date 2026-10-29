@@ -254,7 +254,7 @@ class SquadCards(commands.Cog):
             minutes = max(0, int((session["ended"] - session["started"]) // 60))
             hours, remaining = divmod(minutes, 60)
             duration = f"{hours} 小時 {remaining} 分鐘" if hours else f"{remaining} 分鐘"
-            embed.add_field(name=f"⏱️ 一齊玩咗 {duration}",
+            embed.add_field(name=f"⏱️ 開團時長 · {duration}",
                             value=f"<t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t>")
         else:
             embed.add_field(name="📍 入呢個 call", value=f"<#{channel.id}>", inline=False)
