@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import asdict, dataclass, field
 
@@ -13,7 +14,7 @@ from core.discord_interactions import require_public_send
 from core.safe_send import send_or_followup
 from core.ui import SafeModal, SafeView
 from features import team_storage
-from features.menu_stats import record_usage_sync
+from features.menu_stats import record_usage
 
 log = logging.getLogger("con9sole-bartender.teams")
 STATE_TTL_SECONDS = 6 * 60 * 60
@@ -60,6 +61,20 @@ class TeamState:
     @classmethod
     def restore(cls, payload: dict) -> TeamState:
         result = cls(**payload)
+        for value in (result.leader_id, result.channel_id, result.guild_id, result.message_id):
+            if type(value) is not int or value <= 0:
+                raise ValueError("Invalid team identity")
+        if type(result.required) is not int or not 1 <= result.required <= 16:
+            raise ValueError("Invalid team size")
+        if not isinstance(result.mode, str) or not result.mode.strip() or len(result.mode) > 100:
+            raise ValueError("Invalid team mode")
+        if type(result.created_at) not in (int, float) or not math.isfinite(result.created_at):
+            raise ValueError("Invalid creation time")
+        if type(result.cancelled) is not bool:
+            raise ValueError("Invalid cancellation flag")
+        for members in (result.join_now, result.join_later):
+            if not isinstance(members, list) or any(type(uid) is not int or uid <= 0 for uid in members):
+                raise ValueError("Invalid team members")
         result.join_now = set(result.join_now)
         result.join_later = set(result.join_later)
         return result
@@ -80,11 +95,12 @@ class Teams(commands.Cog):
                 state = TeamState.restore(payload)
                 if state.message_id != message_id:
                     raise ValueError("Team message ID mismatch")
-                self.states[message_id] = state
                 view = TeamView(self, state)
+                self.states[message_id] = state
                 self.views[message_id] = view
                 self.bot.add_view(view, message_id=message_id)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, KeyError):
+                team_storage.quarantine_team(message_id, "Invalid team state")
                 log.exception("Cannot restore team card: message=%s", message_id)
         self._sweeper_task = asyncio.create_task(self._sweeper_loop())
 
@@ -212,7 +228,7 @@ class Teams(commands.Cog):
                 return False
             self.states[message.id] = state
             self.views[message.id] = view
-            record_usage_sync("team", interaction.user.id, interaction.guild_id)
+            await record_usage("team", interaction.user.id, interaction.guild_id)
             return True
 
     def build_message(self, state: TeamState) -> str:

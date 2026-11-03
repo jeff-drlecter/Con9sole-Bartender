@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from threading import RLock
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -80,7 +84,29 @@ FEATURE_EMOJIS: dict[str, str] = {
 }
 
 
+_STATS_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bot-stats")
+_SCHEMA_LOCK = RLock()
+_INITIALIZED_PATHS = set()
+
+
+async def run_stats(function, *args, **kwargs):
+    return await asyncio.get_running_loop().run_in_executor(_STATS_WORKER, partial(function, *args, **kwargs))
+
+
+async def record_usage(feature, user_id=None, guild_id=None):
+    await run_stats(record_usage_sync, feature, user_id, guild_id)
+
+
 def init_stats_db() -> None:
+    with _SCHEMA_LOCK:
+        key = str(STATS_DB)
+        if key in _INITIALIZED_PATHS and STATS_DB.exists():
+            return
+        _create_stats_schema()
+        _INITIALIZED_PATHS.add(key)
+
+
+def _create_stats_schema() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with connect_sqlite(STATS_DB) as conn:
         enable_wal(conn)

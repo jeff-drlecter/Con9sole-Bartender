@@ -4,7 +4,7 @@ import discord
 
 from core.safe_send import send_or_followup
 from features.menu_helpers import MENU_COLOR, can_use_admin
-from features.menu_stats import record_usage_sync
+from features.menu_stats import record_usage
 from features.role_tools import RoleActionState, get_member_from_state, get_role_from_state
 
 
@@ -46,7 +46,7 @@ async def execute_role_change_from_select(interaction: discord.Interaction, *, s
             return
 
     feature = "admin_role_grant" if state.mode == "add" else "admin_role_revoke"
-    record_usage_sync(feature, interaction.user.id, interaction.guild_id)
+    await record_usage(feature, interaction.user.id, interaction.guild_id)
 
     try:
         await role_cog._apply_role_change(  # type: ignore[attr-defined]
@@ -88,7 +88,7 @@ async def execute_role_list_for_member(
 
     roles = [role for role in member.roles if not role.is_default()]
     roles.sort(key=lambda role: role.position, reverse=True)
-    record_usage_sync("admin_role_list", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_role_list", interaction.user.id, interaction.guild_id)
 
     if not roles:
         content = f"ℹ️ {member.mention} 沒有任何自訂角色。"

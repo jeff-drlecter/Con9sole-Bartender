@@ -106,7 +106,7 @@ class TempVCFlowTests(unittest.IsolatedAsyncioTestCase):
         self.cog._create_manual_temp_vc = AsyncMock(return_value=room)
         with (
             patch("cogs.tempvc.user_can_run_tempvc", return_value=True),
-            patch("cogs.tempvc.record_usage_sync"),
+            patch("cogs.tempvc.record_usage"),
         ):
             await self.cog.menu_entry(i)
         self.cog._create_manual_temp_vc.assert_awaited_once()
@@ -149,7 +149,7 @@ class TempVCFlowTests(unittest.IsolatedAsyncioTestCase):
         self.cog._create_manual_temp_vc = AsyncMock(side_effect=create)
         with (
             patch("cogs.tempvc.user_can_run_tempvc", return_value=True),
-            patch("cogs.tempvc.record_usage_sync"),
+            patch("cogs.tempvc.record_usage"),
         ):
             task = asyncio.create_task(self.cog._create_default_room(i))
             await entered.wait()

@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.action_guard import claim_action
 
 
 CONFESSION_COLOR = 0x2B2D31
@@ -84,6 +85,13 @@ class Confession(commands.Cog):
             )
             return
 
+        with claim_action("confession", interaction.user.id) as claimed:
+            if not claimed:
+                await interaction.response.send_message("投稿處理中，請稍候。", ephemeral=True)
+                return
+            await self._submit_claimed(interaction, content)
+
+    async def _submit_claimed(self, interaction, content):
         retry_after = get_retry_after(interaction.user.id)
         if retry_after > 0:
             await interaction.response.send_message(
@@ -107,11 +115,16 @@ class Confession(commands.Cog):
         )
         embed.set_footer(text="Nameless Confession • 匿名投稿")
 
-        await target.send(embed=embed)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await target.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            await interaction.followup.send("未能確認投稿結果，請先查看頻道，避免重複投稿。", ephemeral=True)
+            return
 
         touch_cooldown(interaction.user.id)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "✅ 你嘅無名告白已送出。",
             ephemeral=True,
         )

@@ -4,7 +4,7 @@ import discord
 
 import config
 from core.safe_send import send_or_followup
-from features.menu_stats import record_usage_sync
+from features.menu_stats import record_usage
 
 INSTAGRAM_URL = getattr(config, "SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/con9sole/")
 THREADS_URL = getattr(config, "SOCIAL_THREADS_URL", "https://threads.net/con9sole")
@@ -75,7 +75,7 @@ async def open_social_link_prompt(
     url: str,
     feature_key: str,
 ) -> None:
-    record_usage_sync(feature_key, interaction.user.id, interaction.guild_id)
+    await record_usage(feature_key, interaction.user.id, interaction.guild_id)
     await send_or_followup(
         interaction,
         embed=build_social_confirm_embed(interaction.user, platform_label=platform_label),

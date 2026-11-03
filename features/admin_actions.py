@@ -6,7 +6,7 @@ import discord
 
 from core.safe_send import send_or_followup
 from features.menu_helpers import MENU_COLOR, can_use_admin
-from features.menu_stats import build_admin_stats_embed, record_usage_sync
+from features.menu_stats import build_admin_stats_embed, record_usage, run_stats
 from features.menu_views import AdminToolView
 from features.role_tools import RoleToolsView, build_role_tools_embed
 
@@ -22,8 +22,8 @@ async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True
 
 async def admin_stats_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
     await safe_defer(interaction, ephemeral=True)
-    record_usage_sync("admin_stats", interaction.user.id, interaction.guild_id)
-    embed = build_admin_stats_embed(guild_id=interaction.guild_id, days=7, title_scope="本週")
+    await record_usage("admin_stats", interaction.user.id, interaction.guild_id)
+    embed = await run_stats(build_admin_stats_embed,guild_id=interaction.guild_id, days=7, title_scope="本週")
     await send_or_followup(interaction, embed=embed, view=AdminToolView(menu_cog), ephemeral=True)
 
 
@@ -36,7 +36,8 @@ async def admin_stats_command(interaction: discord.Interaction, *, scope_value: 
         )
         return
 
-    record_usage_sync("admin_stats", interaction.user.id, interaction.guild_id)
+    await safe_defer(interaction, ephemeral=True)
+    await record_usage("admin_stats", interaction.user.id, interaction.guild_id)
 
     if scope_value == "today":
         days: int | None = 1
@@ -48,13 +49,13 @@ async def admin_stats_command(interaction: discord.Interaction, *, scope_value: 
         days = None
         title_scope = "全部"
 
-    embed = build_admin_stats_embed(guild_id=interaction.guild_id, days=days, title_scope=title_scope)
+    embed = await run_stats(build_admin_stats_embed,guild_id=interaction.guild_id, days=days, title_scope=title_scope)
     await send_or_followup(interaction, embed=embed, ephemeral=False)
 
 
 async def admin_reload_from_button(interaction: discord.Interaction) -> None:
     await safe_defer(interaction, ephemeral=True)
-    record_usage_sync("admin_reload", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_reload", interaction.user.id, interaction.guild_id)
 
     reload_cog = interaction.client.get_cog("Reload")
     if reload_cog is None or not hasattr(reload_cog, "_reload_many"):
@@ -92,7 +93,7 @@ async def admin_reload_from_button(interaction: discord.Interaction) -> None:
 
 
 async def admin_role_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
-    record_usage_sync("admin_role", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_role", interaction.user.id, interaction.guild_id)
     await send_or_followup(
         interaction,
         embed=build_role_tools_embed(interaction.user),
@@ -110,7 +111,7 @@ async def admin_game_tools_from_button(menu_cog: object, interaction: discord.In
         )
         return
 
-    record_usage_sync("admin_game_tools", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_game_tools", interaction.user.id, interaction.guild_id)
     embed = discord.Embed(
         title="🎮 Game Tools",
         description=(
@@ -156,13 +157,13 @@ async def admin_update_publisher_from_button(interaction: discord.Interaction) -
 
 async def admin_ping_from_button(interaction: discord.Interaction) -> None:
     await safe_defer(interaction, ephemeral=True)
-    record_usage_sync("admin_ping", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_ping", interaction.user.id, interaction.guild_id)
     latency_ms = round(interaction.client.latency * 1000)
     await send_or_followup(interaction, content=f"🏓 Pong! `{latency_ms} ms`", ephemeral=True)
 
 
 async def admin_vc_teardown_from_button(interaction: discord.Interaction) -> None:
-    record_usage_sync("admin_vc_teardown", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_vc_teardown", interaction.user.id, interaction.guild_id)
     tempvc_cog = interaction.client.get_cog("TempVC")
     if tempvc_cog and hasattr(tempvc_cog, "teardown_temp_vc_from_menu"):
         try:

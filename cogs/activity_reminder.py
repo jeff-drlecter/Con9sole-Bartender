@@ -9,7 +9,9 @@ import asyncio
 import logging
 import os
 import re
-from dataclasses import dataclass, asdict
+import uuid
+import shutil
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple
 
@@ -41,6 +43,7 @@ def user_is_admin_or_helper(inter: discord.Interaction) -> bool:
 class Schedule:
     weekdays: List[int]
     time_hhmm: str
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
 @dataclass
@@ -180,6 +183,10 @@ class ActivityReminder(commands.Cog):
             lambda: {"activities": [], "sent_cache": {}},
         )
 
+        migrating = any(not schedule.get("id") for activity in raw.get("activities", [])
+                        for schedule in activity.get("schedules", []))
+        if migrating:
+            shutil.copy2(self.data_file, self.data_file + ".pre-schedule-ids." + uuid.uuid4().hex)
         self.activities = {}
         for a in raw.get("activities", []):
             try:
@@ -196,6 +203,18 @@ class ActivityReminder(commands.Cog):
                 continue
 
         self.sent_cache = raw.get("sent_cache", {}) or {}
+        if migrating:
+            migrated = {}
+            for key, value in self.sent_cache.items():
+                parts = key.split("|")
+                if len(parts) == 4 and parts[1].isdigit():
+                    act = self.activities.get(parts[0])
+                    idx = int(parts[1])
+                    if act and idx < len(act.schedules):
+                        schedule = act.schedules[idx]
+                        key = f"{act.id}|{schedule.id}|{parts[2]}|{parts[3]}:{schedule.time_hhmm}"
+                migrated[key] = value
+            self.sent_cache = migrated
         self._prune_cache(days=3)
         self._save()
 
@@ -247,8 +266,10 @@ class ActivityReminder(commands.Cog):
             return
 
         now = _minute_floor(_now())
-        t_start = now
-        t_pre = now + timedelta(minutes=REMIND_BEFORE_MINUTES)
+        previous = getattr(self, "_last_tick", None)
+        if previous and now - previous > timedelta(minutes=3):
+            log.warning("Reminder gap beyond retry window: previous=%s current=%s", previous, now)
+        self._last_tick = now
 
         if now.minute == 0 and now.hour == 0:
             self._prune_cache(days=3)
@@ -268,10 +289,11 @@ class ActivityReminder(commands.Cog):
                 continue
 
             for idx, sch in enumerate(act.schedules):
-                if self._matches_datetime(sch, t_start):
-                    await self._send_if_needed(guild, channel, role, act, idx, t_start, kind="start")
-                if self._matches_datetime(sch, t_pre):
-                    await self._send_if_needed(guild, channel, role, act, idx, t_pre, kind="pre")
+                for lag in range(3):
+                    scheduled = now - timedelta(minutes=lag)
+                    for kind, event_dt in (("start", scheduled), ("pre", scheduled + timedelta(minutes=REMIND_BEFORE_MINUTES))):
+                        if self._matches_datetime(sch, event_dt):
+                            await self._send_if_needed(guild, channel, role, act, idx, event_dt, kind=kind)
 
     @_tick.before_loop
     async def _before_tick(self):
@@ -293,7 +315,8 @@ class ActivityReminder(commands.Cog):
         event_dt: datetime,
         kind: str,
     ):
-        k = f"{act.id}|{schedule_idx}|{event_dt.date().isoformat()}|{kind}"
+        schedule = act.schedules[schedule_idx]
+        k = f"{act.id}|{schedule.id}|{event_dt.date().isoformat()}|{kind}:{event_dt.strftime('%H:%M')}"
         if k in self.sent_cache:
             return
 
@@ -316,6 +339,7 @@ class ActivityReminder(commands.Cog):
             self.sent_cache[k] = _now().isoformat()
             self._save()
         except Exception:
+            log.exception("Reminder send/persist failed: activity=%s schedule=%s kind=%s", act.id, schedule.id, kind)
             return
 
     async def activity_autocomplete(self, inter: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
