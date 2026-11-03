@@ -156,7 +156,7 @@ class TwitchRelay(commands.Cog):
                     return
 
                 try:
-                    await dch.send(content)
+                    await dch.send(content, allowed_mentions=discord.AllowedMentions.none())
                     log.info("✅ [T→D] -> %s(id=%s): %s", getattr(dch, 'name', 'unknown'), dch_id, content)
                 except Exception as e:
                     log.exception("❌ [T→D] send 失敗：%s", e)

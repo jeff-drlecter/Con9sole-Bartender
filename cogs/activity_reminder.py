@@ -519,16 +519,17 @@ class ActivityReminder(commands.Cog):
             lines.append("")
 
         text = "\n".join(lines).strip()
-        if len(text) > 3800:
+        if len(text) > 2000:
             chunks = []
-            buf = ""
-            for line in lines:
-                if len(buf) + len(line) + 1 > 3800:
-                    chunks.append(buf)
-                    buf = ""
-                buf += line + "\n"
-            if buf.strip():
-                chunks.append(buf)
+            remaining = text
+            while len(remaining) > 2000:
+                # Prefer a line boundary, but also handle a single long name.
+                split = remaining.rfind("\n", 0, 2000)
+                end = split + 1 if split >= 0 else 2000
+                chunks.append(remaining[:end])
+                remaining = remaining[end:]
+            if remaining:
+                chunks.append(remaining)
 
             await inter.response.send_message("📌 活動列表（分段顯示）：", ephemeral=True)
             for c in chunks:

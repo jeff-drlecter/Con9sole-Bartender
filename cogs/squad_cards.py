@@ -313,7 +313,6 @@ class SquadCards(commands.Cog):
             session["participants"].update({str(m.id): m.display_name for m in members})
             roster = sorted(m.id for m in members)
             changed = roster != session.get("roster")
-            session["roster"] = roster
             if not session.get("message"):
                 if len(members) < 1:
                     session["qualified"] = None
@@ -323,6 +322,9 @@ class SquadCards(commands.Cog):
                     await self.render(channel, session)
             elif changed:
                 await self.render(channel, session)
+            # Commit the roster only after rendering succeeds so a failed edit
+            # remains pending and is retried by the next reconciliation.
+            session["roster"] = roster
             if changed or before != session["participants"]:
                 self.save()
 
