@@ -19,7 +19,7 @@ class ReviewRegressions(unittest.IsolatedAsyncioTestCase):
             render=AsyncMock(side_effect=RuntimeError("temporary failure")),
             save=lambda: None,
         )
-        with self.assertRaises(RuntimeError):
+        with self.assertLogs("cogs.squad_cards", level="ERROR"):
             await SquadCards.reconcile(cog)
         self.assertEqual(session["roster"], [])
         cog.render.side_effect = None

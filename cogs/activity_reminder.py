@@ -11,6 +11,7 @@ import os
 import re
 import uuid
 import shutil
+import math
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple
@@ -272,8 +273,11 @@ class ActivityReminder(commands.Cog):
         self._last_tick = now
 
         if now.minute == 0 and now.hour == 0:
-            self._prune_cache(days=3)
-            self._save()
+            try:
+                self._prune_cache(days=3)
+                self._save()
+            except Exception:
+                log.exception("Reminder cache maintenance failed; continuing reminders")
 
         for act in list(self.activities.values()):
             guild = self.bot.get_guild(int(config.GUILD_ID))
@@ -324,9 +328,12 @@ class ActivityReminder(commands.Cog):
         weekday_txt = ["一", "二", "三", "四", "五", "六", "日"][event_dt.weekday()]
 
         if kind == "pre":
+            remaining = max(0, math.ceil((event_dt - _now()).total_seconds() / 60))
+            if remaining <= 0:
+                return
             content = (
                 f"{role.mention}\n"
-                f"提醒：**{act.name}** 將於 **{when}（週{weekday_txt}）** 開始，仲有 **{REMIND_BEFORE_MINUTES} 分鐘**。"
+                f"提醒：**{act.name}** 將於 **{when}（週{weekday_txt}）** 開始，仲有 **{remaining} 分鐘**。"
             )
         else:
             content = (
@@ -335,7 +342,8 @@ class ActivityReminder(commands.Cog):
             )
 
         try:
-            await channel.send(content)
+            await channel.send(content, allowed_mentions=discord.AllowedMentions(
+                roles=[discord.Object(id=role.id)], users=False, everyone=False, replied_user=False))
             self.sent_cache[k] = _now().isoformat()
             self._save()
         except Exception:

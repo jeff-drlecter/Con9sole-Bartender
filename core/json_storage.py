@@ -28,23 +28,24 @@ def load_json_object(
         return default_factory()
 
     try:
-        raw = source.read_text(encoding="utf-8")
+        raw = source.read_bytes()
     except OSError:
         log.exception("Failed to read JSON state: path=%s", source)
-        return default_factory()
+        raise
 
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
             raise ValueError("JSON state root must be an object")
         return parsed
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, UnicodeError):
         backup = _corrupt_backup_path(source)
         try:
             source.replace(backup)
             log.error("Rotated malformed JSON state: path=%s backup=%s", source, backup)
         except OSError:
             log.exception("Failed to rotate malformed JSON state: path=%s", source)
+            raise
         return default_factory()
 
 

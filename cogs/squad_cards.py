@@ -290,43 +290,47 @@ class SquadCards(commands.Cog):
         channels = {str(c.id): c for c in guild.voice_channels
                     if str(c.category_id) in routes and c != guild.afk_channel}
         for key in list(set(channels) | set(self.state["sessions"])):
-            channel = channels.get(key)
-            members = humans(channel) if channel else []
-            session = self.state["sessions"].get(key)
-            if not members:
-                if session:
-                    session.setdefault("ended", now)
-                    if session.get("message"):
-                        await self.render(channel, session, ended=True)
-                    del self.state["sessions"][key]
-                    self.save()
-                continue
-            if not session:
-                if len(members) < 1:
+            try:
+                channel = channels.get(key)
+                members = humans(channel) if channel else []
+                session = self.state["sessions"].get(key)
+                if not members:
+                    if session:
+                        session.setdefault("ended", now)
+                        if session.get("message"):
+                            await self.render(channel, session, ended=True)
+                        del self.state["sessions"][key]
+                        self.save()
                     continue
-                session = dict(id=uuid.uuid4().hex, started=now, qualified=now,
-                               participants={}, destination=routes[str(channel.category_id)],
-                               first_member=min(members, key=lambda m: getattr(self, "arrivals", {}).get(
-                                   (channel.id, m.id), now)).id)
-                self.state["sessions"][key] = session
-            before = dict(session["participants"])
-            session["participants"].update({str(m.id): m.display_name for m in members})
-            roster = sorted(m.id for m in members)
-            changed = roster != session.get("roster")
-            if not session.get("message"):
-                if len(members) < 1:
-                    session["qualified"] = None
-                elif session.get("qualified") is None:
-                    session["qualified"] = now
-                elif now - session["qualified"] >= 60:
+                if not session:
+                    if len(members) < 1:
+                        continue
+                    session = dict(id=uuid.uuid4().hex, started=now, qualified=now,
+                                   participants={}, destination=routes[str(channel.category_id)],
+                                   first_member=min(members, key=lambda m: getattr(self, "arrivals", {}).get(
+                                       (channel.id, m.id), now)).id)
+                    self.state["sessions"][key] = session
+                before = dict(session["participants"])
+                session["participants"].update({str(m.id): m.display_name for m in members})
+                roster = sorted(m.id for m in members)
+                changed = roster != session.get("roster")
+                if not session.get("message"):
+                    if len(members) < 1:
+                        session["qualified"] = None
+                    elif session.get("qualified") is None:
+                        session["qualified"] = now
+                    elif now - session["qualified"] >= 60:
+                        await self.render(channel, session)
+                elif changed:
                     await self.render(channel, session)
-            elif changed:
-                await self.render(channel, session)
-            # Commit the roster only after rendering succeeds so a failed edit
-            # remains pending and is retried by the next reconciliation.
-            session["roster"] = roster
-            if changed or before != session["participants"]:
-                self.save()
+                # Commit the roster only after rendering succeeds so a failed edit
+                # remains pending and is retried by the next reconciliation.
+                session["roster"] = roster
+                if changed or before != session["participants"]:
+                    self.save()
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                log.exception("Squad card update failed: channel=%s; continuing other sessions", key)
 
     @tasks.loop(seconds=15)
     async def tick(self):

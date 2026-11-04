@@ -49,7 +49,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         first = datetime(2026,11,4,10,tzinfo=ar.TZ)
         a = ar.Activity('a','game',1,2,[ar.Schedule([2],'10:00'),ar.Schedule([2],'11:00')])
         channel = MagicMock(spec=discord.TextChannel); channel.send = AsyncMock()
-        role = types.SimpleNamespace(mention='role')
+        role = types.SimpleNamespace(id=2, mention='role')
         await cog._send_if_needed(None, channel, role, a, 0, first, 'start')
         a.schedules.pop(0)
         await cog._send_if_needed(None, channel, role, a, 0, first+timedelta(hours=1), 'start')
