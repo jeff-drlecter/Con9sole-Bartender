@@ -6,7 +6,7 @@ import discord
 
 import config
 from core.safe_send import send_or_followup
-from features.menu_stats import record_usage_sync
+from features.menu_stats import record_usage
 
 DEFAULT_INVITE_CODE = "QNbSTTkn83"
 DEFAULT_INVITE_URL = f"https://discord.gg/{DEFAULT_INVITE_CODE}"
@@ -73,7 +73,7 @@ class InviteFormatView(discord.ui.View):
 
         self.done = True
         self._disable_buttons()
-        record_usage_sync("invite", interaction.user.id, interaction.guild_id)
+        await record_usage("invite", interaction.user.id, interaction.guild_id)
 
         if as_full_link:
             content = (

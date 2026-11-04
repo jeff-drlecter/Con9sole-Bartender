@@ -32,7 +32,7 @@ from features.menu_helpers import (
     get_retry_after,
     touch_cooldown,
 )
-from features.menu_stats import init_stats_db, record_usage_sync
+from features.menu_stats import init_stats_db, record_usage
 from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView, LegacyMenuView
 from features.role_tools import RoleActionState, RoleToolsView
 from features.role_tools_actions import (
@@ -85,7 +85,7 @@ class Menu(commands.Cog):
         user_id: int | None = None,
         guild_id: int | None = None,
     ) -> None:
-        record_usage_sync(feature, user_id, guild_id)
+        await record_usage(feature, user_id, guild_id)
 
     async def execute_role_change_from_select(
         self,

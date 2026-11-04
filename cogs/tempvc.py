@@ -15,7 +15,7 @@ from core.permissions import is_admin_or_helper
 from core.safe_send import send_or_followup
 from core.ui import SafeModal, SafeView
 from features import tempvc_storage
-from features.menu_stats import record_usage_sync
+from features.menu_stats import record_usage
 from features.tempvc_settings import (
     format_seconds,
     get_auto_vc_user_limit,
@@ -552,6 +552,7 @@ class TempVC(commands.Cog):
         self._bootstrapped = False
         self._sweeper_task: Optional[asyncio.Task] = None
         self._creating_for_members: set[int] = set()
+        self._creation_lock = asyncio.Lock()
 
     async def cog_load(self) -> None:
         tempvc_storage.init_tempvc_db()
@@ -690,10 +691,7 @@ class TempVC(commands.Cog):
             if room is not None:
                 await interaction.edit_original_response(content=f"🎧 你間小隊 call：{room.mention}", view=TempVCControlView(self, channel_id=room.id, guild_id=guild.id))
                 return
-            with claim_action("vc-create-guild", guild.id) as guild_claimed:
-                if not guild_claimed:
-                    await interaction.edit_original_response(content="酒保正在開另一間房，請稍後再撳。")
-                    return
+            async with self._creation_lock:
                 try:
                     room = await self._create_manual_temp_vc(
                         guild, _category_from_ctx_channel(interaction.channel), name=name,
@@ -703,7 +701,7 @@ class TempVC(commands.Cog):
                     log.exception("Failed to create manual VC: user=%s", interaction.user.id)
                     await interaction.edit_original_response(content="暫時開唔到房，請稍後再試；如持續出現，請通知管理員。")
                     return
-            record_usage_sync("tempvc", interaction.user.id, guild.id)
+            await record_usage("tempvc", interaction.user.id, guild.id)
             await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32), view=TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id))
 
     async def open_control_panel_from_menu(self, interaction: discord.Interaction) -> None:
@@ -1013,12 +1011,14 @@ class TempVC(commands.Cog):
                     return
                 self._creating_for_members.add(member.id)
                 try:
-                    room = await self._find_owned_room(member.guild, member.id)
-                    if room is not None:
-                        await member.move_to(room, reason="Reuse existing small-team room")
-                        return
-                    with claim_action("vc-create-guild", member.guild.id) as guild_claimed:
-                        if not guild_claimed:
+                    async with self._creation_lock:
+                        # A queued user may have left the hub while another room was created.
+                        current = getattr(member, "voice", None)
+                        if current is None or current.channel != after.channel:
+                            return
+                        room = await self._find_owned_room(member.guild, member.id)
+                        if room is not None:
+                            await member.move_to(room, reason="Reuse existing small-team room")
                             return
                         created = await self._create_temp_vc_for_member(member, after.channel)
                     if created is None:

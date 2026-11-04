@@ -15,7 +15,7 @@ from features.menu_embeds import (
     build_quick_bar_embed,
 )
 from features.menu_helpers import can_use_admin, get_retry_after, touch_cooldown
-from features.menu_stats import record_usage_sync
+from features.menu_stats import record_usage
 from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
 from features.social_tools import (
     open_instagram_from_button as run_open_instagram_from_button,
@@ -40,7 +40,7 @@ async def open_quick_bar_menu(
     *,
     ephemeral: bool,
 ) -> None:
-    record_usage_sync("menu", interaction.user.id, interaction.guild_id)
+    await record_usage("menu", interaction.user.id, interaction.guild_id)
     await send_or_followup(
         interaction,
         embed=build_quick_bar_embed(interaction.user),
@@ -50,7 +50,7 @@ async def open_quick_bar_menu(
 
 
 async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
-    record_usage_sync("home_menu", interaction.user.id, interaction.guild_id)
+    await record_usage("home_menu", interaction.user.id, interaction.guild_id)
     try:
         await send_or_followup(
             interaction,
@@ -71,7 +71,7 @@ async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
 
 
 async def open_help_menu(cog: object, interaction: discord.Interaction) -> None:
-    record_usage_sync("help", interaction.user.id, interaction.guild_id)
+    await record_usage("help", interaction.user.id, interaction.guild_id)
     await send_or_followup(
         interaction,
         embed=build_help_embed(interaction.user),
@@ -81,7 +81,7 @@ async def open_help_menu(cog: object, interaction: discord.Interaction) -> None:
 
 
 async def open_admin_tool_menu(cog: object, interaction: discord.Interaction) -> None:
-    record_usage_sync("admin_tool", interaction.user.id, interaction.guild_id)
+    await record_usage("admin_tool", interaction.user.id, interaction.guild_id)
     await send_or_followup(
         interaction,
         embed=build_admin_tool_embed(interaction.user),
@@ -112,7 +112,7 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
             return
         touch_cooldown(message.author.id)
 
-    record_usage_sync("mention_menu", message.author.id, message.guild.id if message.guild else None)
+    await record_usage("mention_menu", message.author.id, message.guild.id if message.guild else None)
 
     try:
         kwargs = safe_message_kwargs(

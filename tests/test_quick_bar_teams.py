@@ -71,7 +71,7 @@ class TeamFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_then_restore_active_card_after_restart(self):
         i = interaction()
-        with patch("cogs.teams.record_usage_sync"):
+        with patch("cogs.teams.record_usage"):
             self.assertTrue(await self.cog.create_team(i, 2, "GTA"))
         bot = MagicMock()
         bot.wait_until_ready = AsyncMock()
