@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import discord
 
-from core.sqlite_storage import connect_sqlite, enable_wal
+from core.sqlite_storage import connect_sqlite, enable_wal, initialize_once
 from core.storage_paths import DATA_DIR, STATS_DB
 from data.drink_data import DrinkEntry
 from features import theme_collections
@@ -18,6 +18,7 @@ EVENT_SELF_DRINK = "self_drink"
 EVENT_GIFT_DRINK = "gift_drink"
 
 
+@initialize_once
 def init_drink_events_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with connect_sqlite(STATS_DB) as conn:

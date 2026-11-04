@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GUILD_ID
+from features.menu_stats import run_stats
 from core.action_guard import claim_action
 from core.discord_interactions import require_public_send
 from core.safe_send import send_or_followup
@@ -306,14 +307,15 @@ class Drink(commands.Cog):
             )
 
     async def stats_entry(self, interaction: discord.Interaction) -> None:
-        embed = build_drink_stats_embed(interaction.guild, interaction.user)
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        embed = await run_stats(build_drink_stats_embed,interaction.guild, interaction.user)
         await send_or_followup(interaction, embed=embed, ephemeral=True)
 
     async def collection_entry(self, interaction: discord.Interaction) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(thinking=True, ephemeral=True)
         await self._record_usage(interaction, feature="drink_collection")
-        embed = build_drink_collection_embed(interaction.guild, interaction.user)
+        embed = await run_stats(build_drink_collection_embed,interaction.guild, interaction.user)
         view = DrinkCollectionView(
             owner_id=interaction.user.id,
             guild=interaction.guild,
@@ -326,8 +328,9 @@ class Drink(commands.Cog):
         await self._complete_daily_bar(interaction, "drink_collection")
 
     async def leaderboard_entry(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         await self._record_usage(interaction, feature="drink_leaderboard")
-        embed = build_drink_leaderboard_embed(
+        embed = await run_stats(build_drink_leaderboard_embed,
             interaction.guild, requested_by=interaction.user
         )
         view = DrinkLeaderboardView(
@@ -353,8 +356,9 @@ class Drink(commands.Cog):
     async def drink_stats(
         self, interaction: discord.Interaction, user: discord.Member | None = None
     ) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         target = user or interaction.user
-        embed = build_drink_stats_embed(interaction.guild, target)
+        embed = await run_stats(build_drink_stats_embed,interaction.guild, target)
         await send_or_followup(interaction, embed=embed, ephemeral=True)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
@@ -369,7 +373,7 @@ class Drink(commands.Cog):
             await interaction.response.defer(thinking=True, ephemeral=True)
         target = user or interaction.user
         await self._record_usage(interaction, feature="drink_collection")
-        embed = build_drink_collection_embed(interaction.guild, target)
+        embed = await run_stats(build_drink_collection_embed,interaction.guild, target)
         view = DrinkCollectionView(
             owner_id=interaction.user.id, guild=interaction.guild, target_user=target
         )
@@ -383,8 +387,9 @@ class Drink(commands.Cog):
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(name="drink_leaderboard", description="查看酒保排行榜")
     async def drink_leaderboard(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=False)
         await self._record_usage(interaction, feature="drink_leaderboard")
-        embed = build_drink_leaderboard_embed(
+        embed = await run_stats(build_drink_leaderboard_embed,
             interaction.guild, requested_by=interaction.user
         )
         view = DrinkLeaderboardView(

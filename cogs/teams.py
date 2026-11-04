@@ -85,6 +85,7 @@ class Teams(commands.Cog):
         self.bot = bot
         self.states: dict[int, TeamState] = {}
         self.views: dict[int, TeamView] = {}
+        self.dirty: set[int] = set()
         self._sweeper_task: asyncio.Task | None = None
 
     async def cog_load(self) -> None:
@@ -123,7 +124,7 @@ class Teams(commands.Cog):
         while not self.bot.is_closed():
             await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
             for state in list(self.states.values()):
-                if not state.cancelled and not self.is_state_expired(state):
+                if not state.cancelled and not self.is_state_expired(state) and state.message_id not in self.dirty:
                     continue
                 view = self.views.get(state.message_id)
                 if view is None:
@@ -134,6 +135,11 @@ class Teams(commands.Cog):
                             state.channel_id
                         ) or await self.bot.fetch_channel(state.channel_id)
                         message = await channel.fetch_message(state.message_id)
+                        if not state.cancelled and not self.is_state_expired(state):
+                            await message.edit(content=self.build_message(state), view=view,
+                                               allowed_mentions=discord.AllowedMentions.none())
+                            self.dirty.discard(state.message_id)
+                            continue
                         await message.edit(
                             content="⌛ 呢次招募已結束，可以重新開局。",
                             view=CancelledTeamView(self),
@@ -154,6 +160,7 @@ class Teams(commands.Cog):
         if message_id is not None and message_id in self.states:
             team_storage.delete_team(message_id)
             self.states.pop(message_id, None)
+            self.dirty.discard(message_id)
             view = self.views.pop(message_id, None)
             if view is not None:
                 view.stop()
@@ -409,6 +416,7 @@ class TeamView(SafeView):
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except discord.HTTPException:
+            self.cog.dirty.add(self.state.message_id)
             log.exception(
                 "Team saved but card refresh failed: message=%s", self.state.message_id
             )
@@ -634,8 +642,9 @@ class EditTeamModal(SafeModal, title="修改招募"):
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
             except discord.HTTPException:
+                self.team.cog.dirty.add(state.message_id)
                 await interaction.edit_original_response(
-                    content="設定已保存，但畫面暫時更新唔到。"
+                    content="設定已保存，酒保會重試更新畫面。"
                 )
                 return
         await interaction.edit_original_response(content="✅ 招募已更新。")

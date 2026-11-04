@@ -248,6 +248,7 @@ def build_drink_collection_rarity_embed(
     guild: discord.Guild | None,
     user: discord.Member | discord.User,
     rarity: str,
+    page: int = 0,
 ) -> discord.Embed:
     guild_id = guild.id if guild else None
     user_id = user.id
@@ -258,13 +259,11 @@ def build_drink_collection_rarity_embed(
     unlocked = len(rows)
     locked = max(0, total - unlocked)
 
-    shown_rows = rows[:COLLECTION_PAGE_LIMIT]
+    pages = max(1, (len(rows) + COLLECTION_PAGE_LIMIT - 1) // COLLECTION_PAGE_LIMIT)
+    page = max(0, min(page, pages - 1))
+    shown_rows = rows[page * COLLECTION_PAGE_LIMIT:(page + 1) * COLLECTION_PAGE_LIMIT]
     if shown_rows:
         list_text = "\n".join(format_collection_row(row) for row in shown_rows)
-        if unlocked > COLLECTION_PAGE_LIMIT:
-            list_text += (
-                f"\n…仲有 `{unlocked - COLLECTION_PAGE_LIMIT}` 款已解鎖未顯示。"
-            )
     else:
         list_text = "暫時未解鎖呢個稀有度嘅酒款。"
 
@@ -285,7 +284,7 @@ def build_drink_collection_rarity_embed(
         color=rarity_color(rarity),
         timestamp=discord.utils.utcnow(),
     )
-    embed.set_footer(text="Con9sole Bartender｜不顯示未解鎖酒名，保留探索感。")
+    embed.set_footer(text=f"Con9sole Bartender｜第 {page + 1}/{pages} 頁｜不顯示未解鎖酒名。")
     return embed
 
 

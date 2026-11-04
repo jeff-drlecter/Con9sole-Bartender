@@ -46,6 +46,10 @@ class Bot(commands.Bot):
         for warning in validate_config():
             log.warning("Configuration issue: %s", warning)
 
+        if os.getenv("REQUIRE_PERSISTENT_DATA") == "1":
+            data_path = pathlib.Path("/data")
+            if not os.path.ismount(data_path) or not os.access(data_path, os.W_OK):
+                raise RuntimeError("Persistent /data mount is unavailable or not writable")
         import cogs
 
         cogs_dir = pathlib.Path(cogs.__file__).parent
@@ -72,6 +76,10 @@ class Bot(commands.Bot):
                 except Exception as exc:
                     log.exception("Failed loading %s: %r", full, exc)
 
+        core_modules = {"cogs.menu", "cogs.drink", "cogs.teams", "cogs.tempvc", "cogs.squad_cards", "cogs.activity_reminder"}
+        missing = core_modules.difference(loaded)
+        if missing:
+            raise RuntimeError(f"Core extensions failed to load: {sorted(missing)}")
         if not loaded:
             log.warning("No cogs loaded from %s", cogs_dir)
 

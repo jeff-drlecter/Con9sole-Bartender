@@ -23,7 +23,7 @@ async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True
 async def admin_stats_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
     await safe_defer(interaction, ephemeral=True)
     await record_usage("admin_stats", interaction.user.id, interaction.guild_id)
-    embed = await run_stats(build_admin_stats_embed,guild_id=interaction.guild_id, days=7, title_scope="本週")
+    embed = await run_stats(build_admin_stats_embed,guild_id=interaction.guild_id, days=7, title_scope="最近 7 日")
     await send_or_followup(interaction, embed=embed, view=AdminToolView(menu_cog), ephemeral=True)
 
 
@@ -44,13 +44,13 @@ async def admin_stats_command(interaction: discord.Interaction, *, scope_value: 
         title_scope = "今日"
     elif scope_value == "week":
         days = 7
-        title_scope = "本週"
+        title_scope = "最近 7 日"
     else:
         days = None
         title_scope = "全部"
 
     embed = await run_stats(build_admin_stats_embed,guild_id=interaction.guild_id, days=days, title_scope=title_scope)
-    await send_or_followup(interaction, embed=embed, ephemeral=False)
+    await send_or_followup(interaction, embed=embed, ephemeral=True)
 
 
 async def admin_reload_from_button(interaction: discord.Interaction) -> None:

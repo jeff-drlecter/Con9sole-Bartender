@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 
 import discord
+import config
+from core.ui import SafeView, SafeModal
 
 from core.permissions import is_admin_or_helper
 from core.safe_send import send_or_followup
@@ -16,7 +18,7 @@ def can_use_admin(member: discord.Member | discord.User) -> bool:
     return is_admin_or_helper(member)
 
 
-class RoleBaseView(discord.ui.View):
+class RoleBaseView(SafeView):
     def __init__(self, cog: object, *, timeout: float | None = None) -> None:
         super().__init__(timeout=timeout)
         self.cog = cog
@@ -267,7 +269,7 @@ def build_role_tools_embed(user: discord.abc.User) -> discord.Embed:
     return embed
 
 
-class RoleMemberIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 選成員"):
+class RoleMemberIdModal(SafeModal, title="Role Tools｜用 User ID 選成員"):
     user_id = discord.ui.TextInput(
         label="User ID",
         placeholder="例如：123456789012345678",
@@ -284,32 +286,33 @@ class RoleMemberIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 選成
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
+            await send_or_followup(interaction, content="呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
             return
         if not interaction.guild:
-            await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
+            await send_or_followup(interaction, content="❌ 只可在伺服器使用。", ephemeral=True)
             return
         if not can_use_admin(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
+            await send_or_followup(interaction, content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
         member = await fetch_member_by_id(interaction.guild, str(self.user_id.value))
         if member is None:
-            await interaction.response.send_message(
+            await send_or_followup(interaction, content=
                 "❌ 找不到此 User ID 對應的伺服器成員。",
                 ephemeral=True,
             )
             return
 
         state = RoleActionState(mode=self.mode, target_kind="member", target_member_id=member.id)
-        await interaction.response.send_message(
+        await send_or_followup(interaction,
             embed=build_apply_role_select_embed(self.mode, state, interaction.guild),
             view=RoleApplyRoleSelectView(self.cog, owner_id=interaction.user.id, state=state),
             ephemeral=True,
         )
 
 
-class RoleListUserIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 查看角色"):
+class RoleListUserIdModal(SafeModal, title="Role Tools｜用 User ID 查看角色"):
     user_id = discord.ui.TextInput(
         label="User ID",
         placeholder="例如：123456789012345678",
@@ -325,18 +328,19 @@ class RoleListUserIdModal(discord.ui.Modal, title="Role Tools｜用 User ID 查�
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
+            await send_or_followup(interaction, content="呢個 Role Tools 面板只限發起者使用。", ephemeral=True)
             return
         if not interaction.guild:
-            await interaction.response.send_message("❌ 只可在伺服器使用。", ephemeral=True)
+            await send_or_followup(interaction, content="❌ 只可在伺服器使用。", ephemeral=True)
             return
         if not can_use_admin(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
+            await send_or_followup(interaction, content="❌ 你需要 Admin / Helper 權限先可以使用 Role Tools。", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
         member = await fetch_member_by_id(interaction.guild, str(self.user_id.value))
         if member is None:
-            await interaction.response.send_message("❌ 找不到此 User ID 對應的伺服器成員。", ephemeral=True)
+            await send_or_followup(interaction, content="❌ 找不到此 User ID 對應的伺服器成員。", ephemeral=True)
             return
 
         await self.cog.execute_role_list_for_member(interaction, member=member, edit_existing=False)
@@ -665,12 +669,21 @@ class RoleConfirmView(OwnerOnlyRoleToolView):
         super().__init__(cog, owner_id=owner_id)
         self.state = state
         self.done = False
+        guild = cog.bot.get_guild(config.GUILD_ID)
+        role = guild.get_role(state.target_role_id) if guild and state.target_kind == "role" else None
+        self.member_snapshot = tuple(sorted(m.id for m in get_batch_target_members(role, include_bots=state.include_bots))) if role else None
 
     @discord.ui.button(label="確認", emoji="✅", style=discord.ButtonStyle.danger, row=0)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.done:
             await interaction.response.send_message("呢個操作已經完成。", ephemeral=True)
             return
+        if self.member_snapshot is not None:
+            role = interaction.guild.get_role(self.state.target_role_id)
+            current = tuple(sorted(m.id for m in get_batch_target_members(role, include_bots=self.state.include_bots))) if role else ()
+            if current != self.member_snapshot:
+                await interaction.response.send_message("群組名單已改，請重新開啟預覽後確認。", ephemeral=True)
+                return
         self.done = True
         await self.cog.execute_role_change_from_select(interaction, state=self.state)
         self.stop()

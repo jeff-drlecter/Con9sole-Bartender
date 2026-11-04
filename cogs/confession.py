@@ -9,6 +9,7 @@ from discord.ext import commands
 
 import config
 from core.action_guard import claim_action
+from core.discord_interactions import require_public_send
 
 
 CONFESSION_COLOR = 0x2B2D31
@@ -58,11 +59,17 @@ class Confession(commands.Cog):
         """Unified entrypoint for data/menu_registry.py."""
         await self.open_confession_modal(interaction)
 
-    def _target_channel(self, interaction: discord.Interaction) -> discord.abc.Messageable | None:
+    async def _target_channel(self, interaction: discord.Interaction) -> discord.abc.Messageable | None:
         if CONFESSION_CHANNEL_ID:
             channel = interaction.client.get_channel(CONFESSION_CHANNEL_ID)
-            if channel:
-                return channel
+            if channel is None:
+                try:
+                    channel = await interaction.client.fetch_channel(CONFESSION_CHANNEL_ID)
+                except discord.HTTPException:
+                    return None
+            if getattr(getattr(channel, "guild", None), "id", None) != interaction.guild_id:
+                return None
+            return channel if isinstance(channel, discord.TextChannel) else None
 
         return interaction.channel
 
@@ -78,6 +85,8 @@ class Confession(commands.Cog):
         await interaction.response.send_modal(ConfessionModal(self))
 
     async def submit_confession(self, interaction: discord.Interaction, content: str) -> None:
+        if not await require_public_send(interaction):
+            return
         if not content:
             await interaction.response.send_message(
                 "❌ 投稿內容唔可以係空白。",
@@ -100,9 +109,10 @@ class Confession(commands.Cog):
             )
             return
 
-        target = self._target_channel(interaction)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        target = await self._target_channel(interaction)
         if target is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ 搵唔到可以發送告白嘅頻道。",
                 ephemeral=True,
             )
@@ -115,7 +125,6 @@ class Confession(commands.Cog):
         )
         embed.set_footer(text="Nameless Confession • 匿名投稿")
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await target.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:

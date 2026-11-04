@@ -74,6 +74,7 @@ class ModePicker(discord.ui.Select):
             session["mode"] = "" if value == "__none__" else value
             if self.profile:
                 session["profile"] = self.profile
+            session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
         await interaction.followup.send("已更新遊戲模式。", ephemeral=True)
@@ -102,6 +103,7 @@ class GamePicker(discord.ui.Select):
                 session["game"] = ""
             else:
                 session.update(profile=profile, game=GAME_LABELS[profile], mode="")
+            session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
         await interaction.edit_original_response(
@@ -135,6 +137,7 @@ class Details(discord.ui.Modal, title="組隊狀態"):
                 return
             session.update(game=str(self.game.value).strip(), mode=str(self.mode.value).strip(),
                            missing=int(value) if value else None)
+            session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
         await interaction.followup.send("已更新組隊狀態。", ephemeral=True)
@@ -168,6 +171,7 @@ class RecruitmentChoices(discord.ui.View):
                 await interaction.followup.send("呢場已結束，或者你冇修改權限。", ephemeral=True)
                 return
             session["missing"] = value
+            session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
         await interaction.followup.send(
@@ -227,6 +231,7 @@ class SquadCards(commands.Cog):
         self.tick.cancel()
 
     async def render(self, channel, session, ended=False):
+        session["dirty"] = True
         destination = self.bot.get_channel(session["destination"])
         if not destination:
             raise RuntimeError("Squad card destination unavailable")
@@ -264,6 +269,7 @@ class SquadCards(commands.Cog):
             try:
                 message = await destination.fetch_message(session["message"])
                 await message.edit(content=None if ended else message.content, **kwargs)
+                session["dirty"] = False
                 return
             except discord.NotFound:
                 if ended:
@@ -276,6 +282,7 @@ class SquadCards(commands.Cog):
                 users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
         message = await destination.send(**kwargs)
         session["message"] = message.id
+        session["dirty"] = False
         self.save()
 
     async def reconcile(self):
@@ -313,7 +320,8 @@ class SquadCards(commands.Cog):
                 before = dict(session["participants"])
                 session["participants"].update({str(m.id): m.display_name for m in members})
                 roster = sorted(m.id for m in members)
-                changed = roster != session.get("roster")
+                display = {str(m.id): m.display_name for m in members}
+                changed = roster != session.get("roster") or display != session.get("display") or session.get("dirty", False)
                 if not session.get("message"):
                     if len(members) < 1:
                         session["qualified"] = None
@@ -326,6 +334,7 @@ class SquadCards(commands.Cog):
                 # Commit the roster only after rendering succeeds so a failed edit
                 # remains pending and is retried by the next reconciliation.
                 session["roster"] = roster
+                session["display"] = display
                 if changed or before != session["participants"]:
                     self.save()
             except Exception as exc:

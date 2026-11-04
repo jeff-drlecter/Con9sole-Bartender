@@ -64,6 +64,7 @@ def atomic_write_json(path: str | Path, data: dict[str, Any]) -> None:
             suffix=".tmp",
             delete=False,
         ) as handle:
+            temp_path = Path(handle.name)
             json.dump(data, handle, ensure_ascii=False, indent=2)
             handle.flush()
             os.fsync(handle.fileno())

@@ -77,6 +77,7 @@ class DailyBar(commands.Cog):
                 log.exception("Failed to record daily-bar usage: user=%s", interaction.user.id)
 
     async def _send_daily_bar(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         await self._record_usage(interaction)
         embed = build_daily_bar_embed(interaction.guild_id, user=interaction.user)
         view = DailyBarView(guild_id=interaction.guild_id, user_id=interaction.user.id)

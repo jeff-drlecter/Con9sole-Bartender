@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import asyncio
+from weakref import WeakKeyDictionary
 
 _ACTIVE: set[tuple[object, ...]] = set()
 
@@ -21,3 +23,12 @@ def claim_action(*key: object) -> Iterator[bool]:
         yield True
     finally:
         _ACTIVE.discard(key)
+
+
+_LOOP_LOCKS = WeakKeyDictionary()
+
+
+def shared_async_lock(*key):
+    loop = asyncio.get_running_loop()
+    locks = _LOOP_LOCKS.setdefault(loop, {})
+    return locks.setdefault(key, asyncio.Lock())

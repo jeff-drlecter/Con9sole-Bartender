@@ -93,8 +93,20 @@ async def run_stats(function, *args, **kwargs):
     return await asyncio.get_running_loop().run_in_executor(_STATS_WORKER, partial(function, *args, **kwargs))
 
 
+_PENDING_WRITES = set()
+
+
 async def record_usage(feature, user_id=None, guild_id=None):
-    await run_stats(record_usage_sync, feature, user_id, guild_id)
+    if len(_PENDING_WRITES) >= 256:
+        return  # Analytics are best-effort; do not build an unbounded queue.
+    future = asyncio.get_running_loop().run_in_executor(
+        _STATS_WORKER, partial(record_usage_sync, feature, user_id, guild_id))
+    _PENDING_WRITES.add(future)
+    def finished(result):
+        _PENDING_WRITES.discard(result)
+        if not result.cancelled():
+            result.exception()  # record_usage_sync already logs storage errors.
+    future.add_done_callback(finished)
 
 
 def init_stats_db() -> None:
@@ -170,7 +182,8 @@ def get_stats(guild_id: int | None, days: int | None = None) -> list[tuple[str, 
         params.append(guild_id)
 
     if days is not None:
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        since = (datetime.now(HK_TZ).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+                 if days == 1 else datetime.now(timezone.utc) - timedelta(days=days))
         where.append("used_at >= ?")
         params.append(since.isoformat())
 
@@ -200,7 +213,8 @@ def get_total_usage(guild_id: int | None, days: int | None = None) -> int:
         params.append(guild_id)
 
     if days is not None:
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        since = (datetime.now(HK_TZ).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+                 if days == 1 else datetime.now(timezone.utc) - timedelta(days=days))
         where.append("used_at >= ?")
         params.append(since.isoformat())
 

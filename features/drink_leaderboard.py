@@ -13,6 +13,8 @@ from features.drink_storage import (
     init_drink_events_db,
 )
 from core.sqlite_storage import connect_sqlite
+from core.ui import SafeView
+from features.menu_stats import run_stats
 
 LeaderboardKind = Literal["self", "given", "received", "collection"]
 
@@ -114,26 +116,11 @@ def fetch_top_receivers(guild_id: int | None, *, limit: int = LEADERBOARD_LIMIT)
 def fetch_top_collectors(guild_id: int | None, *, limit: int = LEADERBOARD_LIMIT) -> list[LeaderboardEntry]:
     return _fetch_rows(
         """
-        SELECT member_id, COUNT(*) AS total
-        FROM (
-            SELECT actor_id AS member_id, drink_eng
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND event_type = ?
-            AND actor_id = target_id
-
-            UNION
-
-            SELECT target_id AS member_id, drink_eng
-            FROM drink_events
-            WHERE guild_id IS ?
-            AND event_type = ?
-        ) unlocked
-        GROUP BY member_id
-        ORDER BY total DESC, member_id ASC
-        LIMIT ?
+        SELECT user_id AS member_id, COUNT(*) AS total
+        FROM drink_collection WHERE guild_key = ?
+        GROUP BY user_id ORDER BY total DESC, user_id ASC LIMIT ?
         """,
-        (guild_id, EVENT_SELF_DRINK, guild_id, EVENT_GIFT_DRINK, limit),
+        (str(guild_id) if guild_id is not None else "dm", limit),
     )
 
 
@@ -192,19 +179,20 @@ def build_drink_leaderboard_embed(
     return embed
 
 
-class DrinkLeaderboardView(discord.ui.View):
+class DrinkLeaderboardView(SafeView):
     def __init__(self, *, guild: discord.Guild | None, requested_by: discord.abc.User | None = None) -> None:
         super().__init__(timeout=180)
         self.guild = guild
         self.requested_by = requested_by
 
     async def _show(self, interaction: discord.Interaction, kind: LeaderboardKind) -> None:
-        embed = build_drink_leaderboard_embed(
+        await interaction.response.defer()
+        embed = await run_stats(build_drink_leaderboard_embed,
             self.guild,
             kind=kind,
             requested_by=self.requested_by or interaction.user,
         )
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
 
     @discord.ui.button(label="叫酒", emoji="🍹", style=discord.ButtonStyle.success)
     async def self_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
