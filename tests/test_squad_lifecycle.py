@@ -129,13 +129,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             AllowedMentions=Mentions, Object=lambda **kw: types.SimpleNamespace(**kw),
             NotFound=type('NotFound', (Exception,), {}))
         scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None,
-                     game_profile=lambda *a: '', GAME_LABELS={})
+                     game_profile=lambda *a: '', GAME_LABELS={}, interest_topic=lambda *a: None)
         exec(compile(ast.Module(body=[render_method], type_ignores=[]), str(source), 'exec'), scope)
         message = types.SimpleNamespace(id=99, content='<@1> prompt', edit=AsyncMock())
         destination = types.SimpleNamespace(send=AsyncMock(return_value=message),
                                              fetch_message=AsyncMock(return_value=message))
         cog = types.SimpleNamespace(bot=types.SimpleNamespace(get_channel=lambda _: destination),
-                                    save=lambda: None)
+                                    save=lambda: None, notify_interested=AsyncMock())
         channel = types.SimpleNamespace(id=10, members=[
             types.SimpleNamespace(id=1, display_name='A', bot=False),
             types.SimpleNamespace(id=2, display_name='B', bot=False)])
