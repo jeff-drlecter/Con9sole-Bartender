@@ -22,7 +22,9 @@ USER_CONFESSION_COOLDOWNS: dict[int, float] = {}
 
 def get_retry_after(user_id: int) -> float:
     now = time.monotonic()
-    last_used = USER_CONFESSION_COOLDOWNS.get(user_id, 0.0)
+    last_used = USER_CONFESSION_COOLDOWNS.get(user_id)
+    if last_used is None:
+        return 0.0
     retry_after = CONFESSION_COOLDOWN_SECONDS - (now - last_used)
     return max(0.0, retry_after)
 

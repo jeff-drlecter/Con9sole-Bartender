@@ -154,3 +154,10 @@ class FullAuditFixes(unittest.IsolatedAsyncioTestCase):
         with patch('features.role_tools.RoleConfirmView') as view,patch('features.role_tools.build_confirm_embed'):
             await RoleManager.role_grant.callback(cog,i,'123',None,role,False)
         view.assert_called_once(); cog._apply_role_change.assert_not_awaited()
+
+    async def test_first_confession_not_cooled_down_on_fresh_host(self):
+        from cogs import confession
+        with patch.dict(confession.USER_CONFESSION_COOLDOWNS, {}, clear=True), patch.object(confession.time, 'monotonic', return_value=1):
+            self.assertEqual(confession.get_retry_after(1),0)
+            confession.touch_cooldown(1)
+            self.assertEqual(confession.get_retry_after(1),30)
