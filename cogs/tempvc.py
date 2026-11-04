@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Dict, Optional, Union
 
@@ -174,6 +175,50 @@ def _next_temp_channel_name_in_category(category: Optional[discord.CategoryChann
     channels = category.channels if category else guild.channels
     names = [channel.name for channel in channels if isinstance(channel, discord.VoiceChannel)]
     return next_temp_channel_name(names)
+
+
+async def _order_temp_channels(guild: discord.Guild, category_id: int | None) -> None:
+    """Keep numbered rooms immediately above their hub in numeric order.
+
+    Fetch the server state so newly created rooms and a recent reorder are included.
+    Submit one atomic reorder, retaining all unrelated voice channels' relative order.
+    """
+    channels = await guild.fetch_channels()
+    voices = sorted(
+        (ch for ch in channels if isinstance(ch, discord.VoiceChannel)
+         and ch.category_id == category_id),
+        key=lambda ch: (ch.position, ch.id),
+    )
+    hub = next((ch for ch in voices if _is_hub_channel(ch)), None)
+    if hub is None:
+        return
+    pattern = re.compile(rf"^{re.escape(get_temp_channel_base_name())}\s+(\d+)$")
+    rooms = [ch for ch in voices if is_temp_vc_id(ch.id)]
+    def room_key(ch: discord.VoiceChannel) -> tuple[int, int, int]:
+        match = pattern.fullmatch(ch.name)
+        return (0, int(match.group(1)), ch.id) if match else (1, ch.position, ch.id)
+    rooms.sort(key=room_key)
+    room_ids = {ch.id for ch in rooms}
+    ordered = [ch for ch in voices if ch.id not in room_ids]
+    index = ordered.index(hub)
+    ordered[index:index] = rooms
+    if ordered == voices:
+        return
+    positions = [ch.position for ch in voices]
+    # discord.py exposes bulk channel positioning through its HTTP client.
+    await guild._state.http.bulk_channel_update(
+        guild.id,
+        [{"id": ch.id, "position": pos} for ch, pos in zip(ordered, positions)],
+        reason="Sort small-team calls above their creation hub",
+    )
+
+
+async def _try_order_temp_channels(guild: discord.Guild, category_id: int | None) -> None:
+    try:
+        await _order_temp_channels(guild, category_id)
+    except discord.HTTPException:
+        # Ordering failure must not strand the creator in the hub or orphan a room.
+        log.exception("Could not sort temp VCs: guild=%s category=%s", guild.id, category_id)
 
 
 async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool = False) -> None:
@@ -633,6 +678,7 @@ class TempVC(commands.Cog):
             await ch.delete(reason="Could not persist temp VC ownership")
             raise
         log.info("Created temp VC: channel=%s name=%s category=%s", ch.id, ch.name, category.id if category else None)
+        await _try_order_temp_channels(guild, category.id if category else None)
         await schedule_delete_if_empty(ch, force=False)
         return ch
 
@@ -898,6 +944,7 @@ class TempVC(commands.Cog):
             await ch.delete(reason="Could not persist temp VC ownership")
             raise
         log.info("Created automatic temp VC: channel=%s member=%s hub=%s", ch.id, member.id, source_channel.id)
+        await _try_order_temp_channels(guild, category.id if category else None)
 
         try:
             await member.move_to(ch, reason="Moved to newly auto-created temp VC")
@@ -927,6 +974,9 @@ class TempVC(commands.Cog):
                     if isinstance(channel, discord.VoiceChannel) and not _is_hub_channel(channel):
                         track_temp_vc(channel.id, guild_id=guild.id)
                 ids = await bootstrap_track_temp_vcs(guild, name_prefixes=get_name_prefixes())
+                async with shared_async_lock("voice-create", guild.id):
+                    for category_id in {ch.category_id for ch in guild.voice_channels if _is_hub_channel(ch)}:
+                        await _try_order_temp_channels(guild, category_id)
                 for cid in ids:
                     ch = guild.get_channel(cid)
                     if ch is None:
