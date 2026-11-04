@@ -32,7 +32,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         async def tick():
             await namespace['reconcile'](cog)
         await tick()
-        now[0] += 59
+        now[0] += 29
         await tick()
         self.assertEqual(calls, [])
         channel.members = []
@@ -40,7 +40,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         now[0] += 5
         channel.members = members[:]
         await tick()
-        now[0] += 59
+        now[0] += 29
         await tick()
         self.assertEqual(calls, [])
         now[0] += 1
@@ -73,7 +73,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             state={'settings': {'routes': {'20': 30, '21': 31, '22': 32}}, 'sessions': {}},
             bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render)
         await namespace['reconcile'](cog)
-        now[0] += 60
+        now[0] += 30
         await namespace['reconcile'](cog)
         self.assertEqual(set(calls), {(10, 30, False), (11, 31, False)})
         channels[0].members = []
