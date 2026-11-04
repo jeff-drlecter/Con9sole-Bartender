@@ -122,7 +122,7 @@ async def execute_role_list_for_member(
     if edit_existing:
         await interaction.response.edit_message(content=None, embed=embed, view=None)
     else:
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await send_or_followup(interaction, embed=embed, ephemeral=True)
 
     for chunk in chunks[1:]:
         await interaction.followup.send(chunk, ephemeral=True)

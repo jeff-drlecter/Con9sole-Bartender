@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.safe_send import send_or_followup
 from core.permissions import is_admin_or_helper, is_helper
 
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
@@ -94,6 +95,17 @@ class RoleManager(commands.Cog):
         target_role: Optional[discord.Role] = None,
         include_bots: bool = False,
     ):
+        if target_role is not None and target_member is None:
+            from features.role_tools import RoleActionState, RoleConfirmView, build_confirm_embed
+            menu = self.bot.get_cog("Menu")
+            if menu is None:
+                await inter.response.send_message("管理選單未準備好，請稍後再試。", ephemeral=True)
+                return
+            state = RoleActionState(mode="add", target_kind="role", target_role_id=target_role.id,
+                                    apply_role_id=int(grant_role_id) if grant_role_id.isdigit() else None, include_bots=include_bots)
+            await inter.response.send_message(embed=build_confirm_embed("add", state, inter.guild),
+                view=RoleConfirmView(menu, owner_id=inter.user.id, state=state), ephemeral=True)
+            return
         await self._apply_role_change(
             inter,
             role_id=grant_role_id,
@@ -121,6 +133,17 @@ class RoleManager(commands.Cog):
         target_role: Optional[discord.Role] = None,
         include_bots: bool = False,
     ):
+        if target_role is not None and target_member is None:
+            from features.role_tools import RoleActionState, RoleConfirmView, build_confirm_embed
+            menu = self.bot.get_cog("Menu")
+            if menu is None:
+                await inter.response.send_message("管理選單未準備好，請稍後再試。", ephemeral=True)
+                return
+            state = RoleActionState(mode="remove", target_kind="role", target_role_id=target_role.id,
+                                    apply_role_id=int(revoke_role_id) if revoke_role_id.isdigit() else None, include_bots=include_bots)
+            await inter.response.send_message(embed=build_confirm_embed("remove", state, inter.guild),
+                view=RoleConfirmView(menu, owner_id=inter.user.id, state=state), ephemeral=True)
+            return
         await self._apply_role_change(
             inter,
             role_id=revoke_role_id,
@@ -140,13 +163,13 @@ class RoleManager(commands.Cog):
         mode: str,
     ):
         if inter.guild is None:
-            await inter.response.send_message("⚠️ 此指令只可在伺服器內使用。", ephemeral=True)
+            await send_or_followup(inter, content="⚠️ 此指令只可在伺服器內使用。", ephemeral=True)
             return
 
         if (target_member is None and target_role is None) or (
             target_member is not None and target_role is not None
         ):
-            await inter.response.send_message(
+            await send_or_followup(inter, content=
                 "❌ 請只填其中一個：target_member 或 target_role（不可同時填）。",
                 ephemeral=True,
             )
@@ -155,21 +178,21 @@ class RoleManager(commands.Cog):
         guild = inter.guild
         role = guild.get_role(int(role_id)) if role_id.isdigit() else None
         if role is None:
-            await inter.response.send_message("❌ 找不到指定角色，請重新選擇。", ephemeral=True)
+            await send_or_followup(inter, content="❌ 找不到指定角色，請重新選擇。", ephemeral=True)
             return
 
         if isinstance(inter.user, discord.Member):
             is_admin = inter.user.guild_permissions.administrator or inter.user.guild_permissions.manage_guild
             if not is_admin and is_helper(inter.user) and role.id == MOD_ROLE_ID:
                 if target_member is None or target_member != inter.user:
-                    await inter.response.send_message(
+                    await send_or_followup(inter, content=
                         "⛔ Helper 只可為自己處理 @Mod 角色。",
                         ephemeral=True,
                     )
                     return
 
         if not bot_can_manage_role(self.bot, guild, role):
-            await inter.response.send_message(
+            await send_or_followup(inter, content=
                 "❌ Bot 沒有足夠權限或角色層級處理此角色。",
                 ephemeral=True,
             )
@@ -178,39 +201,42 @@ class RoleManager(commands.Cog):
         if target_member is not None:
             member = target_member
             if not bot_can_edit_member(self.bot, guild, member):
-                await inter.response.send_message(
+                await send_or_followup(inter, content=
                     "❌ Bot 無法修改此成員的角色（角色層級或身份限制）。",
                     ephemeral=True,
                 )
                 return
 
+            if not inter.response.is_done():
+                await inter.response.defer(ephemeral=True, thinking=True)
             try:
                 if mode == "add":
                     if role in member.roles:
-                        await inter.response.send_message("ℹ️ 此成員已擁有該角色。", ephemeral=True)
+                        await send_or_followup(inter, content="ℹ️ 此成員已擁有該角色。", ephemeral=True)
                         return
                     await member.add_roles(role, reason=f"/role_grant by {inter.user}")
-                    await inter.response.send_message(
+                    await send_or_followup(inter, content=
                         f"✅ 已為 {member.mention} 加上 {role.mention}。",
                         ephemeral=True,
                     )
                 else:
                     if role not in member.roles:
-                        await inter.response.send_message("ℹ️ 此成員沒有該角色。", ephemeral=True)
+                        await send_or_followup(inter, content="ℹ️ 此成員沒有該角色。", ephemeral=True)
                         return
                     await member.remove_roles(role, reason=f"/role_revoke by {inter.user}")
-                    await inter.response.send_message(
+                    await send_or_followup(inter, content=
                         f"✅ 已為 {member.mention} 移除 {role.mention}。",
                         ephemeral=True,
                     )
             except discord.Forbidden:
-                await inter.response.send_message("❌ Bot 沒有權限處理此角色。", ephemeral=True)
+                await send_or_followup(inter, content="❌ Bot 沒有權限處理此角色。", ephemeral=True)
             except Exception as exc:
-                await inter.response.send_message(f"⚠️ 出錯：{exc}", ephemeral=True)
+                await send_or_followup(inter, content=f"⚠️ 出錯：{exc}", ephemeral=True)
             return
 
         assert target_role is not None
-        await inter.response.defer(ephemeral=True)
+        if not inter.response.is_done():
+            await inter.response.defer(ephemeral=True)
 
         members = [member for member in guild.members if target_role in member.roles]
         if not include_bots:

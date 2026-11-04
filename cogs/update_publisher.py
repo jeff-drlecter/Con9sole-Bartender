@@ -307,26 +307,39 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
     def __init__(self, view: "DraftReviewView") -> None:
         super().__init__()
         self.review_view = view
+        self.revision = view.revision
         self.version.default = view.draft.version
         self.announcement_date.default = view.draft.announcement_date
         self.new_features.default = view.draft.body
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.review_view.draft = AnnouncementDraft(
-            kind=self.review_view.draft.kind,
-            title="Con9sole 更新公告",
-            body=self.new_features.value.strip(),
-            game_ids=self.review_view.draft.game_ids,
-            version=self.version.value.strip(),
-            announcement_date=self.announcement_date.value.strip(),
-        )
-        if self.review_view.message is not None:
-            await self.review_view.message.edit(
-                content=self.review_view.preview_content(),
-                embed=None,
-                view=self.review_view,
-            )
-        await interaction.response.send_message("✅ 草稿已更新。", ephemeral=True)
+        view = self.review_view
+        if interaction.user.id != view.owner_id or not _publisher_access_allowed(interaction):
+            await interaction.response.send_message("你已冇權限修改呢份草稿。", ephemeral=True)
+            return
+        if view.cancelled or view.publishing or view.published_message is not None or view.editing or view.revision != self.revision:
+            await interaction.response.send_message("草稿狀態已改，請重新開啟。", ephemeral=True)
+            return
+        candidate = AnnouncementDraft(
+            kind=view.draft.kind, title="Con9sole 更新公告", body=self.new_features.value.strip(),
+            game_ids=view.draft.game_ids, version=self.version.value.strip(),
+            announcement_date=self.announcement_date.value.strip())
+        preview = "以下係草稿預覽；未發佈。\n\n" + build_announcement_text(candidate, games=view.games)
+        if len(preview) > 2000:
+            await interaction.response.send_message("草稿超過 2,000 字，請縮短內容。", ephemeral=True)
+            return
+        view.editing = True
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            if view.message is not None:
+                await view.message.edit(content=preview, embed=None, view=view,
+                                        allowed_mentions=discord.AllowedMentions.none())
+            view.draft = candidate
+            view.revision += 1
+            await interaction.followup.send("✅ 草稿已更新。", ephemeral=True)
+        finally:
+            view.editing = False
+
 
 
 class DraftReviewView(discord.ui.View):
@@ -345,6 +358,9 @@ class DraftReviewView(discord.ui.View):
         self.games = games
         self.message: discord.InteractionMessage | None = None
         self.publishing = False
+        self.cancelled = False
+        self.editing = False
+        self.revision = 0
         self.published_message = None
 
     def embed(self) -> discord.Embed:
@@ -367,6 +383,9 @@ class DraftReviewView(discord.ui.View):
 
     @discord.ui.button(label="編輯", emoji="✏️", style=discord.ButtonStyle.secondary)
     async def edit_draft(self, interaction: discord.Interaction, _: discord.ui.Button["DraftReviewView"]) -> None:
+        if self.cancelled or self.publishing or self.editing or self.published_message is not None:
+            await interaction.response.send_message("草稿正在處理或已結束。", ephemeral=True)
+            return
         await interaction.response.send_modal(EditDraftModal(self))
 
     @discord.ui.button(label="發佈", emoji="📣", style=discord.ButtonStyle.success)
@@ -383,6 +402,9 @@ class DraftReviewView(discord.ui.View):
 
         # Acknowledge before any Discord request can exceed the interaction deadline.
         await interaction.response.defer()
+        if getattr(self, "cancelled", False) or getattr(self, "editing", False):
+            await interaction.followup.send("草稿已取消或正在編輯，未有發佈。", ephemeral=True)
+            return
         if self.published_message is not None:
             await interaction.followup.send(
                 f"✅ 呢份草稿已發佈，唔會重複發送：{self.published_message.jump_url}", ephemeral=True)
@@ -406,7 +428,7 @@ class DraftReviewView(discord.ui.View):
                 return
 
             try:
-                published_message = await channel.send(content=self.announcement_text())
+                published_message = await channel.send(content=self.announcement_text(), allowed_mentions=discord.AllowedMentions.none())
             except discord.DiscordException:
                 log.exception("Unable to publish update: channel=%s guild=%s", channel.id, guild.id)
                 await interaction.followup.send("❌ 發佈未能確認；請先查看公告頻道，確認冇出文先重試。", ephemeral=True)
@@ -434,6 +456,11 @@ class DraftReviewView(discord.ui.View):
 
     @discord.ui.button(label="取消", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def cancel_draft(self, interaction: discord.Interaction, _: discord.ui.Button["DraftReviewView"]) -> None:
+        if self.publishing or self.editing or self.published_message is not None:
+            await interaction.response.send_message("正在處理或已發佈，不能取消；請先查看公告頻道。", ephemeral=True)
+            return
+        self.cancelled = True
+        self.revision += 1
         self.stop()
         await interaction.response.edit_message(content="已取消草稿，未有發佈。", embed=None, view=None)
 

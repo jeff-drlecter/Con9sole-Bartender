@@ -25,7 +25,7 @@ class PublisherResponse(unittest.IsolatedAsyncioTestCase):
         self.channel = Channel()
         self.channel.send = AsyncMock(return_value=types.SimpleNamespace(id=99, jump_url='https://discord.com/message'))
         self.scope = dict(config=types.SimpleNamespace(ANNOUNCEMENT_CHANNEL_ID=30),
-                          discord=types.SimpleNamespace(TextChannel=Channel, DiscordException=self.error),
+                          discord=types.SimpleNamespace(TextChannel=Channel, DiscordException=self.error, AllowedMentions=types.SimpleNamespace(none=lambda:None)),
                           log=types.SimpleNamespace(exception=Mock()), mark_games_published=Mock())
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), self.scope)
         self.view = types.SimpleNamespace(publishing=False, published_message=None, children=[],

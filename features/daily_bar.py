@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import discord
 
-from core.sqlite_storage import connect_sqlite, enable_wal
+from core.sqlite_storage import connect_sqlite, enable_wal, initialize_once
 from core.storage_paths import DATA_DIR, STATS_DB
 
 log = logging.getLogger("con9sole-bartender.daily-bar")
@@ -69,6 +69,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
 )
 
 
+@initialize_once
 def init_daily_bar_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with connect_sqlite(STATS_DB) as conn:

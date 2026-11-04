@@ -3,6 +3,10 @@ from __future__ import annotations
 import atexit
 import logging
 import time
+import math
+import shutil
+import uuid
+from pathlib import Path
 
 from data.drink_data import DRINK_COOLDOWN_SECONDS
 from core.json_storage import atomic_write_json, load_json_object
@@ -21,9 +25,30 @@ def _default_drink_state() -> dict[str, object]:
 
 def _load_drink_state() -> dict[str, object]:
     raw = load_json_object(DRINK_STATE_PATH, _default_drink_state)
+    invalid = False
+    for key in ("cooldowns", "gift_cooldowns"):
+        data = raw.get(key, {})
+        cleaned = {}
+        if isinstance(data, dict):
+            for uid, value in data.items():
+                try:
+                    number = float(value)
+                    if not str(uid).isdigit() or not math.isfinite(number):
+                        raise ValueError("Invalid cooldown")
+                    cleaned[str(uid)] = number
+                except (TypeError, ValueError, OverflowError):
+                    invalid = True
+        else:
+            invalid = True
+        raw[key] = cleaned
+    recent = raw.get("recent_drinks", {})
+    if not isinstance(recent, dict):
+        invalid = True
+        raw["recent_drinks"] = {}
+    if invalid and Path(DRINK_STATE_PATH).exists():
+        shutil.copy2(DRINK_STATE_PATH, str(DRINK_STATE_PATH) + ".invalid-schema." + uuid.uuid4().hex)
+        log.error("Invalid drink state fields isolated after backing up original")
     raw.setdefault("version", 2)
-    raw.setdefault("cooldowns", {})
-    raw.setdefault("gift_cooldowns", {})
     raw.setdefault("recent_drinks", {})
     return raw
 

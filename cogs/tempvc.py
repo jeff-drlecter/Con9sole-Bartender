@@ -10,7 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from core.action_guard import claim_action
+from core.action_guard import claim_action, shared_async_lock
 from core.permissions import is_admin_or_helper
 from core.safe_send import send_or_followup
 from core.ui import SafeModal, SafeView
@@ -553,6 +553,7 @@ class TempVC(commands.Cog):
         self._sweeper_task: Optional[asyncio.Task] = None
         self._creating_for_members: set[int] = set()
         self._creation_lock = asyncio.Lock()
+        self._unloading = False
 
     async def cog_load(self) -> None:
         tempvc_storage.init_tempvc_db()
@@ -563,6 +564,7 @@ class TempVC(commands.Cog):
         await self.on_ready()
 
     async def cog_unload(self) -> None:
+        self._unloading = True
         tasks = [task for task in (getattr(self, "_startup_task", None), self._sweeper_task) if task is not None]
         for task in tasks:
             task.cancel()
@@ -691,7 +693,10 @@ class TempVC(commands.Cog):
             if room is not None:
                 await interaction.edit_original_response(content=f"🎧 你間小隊 call：{room.mention}", view=TempVCControlView(self, channel_id=room.id, guild_id=guild.id))
                 return
-            async with self._creation_lock:
+            async with shared_async_lock("voice-create", guild.id):
+                if self._unloading:
+                    await interaction.edit_original_response(content="功能正在重載，請重新開啟。")
+                    return
                 try:
                     room = await self._create_manual_temp_vc(
                         guild, _category_from_ctx_channel(interaction.channel), name=name,
@@ -1011,8 +1016,10 @@ class TempVC(commands.Cog):
                     return
                 self._creating_for_members.add(member.id)
                 try:
-                    async with self._creation_lock:
+                    async with shared_async_lock("voice-create", member.guild.id):
                         # A queued user may have left the hub while another room was created.
+                        if self._unloading:
+                            return
                         current = getattr(member, "voice", None)
                         if current is None or current.channel != after.channel:
                             return

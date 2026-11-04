@@ -36,6 +36,18 @@ DEDUP_TD_TTL = 8.0
 DEDUP_TW_TTL = 8.0
 
 
+def split_payload(text: str, byte_limit: int = 400) -> list[str]:
+    chunks, current, size = [], [], 0
+    for character in text:
+        width = len(character.encode("utf-8"))
+        if current and size + width > byte_limit:
+            chunks.append("".join(current)); current, size = [], 0
+        current.append(character); size += width
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
 def _norm_text(s: str) -> str:
     if not s:
         return ""
@@ -77,6 +89,9 @@ class TwitchRelay(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._send_lock = asyncio.Lock()
+        self._pending = 0
+        self._next_connect = 0.0
         self.twitch_bot: Optional[twitch_commands.Bot] = None
         self._connect_task: Optional[asyncio.Task] = None
         self.d2t_map: Dict[int, str] = {}
@@ -138,13 +153,15 @@ class TwitchRelay(commands.Cog):
                     msg_id = str(tags.get("id")) if "id" in tags else None
                 except Exception:
                     msg_id = None
-                if _seen_recent_tw(msg_id or f"{ch_name}:{message.author.name}:{text}"):
+                dedup_key = msg_id or f"{ch_name}:{message.author.name}:{text}"
+                if _seen_recent_tw(dedup_key):
                     log.info("⏩ [T→D] duplicate skipped (tw)")
                     return
 
                 dch_id = self.t2d_map.get(ch_name)
                 dch = await _safe_get_messageable_channel(self.bot, dch_id)
                 if not dch:
+                    _recent_tw_ids.pop(dedup_key, None)
                     log.error("❌ [T→D] 找不到 Discord 頻道 id=%s", dch_id)
                     return
 
@@ -155,11 +172,17 @@ class TwitchRelay(commands.Cog):
                     log.info("⏩ [T→D] duplicate skipped (td)")
                     return
 
+                delivered = 0
                 try:
-                    await dch.send(content, allowed_mentions=discord.AllowedMentions.none())
-                    log.info("✅ [T→D] -> %s(id=%s): %s", getattr(dch, 'name', 'unknown'), dch_id, content)
+                    for chunk in split_payload(content, 1800):
+                        await dch.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+                        delivered += 1
+                    log.info("Twitch relay delivered: channel=%s chars=%s", dch_id, len(content))
                 except Exception as e:
-                    log.exception("❌ [T→D] send 失敗：%s", e)
+                    if not delivered:
+                        _recent_tw_ids.pop(dedup_key, None)
+                        _recent_td.pop((dch_id, content), None)
+                    log.exception("Twitch relay delivery failed: channel=%s delivered_chunks=%s", dch_id, delivered)
 
         self.twitch_bot = _UnifiedTwitchBot(
             token=BOT_OAUTH,
@@ -222,45 +245,46 @@ class TwitchRelay(commands.Cog):
         if not text:
             return
 
-        log.info("📥 [D→T recv] ch=%s(id=%s) | %s",
-                 getattr(message.channel, 'name', 'unknown'),
-                 message.channel.id, text)
+        log.debug("Discord relay input: channel=%s message=%s chars=%s", message.channel.id, message.id, len(text))
 
         if not self.twitch_bot:
             log.error("❌ Twitch bot 未啟動")
             return
 
-        payload = f"{TAG_DISCORD} {message.author.name}: {text}"
-
+        if self._pending >= 100:
+            log.warning("Discord relay queue full: message=%s", message.id)
+            return
+        self._pending += 1
         try:
-            # 確保 WS 可用
-            ws = getattr(self.twitch_bot, "_websocket", None)
-            if ws is None or ws.closed or getattr(ws, "_closing", False):
-                log.warning("⚠️ [D→T] Twitch WS 關閉中，嘗試重連…")
-                await self.twitch_bot.connect()
-                await asyncio.sleep(2)
-
-            # 找對應 Twitch channel
-            chan = next((c for c in getattr(self.twitch_bot, "connected_channels", [])
-                         if getattr(c, "name", "").lower() == twitch_channel.lower()), None)
-            if chan is None:
-                await self.twitch_bot.join_channels([twitch_channel])
-                log.info("🔁 [D→T] join_channels -> #%s", twitch_channel)
-                await asyncio.sleep(1)
-                chan = next((c for c in getattr(self.twitch_bot, "connected_channels", [])
-                             if getattr(c, "name", "").lower() == twitch_channel.lower()), None)
-
-            if not chan:
-                log.error("❌ [D→T] 找不到 Twitch #%s（檢查 token 是否含 chat:edit）", twitch_channel)
-                return
-
-            await chan.send(payload)
-            log.info("✅ [D→T send] #%s | %s", twitch_channel, payload)
-
-        except aiohttp.client_exceptions.ClientConnectionResetError:
-            log.warning("⚠️ [D→T] Twitch 重連中，略過訊息。")
-        except Exception as e:
-            log.exception("❌ [D→T] send 失敗：%s", e)
+            async with self._send_lock:
+                if self.twitch_bot is None:
+                    return
+                if self._connect_task and not self._connect_task.done():
+                    await asyncio.wait_for(asyncio.shield(self._connect_task), timeout=15)
+                connection = getattr(self.twitch_bot, "_connection", None)
+                if connection is None or not connection.is_alive:
+                    if time.monotonic() < self._next_connect:
+                        return
+                    self._next_connect = time.monotonic() + 30
+                    await asyncio.wait_for(self.twitch_bot.connect(), timeout=15)
+                chan = next((c for c in self.twitch_bot.connected_channels
+                             if c.name.lower() == twitch_channel.lower()), None)
+                if chan is None:
+                    await self.twitch_bot.join_channels([twitch_channel])
+                    await asyncio.sleep(1)
+                    chan = next((c for c in self.twitch_bot.connected_channels
+                                 if c.name.lower() == twitch_channel.lower()), None)
+                if chan is None:
+                    log.warning("Relay target unavailable: channel=%s", twitch_channel)
+                    return
+                prefix = f"{TAG_DISCORD} {message.author.name}: "
+                for chunk in split_payload(text, max(1, 400 - len(prefix.encode("utf-8")))):
+                    await chan.send(prefix + chunk)
+                log.info("Discord relay delivered: channel=%s message=%s chars=%s", twitch_channel, message.id, len(text))
+        except Exception:
+            log.exception("Discord relay send failed: channel=%s message=%s", twitch_channel, message.id)
+        finally:
+            self._pending -= 1
 
 
 async def _safe_get_messageable_channel(bot: commands.Bot, channel_id: int) -> Optional[Messageable]:

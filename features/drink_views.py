@@ -3,6 +3,7 @@ from __future__ import annotations
 import discord
 
 from core.ui import SafeView
+from features.menu_stats import run_stats
 from data.drink_data import RARITY_STYLE
 from features.drink_embeds import (
     build_drink_collection_embed,
@@ -24,6 +25,9 @@ class DrinkCollectionView(SafeView):
         self.owner_id = owner_id
         self.guild = guild
         self.target_user = target_user
+        self.rarity_page = 0
+        self.active_rarity = None
+        self.page_lock = __import__("asyncio").Lock()
         self._add_rarity_buttons()
 
     def _add_rarity_buttons(self) -> None:
@@ -129,10 +133,19 @@ class DrinkCollectionRarityButton(discord.ui.Button):
             )
             return
 
-        embed = build_drink_collection_rarity_embed(
-            self.view.guild, self.view.target_user, self.rarity
-        )
-        await interaction.response.edit_message(embed=embed, view=self.view)
+        await interaction.response.defer()
+        async with self.view.page_lock:
+            self.view.active_rarity = self.rarity
+            self.view.rarity_page = 0
+            for child in list(self.view.children):
+                if isinstance(child, CollectionPageButton):
+                    self.view.remove_item(child)
+            self.view.add_item(CollectionPageButton(-1))
+            self.view.add_item(CollectionPageButton(1))
+            embed = await run_stats(build_drink_collection_rarity_embed,
+                                   self.view.guild, self.view.target_user, self.rarity, 0)
+            await interaction.edit_original_response(embed=embed, view=self.view)
+
 
 
 class DrinkCollectionRecentButton(discord.ui.Button):
@@ -168,6 +181,10 @@ class DrinkCollectionSummaryButton(discord.ui.Button):
             return
 
         await interaction.response.defer()
+        for child in list(self.view.children):
+            if isinstance(child, CollectionPageButton):
+                self.view.remove_item(child)
+        self.view.active_rarity = None
         embed = build_drink_collection_embed(self.view.guild, self.view.target_user)
         await interaction.edit_original_response(embed=embed, view=self.view)
         if self.view.owner_id == self.view.target_user.id:
@@ -257,6 +274,29 @@ class CollectionTitleSelect(discord.ui.Select):
         await interaction.edit_original_response(
             embed=build_drink_collection_embed(view.guild, view.target_user), view=view
         )
+
+
+class CollectionPageButton(discord.ui.Button):
+    def __init__(self, direction):
+        super().__init__(label="上一頁" if direction < 0 else "下一頁", row=4,
+                         style=discord.ButtonStyle.secondary)
+        self.direction = direction
+
+    async def callback(self, interaction):
+        view = self.view
+        if not isinstance(view, DrinkCollectionView) or view.active_rarity is None:
+            return
+        await interaction.response.defer()
+        async with view.page_lock:
+            from features.drink_storage import fetch_collection_rows
+            from features.drink_constants import COLLECTION_PAGE_LIMIT
+            rows = await run_stats(fetch_collection_rows, view.guild.id if view.guild else None,
+                                   view.target_user.id, rarity=view.active_rarity)
+            last = max(0, (len(rows) - 1) // COLLECTION_PAGE_LIMIT)
+            view.rarity_page = max(0, min(last, view.rarity_page + self.direction))
+            embed = await run_stats(build_drink_collection_rarity_embed,
+                                   view.guild, view.target_user, view.active_rarity, view.rarity_page)
+            await interaction.edit_original_response(embed=embed, view=view)
 
 
 class FeatureButton(discord.ui.Button):

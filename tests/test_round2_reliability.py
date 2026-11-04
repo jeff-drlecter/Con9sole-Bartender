@@ -49,7 +49,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         first = datetime(2026,11,4,10,tzinfo=ar.TZ)
         a = ar.Activity('a','game',1,2,[ar.Schedule([2],'10:00'),ar.Schedule([2],'11:00')])
         channel = MagicMock(spec=discord.TextChannel); channel.send = AsyncMock()
-        role = types.SimpleNamespace(mention='role')
+        role = types.SimpleNamespace(id=2, mention='role')
         await cog._send_if_needed(None, channel, role, a, 0, first, 'start')
         a.schedules.pop(0)
         await cog._send_if_needed(None, channel, role, a, 0, first+timedelta(hours=1), 'start')
@@ -101,14 +101,14 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
     async def test_confession_acknowledged_and_duplicate_blocked(self):
         cog=cf.Confession(MagicMock()); started,release=asyncio.Event(),asyncio.Event()
         def interaction():
-            return types.SimpleNamespace(user=types.SimpleNamespace(id=999),response=types.SimpleNamespace(defer=AsyncMock(),send_message=AsyncMock()),followup=types.SimpleNamespace(send=AsyncMock()))
+            return types.SimpleNamespace(guild=object(),channel=object(),permissions=discord.Permissions(view_channel=True,send_messages=True),user=types.SimpleNamespace(id=999),response=types.SimpleNamespace(defer=AsyncMock(),send_message=AsyncMock()),followup=types.SimpleNamespace(send=AsyncMock()))
         i,j=interaction(),interaction()
         async def send(**kwargs):
             i.response.defer.assert_awaited_once(); started.set(); await release.wait()
         channel=types.SimpleNamespace(send=AsyncMock(side_effect=send))
         with patch.object(cog,'_target_channel',return_value=channel),patch.dict(cf.USER_CONFESSION_COOLDOWNS,{},clear=True):
             task=asyncio.create_task(cog.submit_confession(i,'hello'))
-            await started.wait(); await cog.submit_confession(j,'again')
+            await asyncio.wait_for(started.wait(), 2); await cog.submit_confession(j,'again')
             channel.send.assert_awaited_once(); j.response.send_message.assert_awaited_once()
             release.set(); await task
             self.assertGreater(cf.get_retry_after(999),0)

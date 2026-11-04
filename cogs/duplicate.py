@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Any
 
 import discord
@@ -170,6 +171,7 @@ def _derive_version_role_name(
     source_role: discord.Role,
     source_forum: discord.ForumChannel,
     new_game: str,
+    created_ids: list[str],
 ) -> str:
     """Preserve the source role's naming convention when its game name is identifiable."""
     source_game = _normalise_version_base(source_forum.name)
@@ -215,7 +217,7 @@ def _clone_forum_overwrites(
     return overwrites
 
 
-async def add_game_version(
+async def _add_game_version(
     guild: discord.Guild,
     *,
     source_forum: discord.ForumChannel,
@@ -228,6 +230,8 @@ async def add_game_version(
         raise RuntimeError("來源 Forum 冇所屬 Category。")
 
     base_name = _normalise_version_base(new_game)
+    if len(base_name) > 80 or source_forum.overwrites_for(source_role).is_empty():
+        raise RuntimeError("名稱過長，或來源角色未設定獨立 Forum 權限。")
     forum_name = f"{base_name}-專區"
     role_name = _derive_version_role_name(source_role, source_forum, base_name)
 
@@ -243,6 +247,7 @@ async def add_game_version(
             mentionable=source_role.mentionable,
             reason=f"Create role for new game version from {source_forum.name}",
         )
+        created_ids.append(f"role:{new_role.id}")
         try:
             new_role = await new_role.edit(position=source_role.position)
         except Exception:
@@ -266,6 +271,7 @@ async def add_game_version(
         **_build_forum_kwargs(source_forum),
     )
 
+    created_ids.append(f"forum:{new_forum.id}")
     try:
         await new_forum.edit(position=source_forum.position)
     except Exception:
@@ -290,11 +296,18 @@ async def add_game_version(
     )
 
 
-async def add_new_game(
+async def _add_new_game(
     client: discord.Client,
     guild: discord.Guild,
     game_name: str,
+    created_ids: list[str],
 ) -> str:
+    game_name = game_name.strip()
+    if not 1 <= len(game_name) <= 80:
+        raise RuntimeError("遊戲名稱需為 1–80 字。")
+    category_name = config.CATEGORY_NAME_PATTERN.format(game=game_name)
+    if any(c.name.casefold() == category_name.casefold() for c in guild.categories):
+        raise RuntimeError("同名遊戲專區已存在，請使用新增版本。")
     template_category = await _get_template_category(client, guild)
     all_channels = await guild.fetch_channels()
     template_children = sorted(
@@ -325,14 +338,16 @@ async def add_new_game(
             reason="Create game role",
         )
 
-    category_name = config.CATEGORY_NAME_PATTERN.format(game=game_name)
+        created_ids.append(f"role:{new_role.id}")
+
+    private_overwrites = make_private_overwrites(guild, [new_role], _admin_roles(guild))
     new_category = await guild.create_category(
         name=category_name,
         reason="Create new game section",
+        overwrites=private_overwrites,
     )
 
-    private_overwrites = make_private_overwrites(guild, [new_role], _admin_roles(guild))
-    await new_category.edit(overwrites=private_overwrites)
+    created_ids.append(f"category:{new_category.id}")
 
     created_forum: discord.ForumChannel | None = None
     first_source_forum: discord.ForumChannel | None = None
@@ -370,16 +385,13 @@ async def add_new_game(
             )
             created = created_forum
 
+        created_ids.append(f"channel:{created.id}")
+        if isinstance(source, discord.ForumChannel):
+            await copy_forum_tags(source, created)
         try:
             await created.edit(position=source.position)
         except Exception:
             log.exception("Failed to position duplicated channel: channel=%s", created.id)
-
-    if first_source_forum is not None and created_forum is not None:
-        try:
-            await copy_forum_tags(first_source_forum, created_forum)
-        except Exception:
-            log.exception("Failed to copy tags to duplicated forum: forum=%s", created_forum.id)
 
     fallback = getattr(config, "FALLBACK_CHANNELS", {}) or {}
     if fallback:
@@ -420,6 +432,29 @@ async def add_new_game(
         f"新分區：#{new_category.name}；新角色：{new_role.name}\n"
         "📝 已記錄到 Update Publisher；如要公告，請喺 Admin Tool 建立草稿（唔會自動發佈）。"
     )
+
+
+_GAME_LOCKS = {}
+
+
+async def _game_operation(guild, operation, **kwargs):
+    lock = _GAME_LOCKS.setdefault(guild.id, asyncio.Lock())
+    async with lock:
+        created = []
+        try:
+            return await operation(guild=guild, created_ids=created, **kwargs)
+        except Exception as exc:
+            log.exception("Game operation failed; created resources=%s", created)
+            raise RuntimeError(f"建立未完成；本次已新增：{', '.join(created) or '無頻道'}。請先檢查，避免重複建立。錯誤：{type(exc).__name__}") from exc
+
+
+async def add_game_version(guild, *, source_forum, source_role, new_game):
+    return await _game_operation(guild, _add_game_version, source_forum=source_forum,
+                                 source_role=source_role, new_game=new_game)
+
+
+async def add_new_game(client, guild, game_name):
+    return await _game_operation(guild, _add_new_game, client=client, game_name=game_name)
 
 
 class Duplicate(commands.Cog):

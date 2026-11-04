@@ -11,6 +11,7 @@ import os
 import re
 import uuid
 import shutil
+import math
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple
@@ -129,6 +130,8 @@ def _parse_weekdays(s: str) -> List[int]:
         else:
             add_day_token(p)
 
+    if not out:
+        raise ValueError("請至少選擇一日。")
     return sorted(set(out))
 
 
@@ -272,8 +275,11 @@ class ActivityReminder(commands.Cog):
         self._last_tick = now
 
         if now.minute == 0 and now.hour == 0:
-            self._prune_cache(days=3)
-            self._save()
+            try:
+                self._prune_cache(days=3)
+                self._save()
+            except Exception:
+                log.exception("Reminder cache maintenance failed; continuing reminders")
 
         for act in list(self.activities.values()):
             guild = self.bot.get_guild(int(config.GUILD_ID))
@@ -288,12 +294,12 @@ class ActivityReminder(commands.Cog):
             if role is None:
                 continue
 
-            for idx, sch in enumerate(act.schedules):
+            for sch in list(act.schedules):
                 for lag in range(3):
                     scheduled = now - timedelta(minutes=lag)
                     for kind, event_dt in (("start", scheduled), ("pre", scheduled + timedelta(minutes=REMIND_BEFORE_MINUTES))):
                         if self._matches_datetime(sch, event_dt):
-                            await self._send_if_needed(guild, channel, role, act, idx, event_dt, kind=kind)
+                            await self._send_if_needed(guild, channel, role, act, sch, event_dt, kind=kind)
 
     @_tick.before_loop
     async def _before_tick(self):
@@ -315,7 +321,9 @@ class ActivityReminder(commands.Cog):
         event_dt: datetime,
         kind: str,
     ):
-        schedule = act.schedules[schedule_idx]
+        schedule = act.schedules[schedule_idx] if isinstance(schedule_idx, int) else schedule_idx
+        if not any(s.id == schedule.id for s in act.schedules):
+            return
         k = f"{act.id}|{schedule.id}|{event_dt.date().isoformat()}|{kind}:{event_dt.strftime('%H:%M')}"
         if k in self.sent_cache:
             return
@@ -324,9 +332,12 @@ class ActivityReminder(commands.Cog):
         weekday_txt = ["一", "二", "三", "四", "五", "六", "日"][event_dt.weekday()]
 
         if kind == "pre":
+            remaining = max(0, math.ceil((event_dt - _now()).total_seconds() / 60))
+            if remaining <= 0:
+                return
             content = (
                 f"{role.mention}\n"
-                f"提醒：**{act.name}** 將於 **{when}（週{weekday_txt}）** 開始，仲有 **{REMIND_BEFORE_MINUTES} 分鐘**。"
+                f"提醒：**{act.name}** 將於 **{when}（週{weekday_txt}）** 開始，仲有 **{remaining} 分鐘**。"
             )
         else:
             content = (
@@ -335,7 +346,8 @@ class ActivityReminder(commands.Cog):
             )
 
         try:
-            await channel.send(content)
+            await channel.send(content, allowed_mentions=discord.AllowedMentions(
+                roles=[discord.Object(id=role.id)], users=False, everyone=False, replied_user=False))
             self.sent_cache[k] = _now().isoformat()
             self._save()
         except Exception:
@@ -377,6 +389,9 @@ class ActivityReminder(commands.Cog):
             await inter.response.send_message(f"❌ {e}", ephemeral=True)
             return
 
+        if not name.strip() or len(name.strip()) > 100:
+            await inter.response.send_message("活動名稱需為 1–100 字。", ephemeral=True)
+            return
         act_id = self._new_activity_id()
         act = Activity(
             id=act_id,
@@ -425,6 +440,9 @@ class ActivityReminder(commands.Cog):
             await inter.response.send_message(f"❌ {e}", ephemeral=True)
             return
 
+        if any(s.weekdays == wd and s.time_hhmm == hhmm for s in act.schedules) or len(act.schedules) >= 30:
+            await inter.response.send_message("時段已存在，或已達 30 個時段上限。", ephemeral=True)
+            return
         new_s = Schedule(weekdays=wd, time_hhmm=hhmm)
         act.schedules.append(new_s)
         self._save()
@@ -461,6 +479,9 @@ class ActivityReminder(commands.Cog):
             await inter.response.send_message("ℹ️ 無任何更改。", ephemeral=True)
             return
 
+        if name is not None and not 1 <= len(name.strip()) <= 100:
+            await inter.response.send_message("活動名稱需為 1–100 字。", ephemeral=True)
+            return
         if channel is not None:
             act.channel_id = channel.id
         if ping_role is not None:

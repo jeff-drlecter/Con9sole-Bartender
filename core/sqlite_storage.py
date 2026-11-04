@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+from functools import wraps
+from threading import RLock
 from pathlib import Path
 
 SQLITE_TIMEOUT_SECONDS = 5.0
@@ -28,3 +30,17 @@ def connect_sqlite(path: str | Path) -> sqlite3.Connection:
 def enable_wal(connection: sqlite3.Connection) -> None:
     """Enable persistent WAL mode during schema initialization."""
     connection.execute("PRAGMA journal_mode=WAL")
+
+
+def initialize_once(function):
+    lock, initialized = RLock(), set()
+    @wraps(function)
+    def wrapper():
+        path = Path(function.__globals__["STATS_DB"])
+        with lock:
+            key = (str(path.resolve()), path.stat().st_ino if path.exists() else None)
+            if key in initialized:
+                return
+            function()
+            initialized.add((str(path.resolve()), path.stat().st_ino))
+    return wrapper
