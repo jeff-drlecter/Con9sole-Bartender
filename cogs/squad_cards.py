@@ -15,6 +15,9 @@ import config
 from core.json_storage import atomic_write_json, load_json_object
 from core.permissions import is_admin_or_helper
 from core.storage_paths import DATA_DIR
+from core.ui import SafeView
+from features import squad_interest
+from features.menu_stats import run_stats
 
 log = logging.getLogger(__name__)
 TARGET = discord.Object(id=config.GUILD_ID)
@@ -211,17 +214,57 @@ class CardView(discord.ui.View):
             view=RecruitmentChoices(self.cog, self.key, session), ephemeral=True)
 
 
+def interest_topic(channel, session):
+    # Freeze the final game/mode when converting a room to a footprint.
+    if session.get("interest_topic"):
+        return session["interest_topic"]
+    profile = game_profile(channel, session)
+    game = session.get("game") or GAME_LABELS.get(profile, "")
+    if not game:
+        category = getattr(channel, "category", None)
+        game = getattr(category, "name", "")
+    return squad_interest.topic(config.GUILD_ID, game, session.get("mode", ""))
+
+
+class FootprintView(SafeView):
+    def __init__(self, cog, value):
+        super().__init__(timeout=None)
+        self.cog, self.topic = cog, value
+        button = discord.ui.Button(label="🙋 下次預埋我", style=discord.ButtonStyle.primary,
+                                   custom_id=f"squad-interest:{value['id']}")
+        button.callback = self.toggle
+        self.add_item(button)
+
+    async def toggle(self, interaction):
+        if interaction.guild_id != self.topic["guild_id"] or interaction.user.bot:
+            await interaction.response.send_message("請喺原本伺服器使用。", ephemeral=True)
+            return
+        permissions = interaction.permissions
+        if not permissions.view_channel:
+            await interaction.response.send_message("你未有查看呢個頻道嘅權限。", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        joined = await run_stats(squad_interest.toggle, self.topic['id'], interaction.guild_id, interaction.user.id)
+        label = discord.utils.escape_markdown(self.topic['label'])
+        text = (f"🙋 已加入 **{label}** 通知名單，下次同款開局會自動 tag 你。再撳一次就取消。"
+                if joined else f"已取消 **{label}** 開局通知。")
+        await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+
 class SquadCards(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.path = os.getenv("SQUAD_CARDS_PATH", str(DATA_DIR / "squad_cards.json"))
         self.state = load_json_object(self.path, lambda: {"settings": {}, "sessions": {}})
+        self.interest_baseline = {s["id"] for s in self.state["sessions"].values() if s.get("message")}
         self.lock = asyncio.Lock()
         self.arrivals = {}
         self.last_error = None
         for key, session in self.state["sessions"].items():
             if session.get("message"):
                 bot.add_view(CardView(self, key, session), message_id=session["message"])
+        for value in squad_interest.topics():
+            bot.add_view(FootprintView(self, value))
         self.tick.start()
 
     def save(self):
@@ -243,7 +286,7 @@ class SquadCards(commands.Cog):
         mode = discord.utils.escape_markdown(session.get("mode", ""))
         missing = session.get("missing")
         if ended:
-            title, description, colour = "🏁 今晚收工，下次再戰！", "👣 今次留個足跡，下次預埋你。", 0x808080
+            title, description, colour = "🏁 今晚收工，下次再戰！", "👣 今次留個足跡，下次預埋你。\n想下次加入？撳「下次預埋我」，再撳就取消。", 0x808080
         elif missing is not None and missing > 0:
             title, description, colour = f"🙌 缺 {missing} 人，一齊玩！", "想加入？撳下面按鈕開啟語音頻道。", 0x57F287
         else:
@@ -263,13 +306,21 @@ class SquadCards(commands.Cog):
                             value=f"<t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t>")
         else:
             embed.add_field(name="📍 入呢個 call", value=f"<#{channel.id}>", inline=False)
-        view = None if ended else CardView(self, str(channel.id), session)
+        value = interest_topic(channel, session)
+        if ended and value:
+            session["interest_topic"] = value
+            await run_stats(squad_interest.remember, value)
+        view = (FootprintView(self, value) if value else None) if ended else CardView(self, str(channel.id), session)
         kwargs = dict(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         if session.get("message"):
             try:
                 message = await destination.fetch_message(session["message"])
                 await message.edit(content=None if ended else message.content, **kwargs)
                 session["dirty"] = False
+                if ended and value:
+                    self.bot.add_view(FootprintView(self, value))
+                if not ended:
+                    await self.notify_interested(channel, session)
                 return
             except discord.NotFound:
                 if ended:
@@ -284,6 +335,44 @@ class SquadCards(commands.Cog):
         session["message"] = message.id
         session["dirty"] = False
         self.save()
+        if not ended:
+            await self.notify_interested(channel, session)
+
+    async def notify_interested(self, channel, session):
+        try:
+            if session['id'] in self.interest_baseline:
+                return  # Deployments never tag people for a game already in progress.
+            value = interest_topic(channel, session)
+            if value is None:
+                return
+            destination = self.bot.get_channel(session['destination'])
+            guild = channel.guild
+            ids = await run_stats(squad_interest.members, value['id'])
+            present = {m.id for m in humans(channel)}
+            eligible = []
+            for uid in ids:
+                member = guild.get_member(uid)
+                if member is None or member.bot or uid in present:
+                    continue
+                voice_perms = channel.permissions_for(member)
+                text_perms = destination.permissions_for(member)
+                if voice_perms.view_channel and voice_perms.connect and text_perms.view_channel:
+                    eligible.append(uid)
+            selected = await run_stats(squad_interest.reserve, session['id'], value['id'], eligible)
+            if not selected:
+                return
+            label = discord.utils.escape_markdown(value['label'])
+            url = f"https://discord.com/channels/{guild.id}/{destination.id}/{session['message']}"
+            for index in range(0, len(selected), 20):
+                batch = selected[index:index + 20]
+                mentions = " ".join(f"<@{uid}>" for uid in batch)
+                await destination.send(
+                    f"{mentions}\n🎮 **{label}** 開局喇！你之前揀咗「下次預埋我」。\n{url}",
+                    allowed_mentions=discord.AllowedMentions(
+                        users=[discord.Object(id=uid) for uid in batch], roles=False,
+                        everyone=False, replied_user=False))
+        except Exception:
+            log.exception("Next-session notification failed: session=%s", session.get('id'))
 
     async def reconcile(self):
         guild = self.bot.get_guild(config.GUILD_ID)
