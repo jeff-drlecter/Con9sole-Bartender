@@ -566,7 +566,7 @@ class SquadCards(commands.Cog):
                     url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
                 await destination.send(
                     f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
-                    view=view,
+                    view=view, suppress_embeds=True,
                     allowed_mentions=discord.AllowedMentions(
                         users=[discord.Object(id=uid) for uid in batch], roles=False,
                         everyone=False, replied_user=False))
