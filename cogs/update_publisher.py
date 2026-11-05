@@ -69,7 +69,7 @@ class PublisherStartView(discord.ui.View):
 
     @discord.ui.button(label="功能更新", emoji="✨", style=discord.ButtonStyle.primary)
     async def feature_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
-        await interaction.response.send_modal(AnnouncementDetailsModal(kind="feature", games=[], guild_id=interaction.guild_id or 0))
+        await send_version_picker(interaction, kind="feature", games=[])
 
     @discord.ui.button(label="遊戲更新", emoji="🎮", style=discord.ButtonStyle.success)
     async def game_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
@@ -125,7 +125,7 @@ class PendingGameSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         selected_games = [self.games_by_id[game_id] for game_id in self.values if game_id in self.games_by_id]
-        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=selected_games, guild_id=interaction.guild_id or 0))
+        await send_version_picker(interaction, kind="game", games=selected_games)
 
 
 class PendingGameSelectionView(discord.ui.View):
@@ -240,7 +240,7 @@ class ContinueForumMappingButton(discord.ui.Button):
                     role_id=role.id,
                 )
             )
-        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=games, guild_id=interaction.guild_id or 0))
+        await send_version_picker(interaction, kind="game", games=games)
 
 
 class ForumRoleMappingView(discord.ui.View):
@@ -261,12 +261,69 @@ class ForumRoleMappingView(discord.ui.View):
         return False
 
 
-class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
-    version = discord.ui.TextInput(
-        label="版本",
-        placeholder="例如 v3.8.0",
-        max_length=32,
+class VersionChoiceButton(discord.ui.Button):
+    def __init__(self, label: str, version: str) -> None:
+        super().__init__(label=f"{label} · {version}", style=discord.ButtonStyle.primary)
+        self.version = version
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, VersionSelectionView):
+            return
+        if view.review_view is not None:
+            review = view.review_view
+            if review.cancelled or review.publishing or review.editing or review.published_message is not None or review.revision != view.revision:
+                await interaction.response.send_message("草稿狀態已改，請重新開啟。", ephemeral=True)
+                return
+            await interaction.response.send_modal(EditDraftModal(review, version=self.version))
+        else:
+            await interaction.response.send_modal(AnnouncementDetailsModal(
+                kind=view.kind, games=view.games, guild_id=view.guild_id, version=self.version))
+
+
+class VersionSelectionView(discord.ui.View):
+    def __init__(self, *, owner_id: int, guild_id: int, kind: str,
+                 games: list[PendingGame], review_view: "DraftReviewView | None" = None) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.kind = kind
+        self.games = games
+        self.review_view = review_view
+        self.revision = review_view.revision if review_view is not None else 0
+        latest = latest_announcement_version(guild_id)
+        if review_view is not None:
+            self.add_item(VersionChoiceButton("保留版本", review_view.draft.version))
+        if latest is None:
+            self.add_item(VersionChoiceButton("首次公告", "v1.0.0"))
+        else:
+            major, minor, patch = latest
+            for label, version in (
+                ("修訂", f"v{major}.{minor}.{patch + 1}"),
+                ("小更新", f"v{major}.{minor + 1}.0"),
+                ("大更新", f"v{major + 1}.0.0"),
+            ):
+                if parse_announcement_version(version) is not None:
+                    self.add_item(VersionChoiceButton(label, version))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id and _publisher_access_allowed(interaction):
+            return True
+        await interaction.response.send_message("❌ 呢個選單只限建立者使用。", ephemeral=True)
+        return False
+
+
+async def send_version_picker(interaction: discord.Interaction, *, kind: str,
+                              games: list[PendingGame], review_view: "DraftReviewView | None" = None) -> None:
+    await interaction.response.send_message(
+        "揀今次公告版本；揀完再填日期及內容，之後會先顯示草稿預覽。",
+        view=VersionSelectionView(owner_id=interaction.user.id, guild_id=interaction.guild_id or 0,
+                                  kind=kind, games=games, review_view=review_view),
+        ephemeral=True,
     )
+
+
+class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
     announcement_date = discord.ui.TextInput(
         label="日期",
         placeholder="例如 17.09.2026",
@@ -279,18 +336,21 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
         max_length=800,
     )
 
-    def __init__(self, *, kind: str, games: list[PendingGame], guild_id: int = 0) -> None:
+    def __init__(self, *, kind: str, games: list[PendingGame], guild_id: int = 0, version: str = "v1.0.0") -> None:
         super().__init__()
         self.kind = kind
         self.games = games
-        self.version.placeholder = version_guidance(guild_id)[:100]
+        self.version = version
         self.announcement_date.default = _today_hong_kong()
         if kind == "game" and games:
             game_names = "、".join(game.name for game in games)
             self.new_features.default = f"新增 {game_names} 遊戲專區"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if parse_announcement_version(self.version.value) is None:
+        if not _publisher_access_allowed(interaction):
+            await interaction.response.send_message("❌ 需要 Admin、Manage Server 或 Helper 權限。", ephemeral=True)
+            return
+        if parse_announcement_version(self.version) is None:
             await interaction.response.send_message("版本請填 v大.小.修訂，例如 v3.9.0（亦接受 v3.9）。", ephemeral=True)
             return
         draft = AnnouncementDraft(
@@ -298,14 +358,13 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
             title="Con9sole 更新公告",
             body=self.new_features.value.strip(),
             game_ids=tuple(game.id for game in self.games),
-            version=self.version.value.strip(),
+            version=self.version.strip(),
             announcement_date=self.announcement_date.value.strip(),
         )
         await send_draft_preview(interaction, draft, self.games)
 
 
 class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
-    version = discord.ui.TextInput(label="版本", max_length=32)
     announcement_date = discord.ui.TextInput(label="日期", max_length=32)
     new_features = discord.ui.TextInput(
         label="新功能（每行一項）",
@@ -313,12 +372,11 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
         max_length=800,
     )
 
-    def __init__(self, view: "DraftReviewView") -> None:
+    def __init__(self, view: "DraftReviewView", *, version: str | None = None) -> None:
         super().__init__()
         self.review_view = view
         self.revision = view.revision
-        self.version.default = view.draft.version
-        self.version.placeholder = version_guidance(view.guild_id)[:100]
+        self.version = version or view.draft.version
         self.announcement_date.default = view.draft.announcement_date
         self.new_features.default = view.draft.body
 
@@ -332,7 +390,7 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
             return
         candidate = AnnouncementDraft(
             kind=view.draft.kind, title="Con9sole 更新公告", body=self.new_features.value.strip(),
-            game_ids=view.draft.game_ids, version=self.version.value.strip(),
+            game_ids=view.draft.game_ids, version=self.version.strip(),
             announcement_date=self.announcement_date.value.strip())
         if parse_announcement_version(candidate.version) is None:
             await interaction.response.send_message("版本請填 v大.小.修訂，例如 v3.9.0（亦接受 v3.9）。", ephemeral=True)
@@ -399,7 +457,7 @@ class DraftReviewView(discord.ui.View):
         if self.cancelled or self.publishing or self.editing or self.published_message is not None:
             await interaction.response.send_message("草稿正在處理或已結束。", ephemeral=True)
             return
-        await interaction.response.send_modal(EditDraftModal(self))
+        await send_version_picker(interaction, kind=self.draft.kind, games=self.games, review_view=self)
 
     @discord.ui.button(label="發佈", emoji="📣", style=discord.ButtonStyle.success)
     async def publish_draft(self, interaction: discord.Interaction, _: discord.ui.Button["DraftReviewView"]) -> None:
