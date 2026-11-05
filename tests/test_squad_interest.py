@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
-from cogs.squad_cards import SquadCards, FootprintView, InterestRosterPages, interest_topic, interest_summary, interest_roster
+from cogs.squad_cards import add_interest_fields, SquadCards, FootprintView, InterestRosterPages, interest_topic, interest_summary, interest_roster
 from features import squad_interest as storage
 from quick_bar_fakes import interaction
 
@@ -113,17 +113,17 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         await view.toggle(i)
         edited = message.edit.call_args.kwargs
         self.assertEqual(edited['embed'].fields[0].name, '一齊玩過')
-        self.assertEqual(edited['embed'].fields[-2].value, '<@10>')
+        self.assertEqual(len(edited['embed'].fields), 1)
         self.assertEqual(edited['allowed_mentions'].to_dict(), {'parse': []})
         message.embeds = [edited['embed']]
         await view.toggle(i)
         embed = message.edit.call_args.kwargs['embed']
-        self.assertEqual(len(embed.fields), 3)
-        self.assertIn('0 人', embed.fields[-1].name)
-        self.assertNotIn('<@10>', embed.fields[-1].value)
+        self.assertEqual(len(embed.fields), 1)
+        self.assertEqual(embed.fields[0].value, 'Jeff')
         storage.toggle(self.topic['id'], 1, 11)
         await view.show_roster(i)
-        self.assertIn('<@11>', message.edit.call_args.kwargs['embed'].fields[-2].value)
+        self.assertEqual(len(message.edit.call_args.kwargs['embed'].fields), 1)
+        self.assertIn('<@11>', i.followup.send.call_args.kwargs['embed'].description)
         self.assertTrue(i.followup.send.call_args.kwargs['ephemeral'])
         self.assertEqual(i.followup.send.call_args.kwargs['allowed_mentions'].to_dict(), {'parse': []})
         view.stop()
@@ -142,8 +142,12 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
                                         user=types.SimpleNamespace(id=99))
         await asyncio.gather(views[0].toggle(i), views[1].toggle(j))
         self.assertEqual(storage.members(self.topic['id']), [10, 11])
-        self.assertIn('<@10>', message.edit.call_args.kwargs['embed'].fields[-2].value)
-        self.assertIn('<@11>', message.edit.call_args.kwargs['embed'].fields[-2].value)
+        self.assertEqual(len(message.edit.call_args.kwargs['embed'].fields), 1)
+        await views[0].show_roster(i)
+        private = i.followup.send.call_args.kwargs
+        self.assertTrue(private['ephemeral'])
+        self.assertIn('<@10>', private['embed'].description)
+        self.assertIn('<@11>', private['embed'].description)
         for view in views: view.stop()
 
     async def test_refresh_failure_keeps_subscription_and_reports_saved(self):
@@ -176,12 +180,12 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         view = CardView(cog, '20', session)
         i.message = live
         await view.toggle(i)
-        self.assertIn('<@10>', footprint.edit.call_args.kwargs['embed'].fields[-2].value)
+        self.assertEqual(len(footprint.edit.call_args.kwargs['embed'].fields), 1)
         self.assertIsInstance(live.edit.call_args.kwargs['view'], CardView)
         self.assertEqual(storage.reserve('current', self.topic['id'], [10]), [])
         self.assertEqual(storage.reserve('next', self.topic['id'], [10]), [10])
         await cog.refresh_interest_cards(self.topic)
-        self.assertNotIn('<@10>', footprint.edit.call_args.kwargs['embed'].fields[-2].value)
+        self.assertEqual(len(footprint.edit.call_args.kwargs['embed'].fields), 1)
         self.assertEqual(storage.preferences(self.topic['id']), {})
         view.stop()
 
@@ -249,3 +253,15 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(storage.preferences('old-park'), {10: 'once', 11: 'always'})
                 storage.initialize.__wrapped__()
                 self.assertEqual(storage.preferences(canonical), {10: 'once', 11: 'always'})
+
+
+class HiddenRosterTests(unittest.TestCase):
+    def test_old_roster_fields_removed_without_removing_participants(self):
+        embed = discord.Embed(title="足跡")
+        embed.add_field(name="一齊玩過", value="Jeff")
+        for name in ("🙋 下次叫埋 · 1 人", "🔔 每次都叫 · 1 人", "🙋 下次想玩"):
+            embed.add_field(name=name, value="<@123>")
+        add_interest_fields(embed, [(123, "Player")], {123: "once"})
+        self.assertEqual([(field.name, field.value) for field in embed.fields], [("一齊玩過", "Jeff")])
+        add_interest_fields(embed, [(123, "Player")], {123: "always"})
+        self.assertEqual(len(embed.fields), 1)

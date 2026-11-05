@@ -273,12 +273,10 @@ class InterestRosterPages(SafeView):
 
 
 def add_interest_fields(embed, roster, preferences):
+    """Remove legacy public subscription fields; rosters are button-only."""
     for index in reversed(range(len(embed.fields))):
         if embed.fields[index].name.startswith((INTEREST_FIELD, RECURRING_FIELD, "🙋 下次想玩")):
             embed.remove_field(index)
-    for kind, label in (("once", INTEREST_FIELD), ("always", RECURRING_FIELD)):
-        group = [(uid, name) for uid, name in roster if preferences.get(uid) == kind]
-        embed.add_field(name=f"{label} · {len(group)} 人", value=interest_summary(group), inline=False)
 
 
 class FootprintView(SafeView):
@@ -363,7 +361,7 @@ class FootprintView(SafeView):
         else:
             text = f"🔔 記低咗，以後每次 **{label}** 開局都叫你！再撳就取消。"
         if not refreshed:
-            text += "\n登記已儲存；卡上名單暫時未更新，可撳「查看／更新名單」重試。"
+            text += "\n登記已儲存；卡片暫時未更新，可撳「查看／更新名單」重試。"
         await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -642,6 +640,11 @@ class SquadCards(commands.Cog):
     @tick.before_loop
     async def before_tick(self):
         await self.bot.wait_until_ready()
+        for value in await run_stats(squad_interest.topics):
+            try:
+                await self.refresh_interest_cards(value)
+            except Exception:
+                log.exception("Could not hide legacy subscription fields: topic=%s", value["id"])
         # Unpublished timers restart: offline time cannot establish continuous presence.
         for session in self.state["sessions"].values():
             if not session.get("message"):
