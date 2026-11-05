@@ -26,10 +26,11 @@ class PublisherResponse(unittest.IsolatedAsyncioTestCase):
         self.channel.send = AsyncMock(return_value=types.SimpleNamespace(id=99, jump_url='https://discord.com/message'))
         self.scope = dict(config=types.SimpleNamespace(ANNOUNCEMENT_CHANNEL_ID=30),
                           discord=types.SimpleNamespace(TextChannel=Channel, DiscordException=self.error, AllowedMentions=types.SimpleNamespace(none=lambda:None)),
-                          log=types.SimpleNamespace(exception=Mock()), mark_games_published=Mock())
+                          log=types.SimpleNamespace(exception=Mock()), mark_games_published=Mock(),
+                          record_published_version=Mock(), publish_optional_thread=AsyncMock(return_value=""))
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), self.scope)
         self.view = types.SimpleNamespace(publishing=False, published_message=None, children=[],
-            draft=types.SimpleNamespace(kind='game', game_ids=('game',)),
+            draft=types.SimpleNamespace(kind='game', game_ids=('game',), version='v1.0.0', thread_body=''),
             announcement_text=lambda: 'announcement', stop=Mock())
         self.inter = types.SimpleNamespace(
             guild=types.SimpleNamespace(id=1, get_channel=lambda _: self.channel),
@@ -72,7 +73,7 @@ class PublisherResponse(unittest.IsolatedAsyncioTestCase):
             return types.SimpleNamespace(id=99, jump_url='url')
         self.channel.send.side_effect = send
         first = asyncio.create_task(self.run_publish())
-        await started.wait()
+        await asyncio.wait_for(started.wait(), timeout=2)
         await self.run_publish()
         release.set()
         await first
