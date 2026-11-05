@@ -71,7 +71,12 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         call=destination.send.call_args
         self.assertIn('<@10>',call.args[0]);self.assertNotIn('<@11>',call.args[0]);self.assertNotIn('<@12>',call.args[0])
         self.assertEqual(call.kwargs['allowed_mentions'].to_dict(),{'users':[10],'parse':[]})
-        self.assertEqual(len(call.kwargs['view'].children), 4)
+        self.assertNotIn('embed', call.kwargs)
+        self.assertNotIn('embeds', call.kwargs)
+        self.assertNotIn('\n', call.args[0])
+        self.assertIn('[查看召人卡]', call.args[0])
+        self.assertEqual(len(call.kwargs['view'].children), 1)
+        self.assertEqual(call.kwargs['view'].children[0].url, 'https://discord.com/channels/1/20')
         self.assertNotIn(10, storage.members(self.topic['id']))
         await cog.notify_interested(channel,session)
         self.assertEqual(destination.send.await_count,1)

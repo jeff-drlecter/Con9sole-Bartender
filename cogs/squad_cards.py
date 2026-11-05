@@ -561,18 +561,15 @@ class SquadCards(commands.Cog):
             for index in range(0, len(selected), 20):
                 batch = selected[index:index + 20]
                 mentions = " ".join(f"<@{uid}>" for uid in batch)
-                embed = discord.Embed(title="🎮 新局開始，入嚟一齊玩！",
-                                      description=f"**{label}**\n[查看召人卡]({url})", colour=0x57F287)
-                preferences = await run_stats(squad_interest.preferences, value['id'])
-                add_interest_fields(embed, interest_roster(guild, destination, preferences), preferences)
-                notification = await destination.send(
-                    f"{mentions}\n🎮 **{label}** 開局喇！你之前登記咗開局通知。\n{url}",
-                    embed=embed, view=SessionNoticeView(self, value, channel.id),
+                view = discord.ui.View()
+                view.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
+                    url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
+                await destination.send(
+                    f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
+                    view=view, suppress_embeds=True,
                     allowed_mentions=discord.AllowedMentions(
                         users=[discord.Object(id=uid) for uid in batch], roles=False,
                         everyone=False, replied_user=False))
-                await run_stats(squad_interest.track_card, value['id'], destination.id,
-                                notification.id, session['id'])
             await self.refresh_interest_cards(value)
         except Exception:
             log.exception("Next-session notification failed: session=%s", session.get('id'))
