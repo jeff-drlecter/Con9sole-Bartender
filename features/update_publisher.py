@@ -37,6 +37,7 @@ class AnnouncementDraft:
     game_ids: tuple[str, ...] = ()
     version: str = ""
     announcement_date: str = ""
+    thread_body: str = ""
 
 
 def _empty_state() -> dict[str, Any]:
