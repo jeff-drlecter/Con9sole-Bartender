@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -152,6 +153,44 @@ def _version_label(value: str) -> str:
     if not clean_value:
         return ""
     return clean_value if clean_value.casefold().startswith("v") else f"v{clean_value}"
+
+
+def parse_announcement_version(value: str) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"(?:[vV]\.?)?(\d{1,6})\.(\d{1,6})(?:\.(\d{1,6}))?", value.strip())
+    return tuple(int(part or 0) for part in match.groups()) if match else None
+
+
+def record_published_version(guild_id: int, version: str, *, message_id: int,
+                             path: Path = GAME_ANNOUNCEMENTS_PATH) -> None:
+    """Call only after Discord confirms publication; drafts never advance versions."""
+    parsed = parse_announcement_version(version)
+    if parsed is None:
+        return
+    state = _load_state(path)
+    versions = state.setdefault("published_versions", {})
+    records = versions.setdefault(str(guild_id), [])
+    if any(item.get("message_id") == message_id for item in records):
+        return
+    records.append({"version": version.strip(), "message_id": message_id,
+                    "published_at": datetime.now(timezone.utc).isoformat()})
+    versions[str(guild_id)] = records[-100:]
+    atomic_write_json(path, state)
+
+
+def latest_announcement_version(guild_id: int, *, path: Path = GAME_ANNOUNCEMENTS_PATH) -> tuple[int, int, int] | None:
+    records = _load_state(path).get("published_versions", {}).get(str(guild_id), [])
+    parsed = [version for item in records
+              if (version := parse_announcement_version(item.get("version", ""))) is not None]
+    return max(parsed) if parsed else None
+
+
+def version_guidance(guild_id: int, *, path: Path = GAME_ANNOUNCEMENTS_PATH) -> str:
+    latest = latest_announcement_version(guild_id, path=path)
+    if latest is None:
+        return "未有版本紀錄；首次可用 v1.0.0，或填返現有版本。"
+    major, minor, patch = latest
+    return (f"已發布 v{major}.{minor}.{patch}｜小更新 v{major}.{minor + 1}.0｜"
+            f"大更新 v{major + 1}.0.0")
 
 
 def _bullet_lines(value: str) -> list[str]:
