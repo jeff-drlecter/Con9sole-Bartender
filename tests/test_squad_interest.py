@@ -56,10 +56,10 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         results=await asyncio.gather(*[asyncio.to_thread(storage.reserve,'session',self.topic['id'],[10],now=10000) for _ in range(4)])
         self.assertEqual(sum(len(r) for r in results),1)
 
-    async def test_notifications_filter_users_and_only_allow_consented_mentions(self):
+    async def test_notifications_are_private_filter_users_and_do_not_repeat(self):
         permitted=types.SimpleNamespace(view_channel=True,connect=True)
         denied=types.SimpleNamespace(view_channel=False,connect=False)
-        people={uid:types.SimpleNamespace(id=uid,bot=uid==13,display_name=f'Player {uid}') for uid in range(10,15)}
+        people={uid:types.SimpleNamespace(id=uid,bot=uid==13,display_name=f'Player {uid}',send=AsyncMock()) for uid in range(10,15)}
         for uid in people: storage.toggle(self.topic['id'],1,uid)
         destination=types.SimpleNamespace(id=30,send=AsyncMock(return_value=types.SimpleNamespace(id=501)),permissions_for=lambda m:permitted)
         guild=types.SimpleNamespace(id=1,get_member=lambda uid:None if uid==14 else people.get(uid))
@@ -67,14 +67,43 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         cog=object.__new__(SquadCards); cog.bot=types.SimpleNamespace(get_channel=lambda _:destination);cog.interest_baseline=set();cog.lock=asyncio.Lock();cog.state={"sessions":{}};cog.refresh_interest_cards=AsyncMock()
         session={'id':'s1','destination':30,'message':99,'interest_topic':self.topic}
         await cog.notify_interested(channel,session)
-        destination.send.assert_awaited_once()
-        call=destination.send.call_args
-        self.assertIn('<@10>',call.args[0]);self.assertNotIn('<@11>',call.args[0]);self.assertNotIn('<@12>',call.args[0])
-        self.assertEqual(call.kwargs['allowed_mentions'].to_dict(),{'users':[10],'parse':[]})
-        self.assertEqual(len(call.kwargs['view'].children), 4)
+        destination.send.assert_not_awaited()
+        people[10].send.assert_awaited_once()
+        for uid in (11,12,13,14):
+            people[uid].send.assert_not_awaited()
+        call=people[10].send.call_args
+        self.assertIn('開局喇',call.args[0])
+        self.assertNotIn('<@',call.args[0])
+        self.assertEqual(call.kwargs['allowed_mentions'].to_dict(),{'parse':[]})
+        self.assertEqual(len(call.kwargs['view'].children), 2)
+        self.assertTrue(all(child.url for child in call.kwargs['view'].children))
         self.assertNotIn(10, storage.members(self.topic['id']))
         await cog.notify_interested(channel,session)
-        self.assertEqual(destination.send.await_count,1)
+        self.assertEqual(people[10].send.await_count,1)
+        destination.send.assert_not_awaited()
+
+    async def test_blocked_dm_does_not_publish_and_other_recipients_still_receive(self):
+        permitted=types.SimpleNamespace(view_channel=True,connect=True)
+        response=types.SimpleNamespace(status=403,reason='Forbidden')
+        people={uid:types.SimpleNamespace(id=uid,bot=False,display_name=str(uid),send=AsyncMock())
+                for uid in (10,11)}
+        people[10].send.side_effect=discord.Forbidden(response, 'Cannot send messages to this user')
+        for uid in people: storage.toggle(self.topic['id'],1,uid)
+        destination=types.SimpleNamespace(id=30,send=AsyncMock(),permissions_for=lambda _:permitted)
+        guild=types.SimpleNamespace(id=1,get_member=people.get)
+        channel=types.SimpleNamespace(id=20,guild=guild,members=[],permissions_for=lambda _:permitted)
+        cog=object.__new__(SquadCards)
+        cog.bot=types.SimpleNamespace(get_channel=lambda _:destination)
+        cog.interest_baseline=set()
+        cog.refresh_interest_cards=AsyncMock()
+        session={'id':'blocked-dm','destination':30,'message':99,'interest_topic':self.topic}
+        with self.assertLogs('cogs.squad_cards',level='WARNING'):
+            await cog.notify_interested(channel,session)
+        people[11].send.assert_awaited_once()
+        destination.send.assert_not_awaited()
+        await cog.notify_interested(channel,session)
+        self.assertEqual(people[10].send.await_count,1)
+        self.assertEqual(people[11].send.await_count,1)
 
     async def test_deployment_does_not_ping_existing_sessions(self):
         cog=object.__new__(SquadCards);cog.interest_baseline={'existing'};cog.bot=MagicMock()
