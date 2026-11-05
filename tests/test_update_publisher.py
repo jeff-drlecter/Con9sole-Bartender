@@ -4,6 +4,8 @@ import tempfile
 import unittest
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from features.update_publisher import (
     AnnouncementDraft,
@@ -15,7 +17,7 @@ from features.update_publisher import (
     mark_games_published,
     record_created_game,
 )
-from cogs.update_publisher import AnnouncementDetailsModal
+from cogs.update_publisher import AnnouncementDetailsModal, VersionSelectionView, DraftReviewView
 
 
 class UpdatePublisherTests(unittest.TestCase):
@@ -153,3 +155,36 @@ class UpdatePublisherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VersionButtonTests(unittest.IsolatedAsyncioTestCase):
+    async def test_versions_follow_latest_published_record(self):
+        with patch("cogs.update_publisher.latest_announcement_version", return_value=(3, 9, 2)):
+            view = VersionSelectionView(owner_id=1, guild_id=2, kind="feature", games=[])
+        self.assertEqual([button.version for button in view.children], ["v3.9.3", "v3.10.0", "v4.0.0"])
+        interaction = SimpleNamespace(response=SimpleNamespace(send_modal=AsyncMock()))
+        await view.children[1].callback(interaction)
+        modal = interaction.response.send_modal.call_args.args[0]
+        self.assertEqual(modal.version, "v3.10.0")
+        self.assertEqual(len(modal.children), 2)
+
+    async def test_first_announcement_has_version_button(self):
+        with patch("cogs.update_publisher.latest_announcement_version", return_value=None):
+            view = VersionSelectionView(owner_id=1, guild_id=2, kind="feature", games=[])
+        self.assertEqual([button.version for button in view.children], ["v1.0.0"])
+
+    async def test_edit_preserves_current_version_and_rejects_stale_picker(self):
+        review = DraftReviewView(owner_id=1, guild_id=2,
+            draft=AnnouncementDraft(kind="feature", title="test", body="body", version="v3.9.1"), games=[])
+        with patch("cogs.update_publisher.latest_announcement_version", return_value=(3, 9, 1)):
+            view = VersionSelectionView(owner_id=1, guild_id=2, kind="feature", games=[], review_view=review)
+        self.assertEqual(view.children[0].version, "v3.9.1")
+        interaction = SimpleNamespace(response=SimpleNamespace(send_modal=AsyncMock(), send_message=AsyncMock()))
+        for state in ("cancelled", "publishing", "editing"):
+            setattr(review, state, True)
+            await view.children[1].callback(interaction)
+            setattr(review, state, False)
+        review.revision += 1
+        await view.children[1].callback(interaction)
+        self.assertEqual(interaction.response.send_message.await_count, 4)
+        interaction.response.send_modal.assert_not_awaited()
