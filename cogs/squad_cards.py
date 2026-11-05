@@ -362,8 +362,6 @@ class FootprintView(SafeView):
             text = f"🙋 記低咗，下次 **{label}** 開局叫埋你！只通知下一局；再撳就取消。"
         else:
             text = f"🔔 記低咗，以後每次 **{label}** 開局都叫你！再撳就取消。"
-        if joined:
-            text += "\n開局通知會以 DM 私訊送畀你；請允許接收此伺服器成員嘅私訊。"
         if not refreshed:
             text += "\n登記已儲存；卡上名單暫時未更新，可撳「查看／更新名單」重試。"
         await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
@@ -560,24 +558,18 @@ class SquadCards(commands.Cog):
                 return
             label = discord.utils.escape_markdown(value['label'])
             url = f"https://discord.com/channels/{guild.id}/{destination.id}/{session['message']}"
-            for uid in selected:
-                member = guild.get_member(uid)
-                if member is None:
-                    continue
+            for index in range(0, len(selected), 20):
+                batch = selected[index:index + 20]
+                mentions = " ".join(f"<@{uid}>" for uid in batch)
                 view = discord.ui.View()
                 view.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
                     url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
-                view.add_item(discord.ui.Button(label="查看召人卡／管理通知", style=discord.ButtonStyle.link,
-                    url=url))
-                try:
-                    await member.send(
-                        f"🎮 **{label}** 開局喇！你之前登記咗開局通知。\n{url}",
-                        view=view, allowed_mentions=discord.AllowedMentions.none())
-                except discord.HTTPException:
-                    # Never fall back to a public ping when a private DM fails.
-                    # Keep the existing at-most-once reservation on uncertain sends.
-                    log.warning("Private session notice failed: session=%s user=%s",
-                                session['id'], uid)
+                await destination.send(
+                    f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
+                    view=view,
+                    allowed_mentions=discord.AllowedMentions(
+                        users=[discord.Object(id=uid) for uid in batch], roles=False,
+                        everyone=False, replied_user=False))
             await self.refresh_interest_cards(value)
         except Exception:
             log.exception("Next-session notification failed: session=%s", session.get('id'))
