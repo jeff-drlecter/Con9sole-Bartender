@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,10 @@ from features.update_publisher import (
     get_pending_games,
     mark_games_published,
     record_created_game,
+    parse_announcement_version,
+    record_published_version,
+    version_guidance,
+    latest_announcement_version,
 )
 
 
@@ -64,7 +69,7 @@ class PublisherStartView(discord.ui.View):
 
     @discord.ui.button(label="功能更新", emoji="✨", style=discord.ButtonStyle.primary)
     async def feature_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
-        await interaction.response.send_modal(AnnouncementDetailsModal(kind="feature", games=[]))
+        await interaction.response.send_modal(AnnouncementDetailsModal(kind="feature", games=[], guild_id=interaction.guild_id or 0))
 
     @discord.ui.button(label="遊戲更新", emoji="🎮", style=discord.ButtonStyle.success)
     async def game_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
@@ -120,7 +125,7 @@ class PendingGameSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         selected_games = [self.games_by_id[game_id] for game_id in self.values if game_id in self.games_by_id]
-        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=selected_games))
+        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=selected_games, guild_id=interaction.guild_id or 0))
 
 
 class PendingGameSelectionView(discord.ui.View):
@@ -235,7 +240,7 @@ class ContinueForumMappingButton(discord.ui.Button):
                     role_id=role.id,
                 )
             )
-        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=games))
+        await interaction.response.send_modal(AnnouncementDetailsModal(kind="game", games=games, guild_id=interaction.guild_id or 0))
 
 
 class ForumRoleMappingView(discord.ui.View):
@@ -274,16 +279,20 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
         max_length=800,
     )
 
-    def __init__(self, *, kind: str, games: list[PendingGame]) -> None:
+    def __init__(self, *, kind: str, games: list[PendingGame], guild_id: int = 0) -> None:
         super().__init__()
         self.kind = kind
         self.games = games
+        self.version.placeholder = version_guidance(guild_id)[:100]
         self.announcement_date.default = _today_hong_kong()
         if kind == "game" and games:
             game_names = "、".join(game.name for game in games)
             self.new_features.default = f"新增 {game_names} 遊戲專區"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if parse_announcement_version(self.version.value) is None:
+            await interaction.response.send_message("版本請填 v大.小.修訂，例如 v3.9.0（亦接受 v3.9）。", ephemeral=True)
+            return
         draft = AnnouncementDraft(
             kind="game" if self.kind == "game" else "feature",
             title="Con9sole 更新公告",
@@ -309,6 +318,7 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
         self.review_view = view
         self.revision = view.revision
         self.version.default = view.draft.version
+        self.version.placeholder = version_guidance(view.guild_id)[:100]
         self.announcement_date.default = view.draft.announcement_date
         self.new_features.default = view.draft.body
 
@@ -324,6 +334,9 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
             kind=view.draft.kind, title="Con9sole 更新公告", body=self.new_features.value.strip(),
             game_ids=view.draft.game_ids, version=self.version.value.strip(),
             announcement_date=self.announcement_date.value.strip())
+        if parse_announcement_version(candidate.version) is None:
+            await interaction.response.send_message("版本請填 v大.小.修訂，例如 v3.9.0（亦接受 v3.9）。", ephemeral=True)
+            return
         preview = "以下係草稿預覽；未發佈。\n\n" + build_announcement_text(candidate, games=view.games)
         if len(preview) > 2000:
             await interaction.response.send_message("草稿超過 2,000 字，請縮短內容。", ephemeral=True)
@@ -437,6 +450,11 @@ class DraftReviewView(discord.ui.View):
             # Remember success before bookkeeping or confirmation can fail.
             self.published_message = published_message
             record_warning = ""
+            try:
+                record_published_version(guild.id, self.draft.version, message_id=published_message.id)
+            except Exception:
+                log.exception("Published update but could not record version: message=%s", published_message.id)
+                record_warning = " 版本紀錄儲存失敗，請保留本次版本號；唔好重複發佈。"
             if self.draft.kind == "game":
                 try:
                     mark_games_published(guild.id, self.draft.game_ids, message_id=published_message.id)
@@ -493,6 +511,23 @@ class UpdatePublisher(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
+    async def _import_version_history(self, interaction: discord.Interaction) -> None:
+        guild = interaction.guild
+        if guild is None or latest_announcement_version(guild.id) is not None:
+            return
+        channel_id = getattr(config, "ANNOUNCEMENT_CHANNEL_ID", 0)
+        channel = guild.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        try:
+            async for message in channel.history(limit=100):
+                first_line = message.content.splitlines()[0] if message.content else ""
+                match = re.search(r"Con9sole 更新公告\s*[—–-]\s*(v\.?\d+\.\d+(?:\.\d+)?)", first_line, re.IGNORECASE)
+                if match:
+                    record_published_version(guild.id, match.group(1), message_id=message.id)
+        except (discord.DiscordException, OSError):
+            log.exception("Could not import existing announcement versions: guild=%s", guild.id)
+
     async def open_from_admin_tool(self, interaction: discord.Interaction) -> None:
         if not _publisher_access_allowed(interaction):
             await send_or_followup(
@@ -502,8 +537,11 @@ class UpdatePublisher(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self._import_version_history(interaction)
         pending_count = len(get_pending_games(interaction.guild_id or 0))
         embed = _publisher_intro()
+        embed.add_field(name="版本提示", value=version_guidance(interaction.guild_id or 0), inline=False)
         embed.add_field(
             name="待公告遊戲",
             value=f"{pending_count} 項（每次最多草擬 {MAX_GAMES_PER_DRAFT} 項；最多保留 {MAX_PENDING_GAMES} 項）",
