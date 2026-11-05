@@ -439,26 +439,24 @@ class SquadCards(commands.Cog):
         mode = discord.utils.escape_markdown(session.get("mode", ""))
         missing = session.get("missing")
         if ended:
-            title, description, colour = "🏁 今晚收工，下次再戰！", "👣 今次留個足跡，下次預埋你。\n想再玩？揀「下次叫我」通知一局，或「每次都叫我」持續通知。", 0x808080
+            title, colour = "🏁 今晚收工，下次再戰！", 0x808080
         elif missing is not None and missing > 0:
-            title, description, colour = f"🙌 缺 {missing} 人，一齊玩！", "想加入？撳下面按鈕開啟語音頻道。", 0x57F287
+            title, colour = f"🙌 缺 {missing} 人，一齊玩！", 0x57F287
         else:
-            title, description, colour = "🟢 開緊團 · 歡迎加入", "有位，一齊玩！", 0x57F287
-        embed = discord.Embed(title=title, description=description, colour=colour)
-        if game:
-            embed.add_field(name="🎮 玩緊", value=game, inline=False)
-        if mode:
-            embed.add_field(name="🏟️ 模式", value=mode, inline=False)
-        embed.add_field(name="一齊玩過" if ended else f"👥 而家有 {len(members)} 人",
-                        value=roster[:1024], inline=False)
+            title, colour = "🟢 開緊團 · 歡迎加入", 0x57F287
+        lines = []
+        game_mode = " · ".join(part for part in (game, mode) if part)
+        if game_mode:
+            lines.append(f"🎮 {game_mode}")
+        lines.append(f"👥 {'一齊玩過' if ended else str(len(members)) + ' 人'} · {roster[:1024]}")
         if ended:
             minutes = max(0, int((session["ended"] - session["started"]) // 60))
             hours, remaining = divmod(minutes, 60)
             duration = f"{hours} 小時 {remaining} 分鐘" if hours else f"{remaining} 分鐘"
-            embed.add_field(name=f"⏱️ 開團時長 · {duration}",
-                            value=f"<t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t>")
+            lines.append(f"⏱️ <t:{int(session['started'])}:t> – <t:{int(session['ended'])}:t> · {duration}")
         else:
-            embed.add_field(name="📍 入呢個 call", value=f"<#{channel.id}>", inline=False)
+            lines.append(f"📍 <#{channel.id}>")
+        embed = discord.Embed(title=title, description="\n".join(lines), colour=colour)
         value = interest_topic(channel, session)
         if value:
             if ended:
