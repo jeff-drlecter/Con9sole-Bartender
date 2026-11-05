@@ -158,11 +158,15 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embeds[-1].title, '🟢 開緊團 · 歡迎加入')
         session['mode'] = 'Clubs Rush'
         await scope['render'](cog, channel, session)
-        self.assertIn({'name': '🏟️ 模式', 'value': 'Clubs Rush', 'inline': False}, embeds[-1].fields)
+        self.assertIn('🎮 Clubs Rush', embeds[-1].description)
+        self.assertEqual(embeds[-1].fields, [])
         await scope['render'](cog, channel, session, ended=True)
         self.assertEqual(embeds[-1].title, '🏁 今晚收工，下次再戰！')
-        self.assertIn({'name': '🏟️ 模式', 'value': 'Clubs Rush', 'inline': False}, embeds[-1].fields)
-        self.assertTrue(any('16 分鐘' in f['name'] for f in embeds[-1].fields))
+        self.assertIn('🎮 Clubs Rush', embeds[-1].description)
+        self.assertEqual(embeds[-1].fields, [])
+        self.assertIn('16 分鐘', embeds[-1].description)
+        self.assertIn('一齊玩過 · A、B', embeds[-1].description)
+        self.assertLessEqual(len(embeds[-1].description.splitlines()), 3)
         self.assertIsNone(message.edit.call_args.kwargs['view'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])
 
