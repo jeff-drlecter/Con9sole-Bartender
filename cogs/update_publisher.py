@@ -323,6 +323,30 @@ async def send_version_picker(interaction: discord.Interaction, *, kind: str,
     )
 
 
+def draft_preview_text(draft: AnnouncementDraft, games: list[PendingGame]) -> str:
+    text = build_announcement_text(draft, games=games)
+    if draft.thread_body.strip():
+        text = f"**內容 A｜公告**\n{text}\n\n**內容 B｜A 下方的 Thread**\n{draft.thread_body.strip()}"
+    return text
+
+
+async def publish_optional_thread(message: discord.Message, draft: AnnouncementDraft) -> str:
+    """A is already published: thread failures must never trigger another A."""
+    if not draft.thread_body.strip():
+        return ""
+    thread = None
+    try:
+        thread = await message.create_thread(
+            name=f"Con9sole 更新 {draft.version}｜補充內容"[:100],
+            reason="Update Publisher optional content B")
+        await thread.send(draft.thread_body.strip(), allowed_mentions=discord.AllowedMentions.none())
+        return f" Thread 已建立：{thread.mention}"
+    except discord.DiscordException:
+        log.exception("Announcement published but thread failed: message=%s", message.id)
+        location = thread.mention if thread is not None else message.jump_url
+        return f" ⚠️ 內容 A 已發佈；內容 B 未能確認發送，請先查看 {location} 再手動補上，勿重複發佈 A。"
+
+
 class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
     announcement_date = discord.ui.TextInput(
         label="日期",
@@ -330,9 +354,17 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
         max_length=32,
     )
     new_features = discord.ui.TextInput(
-        label="新功能（每行一項）",
+        label="內容 A（公告；每行一項）",
         placeholder="例如：新增 FC27 及 NBA 2K27 遊戲專區",
         style=discord.TextStyle.paragraph,
+        max_length=800,
+    )
+
+    thread_content = discord.ui.TextInput(
+        label="內容 B（選填；自動開 Thread）",
+        placeholder="留空就唔開 Thread",
+        style=discord.TextStyle.paragraph,
+        required=False,
         max_length=800,
     )
 
@@ -357,6 +389,7 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
             kind="game" if self.kind == "game" else "feature",
             title="Con9sole 更新公告",
             body=self.new_features.value.strip(),
+            thread_body=self.thread_content.value.strip(),
             game_ids=tuple(game.id for game in self.games),
             version=self.version.strip(),
             announcement_date=self.announcement_date.value.strip(),
@@ -367,8 +400,16 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
 class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
     announcement_date = discord.ui.TextInput(label="日期", max_length=32)
     new_features = discord.ui.TextInput(
-        label="新功能（每行一項）",
+        label="內容 A（公告；每行一項）",
         style=discord.TextStyle.paragraph,
+        max_length=800,
+    )
+
+    thread_content = discord.ui.TextInput(
+        label="內容 B（選填；自動開 Thread）",
+        placeholder="留空就唔開 Thread",
+        style=discord.TextStyle.paragraph,
+        required=False,
         max_length=800,
     )
 
@@ -379,6 +420,7 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
         self.version = version or view.draft.version
         self.announcement_date.default = view.draft.announcement_date
         self.new_features.default = view.draft.body
+        self.thread_content.default = view.draft.thread_body
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         view = self.review_view
@@ -391,11 +433,12 @@ class EditDraftModal(discord.ui.Modal, title="編輯公告草稿"):
         candidate = AnnouncementDraft(
             kind=view.draft.kind, title="Con9sole 更新公告", body=self.new_features.value.strip(),
             game_ids=view.draft.game_ids, version=self.version.strip(),
-            announcement_date=self.announcement_date.value.strip())
+            announcement_date=self.announcement_date.value.strip(),
+            thread_body=self.thread_content.value.strip())
         if parse_announcement_version(candidate.version) is None:
             await interaction.response.send_message("版本請填 v大.小.修訂，例如 v3.9.0（亦接受 v3.9）。", ephemeral=True)
             return
-        preview = "以下係草稿預覽；未發佈。\n\n" + build_announcement_text(candidate, games=view.games)
+        preview = "以下係草稿預覽；未發佈。\n\n" + draft_preview_text(candidate, view.games)
         if len(preview) > 2000:
             await interaction.response.send_message("草稿超過 2,000 字，請縮短內容。", ephemeral=True)
             return
@@ -441,7 +484,7 @@ class DraftReviewView(discord.ui.View):
         return build_announcement_text(self.draft, games=self.games)
 
     def preview_content(self) -> str:
-        return f"以下係草稿預覽；未發佈。\n\n{self.announcement_text()}"
+        return f"以下係草稿預覽；未發佈。\n\n{draft_preview_text(self.draft, self.games)}"
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -498,6 +541,15 @@ class DraftReviewView(discord.ui.View):
                 await interaction.followup.send("❌ 公告頻道必須係此伺服器的文字／公告頻道。", ephemeral=True)
                 return
 
+            if self.draft.thread_body.strip():
+                me = guild.me
+                perms = channel.permissions_for(me) if me is not None else None
+                if perms is None or not (perms.create_public_threads and perms.send_messages_in_threads):
+                    await interaction.followup.send(
+                        "❌ Bot 缺少開 Thread／在 Thread 發訊息權限，內容 A、B 都未有發佈。",
+                        ephemeral=True)
+                    return
+
             try:
                 published_message = await channel.send(content=self.announcement_text(), allowed_mentions=discord.AllowedMentions.none())
             except discord.DiscordException:
@@ -519,10 +571,11 @@ class DraftReviewView(discord.ui.View):
                 except Exception:
                     log.exception("Published update but could not clear pending game records: message=%s", published_message.id)
                     record_warning = " 待公告紀錄未更新，請勿重複發佈，先檢查待公告清單。"
+            thread_result = await publish_optional_thread(published_message, self.draft)
             for item in self.children:
                 item.disabled = True
             await interaction.edit_original_response(
-                content=f"✅ 已發佈到 {channel.mention}。{record_warning}",
+                content=f"✅ 已發佈到 {channel.mention}。{record_warning}{thread_result}",
                 embed=None,
                 view=None,
             )
@@ -554,7 +607,7 @@ async def send_draft_preview(
         draft=draft,
         games=games,
     )
-    preview_content = f"{note}\n\n{view.announcement_text()}"
+    preview_content = f"{note}\n\n{draft_preview_text(draft, games)}"
     if len(preview_content) > 2000:
         await interaction.response.send_message(
             "❌ 草稿超過 Discord 2,000 字限制；請縮短新功能內容或減少今次項目。",

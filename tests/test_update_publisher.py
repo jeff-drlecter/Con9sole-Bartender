@@ -5,7 +5,9 @@ import unittest
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import discord
 
 from features.update_publisher import (
     AnnouncementDraft,
@@ -17,7 +19,7 @@ from features.update_publisher import (
     mark_games_published,
     record_created_game,
 )
-from cogs.update_publisher import AnnouncementDetailsModal, VersionSelectionView, DraftReviewView
+from cogs.update_publisher import AnnouncementDetailsModal, VersionSelectionView, DraftReviewView, EditDraftModal, publish_optional_thread, draft_preview_text
 
 
 class UpdatePublisherTests(unittest.TestCase):
@@ -166,7 +168,8 @@ class VersionButtonTests(unittest.IsolatedAsyncioTestCase):
         await view.children[1].callback(interaction)
         modal = interaction.response.send_modal.call_args.args[0]
         self.assertEqual(modal.version, "v3.10.0")
-        self.assertEqual(len(modal.children), 2)
+        self.assertEqual(len(modal.children), 3)
+        self.assertFalse(modal.thread_content.required)
 
     async def test_first_announcement_has_version_button(self):
         with patch("cogs.update_publisher.latest_announcement_version", return_value=None):
@@ -188,3 +191,83 @@ class VersionButtonTests(unittest.IsolatedAsyncioTestCase):
         await view.children[1].callback(interaction)
         self.assertEqual(interaction.response.send_message.await_count, 4)
         interaction.response.send_modal.assert_not_awaited()
+
+
+class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
+    def draft(self, body="內容 B"):
+        return AnnouncementDraft(kind="feature", title="更新", body="內容 A",
+                                 version="v4.0.0", thread_body=body)
+
+    async def test_empty_b_creates_no_thread(self):
+        message = SimpleNamespace(create_thread=AsyncMock())
+        self.assertEqual(await publish_optional_thread(message, self.draft("  ")), "")
+        message.create_thread.assert_not_awaited()
+
+    async def test_b_goes_in_thread_on_a_and_never_in_main_text(self):
+        thread = SimpleNamespace(send=AsyncMock(), mention="<#123>")
+        message = SimpleNamespace(create_thread=AsyncMock(return_value=thread))
+        draft = self.draft()
+        result = await publish_optional_thread(message, draft)
+        message.create_thread.assert_awaited_once()
+        thread.send.assert_awaited_once()
+        self.assertEqual(thread.send.call_args.args[0], "內容 B")
+        self.assertEqual(thread.send.call_args.kwargs["allowed_mentions"].to_dict(), {"parse": []})
+        self.assertNotIn("內容 B", build_announcement_text(draft))
+        self.assertIn("內容 B", draft_preview_text(draft, []))
+        self.assertIn("<#123>", result)
+        view = DraftReviewView(owner_id=1, guild_id=2, draft=draft, games=[])
+        self.assertEqual(EditDraftModal(view).thread_content.default, "內容 B")
+
+    async def test_thread_failure_reports_a_already_published(self):
+        response = SimpleNamespace(status=403, reason="Forbidden")
+        for create_fails in (True, False):
+            thread = SimpleNamespace(send=AsyncMock(), mention="<#123>")
+            message = SimpleNamespace(id=99, jump_url="https://discord.com/channels/1/2/99",
+                                      create_thread=AsyncMock(return_value=thread))
+            error = discord.Forbidden(response, "Missing permissions")
+            if create_fails:
+                message.create_thread.side_effect = error
+            else:
+                thread.send.side_effect = error
+            with self.assertLogs("con9sole-bartender.update-publisher", level="ERROR"):
+                result = await publish_optional_thread(message, self.draft())
+            self.assertIn("內容 A 已發佈", result)
+            self.assertIn("勿重複發佈 A", result)
+            self.assertEqual(message.create_thread.await_count, 1)
+
+    async def test_missing_thread_permission_blocks_a_and_b(self):
+        guild = SimpleNamespace(id=2, me=object())
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild = guild
+        channel.permissions_for.return_value = SimpleNamespace(
+            create_public_threads=False, send_messages_in_threads=True)
+        channel.send = AsyncMock()
+        guild.get_channel = lambda _: channel
+        i = SimpleNamespace(guild=guild, response=SimpleNamespace(defer=AsyncMock()),
+                            followup=SimpleNamespace(send=AsyncMock()))
+        view = DraftReviewView(owner_id=1, guild_id=2, draft=self.draft(), games=[])
+        with patch("cogs.update_publisher.config.ANNOUNCEMENT_CHANNEL_ID", 123):
+            await view.publish_draft.callback(i)
+        channel.send.assert_not_awaited()
+        self.assertIn("都未有發佈", i.followup.send.call_args.args[0])
+
+    async def test_thread_failure_does_not_republish_a_on_second_click(self):
+        guild = SimpleNamespace(id=2, me=object())
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild, channel.mention = guild, "<#3>"
+        channel.permissions_for.return_value = SimpleNamespace(
+            create_public_threads=True, send_messages_in_threads=True)
+        message = SimpleNamespace(id=99, jump_url="https://discord.com/channels/2/3/99")
+        channel.send = AsyncMock(return_value=message)
+        guild.get_channel = lambda _: channel
+        i = SimpleNamespace(guild=guild, response=SimpleNamespace(defer=AsyncMock()),
+                            followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
+        view = DraftReviewView(owner_id=1, guild_id=2, draft=self.draft(), games=[])
+        with patch("cogs.update_publisher.config.ANNOUNCEMENT_CHANNEL_ID", 123), \
+             patch("cogs.update_publisher.record_published_version"), \
+             patch("cogs.update_publisher.publish_optional_thread", new=AsyncMock(return_value="B 未能確認")) as publish:
+            await view.publish_draft.callback(i)
+            await view.publish_draft.callback(i)
+        channel.send.assert_awaited_once()
+        publish.assert_awaited_once()
+        self.assertIn("唔會重複", i.followup.send.call_args.args[0])
