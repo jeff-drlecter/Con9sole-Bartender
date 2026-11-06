@@ -612,7 +612,14 @@ class CommunityLevels(commands.Cog):
             if raw_private:
                 if not inter.user.guild_permissions.administrator:
                     await inter.followup.send('原始樣本只限 Administrator，並需查看及讀取記錄權限。');return
-                await inter.followup.send('私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。',
+                projection=[]
+                for item in payload:
+                    fields={k:item[k] for k in ('title','description','fields') if k in item}
+                    if 'author' in item:fields['author']={'name':item['author'].get('name','')}
+                    projection.append(fields)
+                compact=re.sub(r'<a?:[A-Za-z0-9_]+:[0-9]+>','',json.dumps(projection,ensure_ascii=False,separators=(',',':')))
+                preview=('\n```json\n'+compact+'\n```') if len(compact)<1600 else ''
+                await inter.followup.send('私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。'+preview,
                     file=discord.File(io.BytesIO(json.dumps(dict(embeds=payload),ensure_ascii=False,indent=2).encode()),filename='battle_raw_private.json'))
                 return
             identity=battle_identity(payload)
@@ -638,7 +645,9 @@ class CommunityLevels(commands.Cog):
                         if len(m.name)>2:text=text.replace(m.name,'player')
                 fixtures.append(json.loads(text))
             proof=json.dumps(dict(embeds=fixtures),ensure_ascii=False,indent=2).encode()
-            await inter.followup.send(f'白名單來源：{trusted}\n可識別格式：{identity is not None}\n玩家可對應：{resolved is not None}\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。',
+            compact=json.dumps(fixtures,ensure_ascii=False,separators=(',',':'))
+            preview=('\n```json\n'+compact+'\n```') if len(compact)<1600 else ''
+            await inter.followup.send(f'白名單來源：{trusted}\n可識別格式：{identity is not None}\n玩家可對應：{resolved is not None}\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。'+preview,
                 file=discord.File(io.BytesIO(proof),filename='battle_fixture.json'))
         except discord.HTTPException:
             await inter.followup.send('讀唔到訊息，請檢查 ID 同權限。')
