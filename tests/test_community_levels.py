@@ -139,8 +139,10 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
     async def test_role_adjustment_below_first_reward_removes_only_configured_roles(self):
         role=MagicMock();role.id=99
         other=MagicMock();other.id=100
-        member=types.SimpleNamespace(roles=[role,other],guild=MagicMock(),
+        self.cog.cfg['mode']='active'
+        member=types.SimpleNamespace(id=10,roles=[role,other],guild=MagicMock(),
                                      add_roles=AsyncMock(),remove_roles=AsyncMock())
+        member.guild.id=1
         member.guild.get_role.return_value=role
         member.guild.get_channel.return_value=None
         self.cog.cfg['rewards']={'5':99}

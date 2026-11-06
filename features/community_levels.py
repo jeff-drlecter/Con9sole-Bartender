@@ -20,13 +20,15 @@ REWARD_NAMES = {5:'註冊會員',15:'活躍會員',30:'常駐會員',50:'高級�
 
 
 def threshold(level: int) -> int:
-    """Own transparent curve: 50 * level * (level+1), NOT Amari's curve."""
-    return 50 * level * (level + 1)
+    """Matches Amari current xp-info table; live runtime parity still requires validation."""
+    if level < 0:
+        raise ValueError("Level cannot be negative")
+    return 0 if level == 0 else 20 * (level - 1) ** 2 + 35
 
 
 def level_for(xp: int) -> int:
     from math import isqrt
-    return max(0, (isqrt(1 + 4 * max(0, xp) // 50) - 1) // 2)
+    return 0 if xp < 35 else 1 + isqrt((xp - 35) // 20)
 
 
 def calendar(now: float) -> tuple[str, str]:
@@ -58,6 +60,8 @@ class Ledger:
               actor INTEGER,delta INTEGER,reason TEXT,stamp REAL);
             CREATE TABLE IF NOT EXISTS bindings(guild INTEGER,bot INTEGER,namehash TEXT,user INTEGER,
               PRIMARY KEY(guild,bot,namehash));
+            CREATE TABLE IF NOT EXISTS notice_state(guild INTEGER,user INTEGER,level INTEGER,
+              PRIMARY KEY(guild,user));
             CREATE TABLE IF NOT EXISTS imports(guild INTEGER PRIMARY KEY,digest TEXT,stamp REAL);
             ''')
 
@@ -147,6 +151,15 @@ class Ledger:
             db.execute('INSERT INTO adjustments(guild,user,actor,delta,reason,stamp) VALUES(?,?,?,?,?,?)',
                        (guild,user,actor,new-old,reason,now))
         return old,new
+
+    def notice_level(self,guild,user,initial):
+        with connect_sqlite(self.path) as db:
+            db.execute('INSERT OR IGNORE INTO notice_state VALUES(?,?,?)',(guild,user,initial))
+            return db.execute('SELECT level FROM notice_state WHERE guild=? AND user=?',(guild,user)).fetchone()[0]
+
+    def mark_notice(self,guild,user,level):
+        with connect_sqlite(self.path) as db:
+            db.execute('INSERT INTO notice_state VALUES(?,?,?) ON CONFLICT(guild,user) DO UPDATE SET level=max(level,excluded.level)',(guild,user,level))
 
     def import_levels(self,guild,rows,now,*,commit=False):
         """One-time verified level baseline. Preserves earned XP; never guesses Amari raw-XP curve."""

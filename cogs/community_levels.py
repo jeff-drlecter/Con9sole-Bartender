@@ -17,6 +17,17 @@ from features.community_levels import Ledger, REWARD_NAMES, battle_identity, cal
 
 log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
+# Release gate: turn on only after the evidence checklist in LEVEL_AUDIT.md passes.
+REPLACEMENT_READY = False
+
+
+def reward_role_safe(role, me):
+    powers = ('administrator', 'manage_guild', 'manage_roles', 'kick_members',
+              'ban_members', 'moderate_members', 'manage_channels', 'manage_webhooks',
+              'manage_messages', 'manage_threads', 'mention_everyone')
+    return not (role.is_default() or role.managed or role >= me.top_role or
+                any(getattr(role.permissions, p, False) for p in powers))
+
 
 
 def eligible(member, channel, cfg):
@@ -69,6 +80,8 @@ class CommunityLevels(commands.Cog):
         self.bot=bot
         self.ledger=None
         self.lock=asyncio.Lock()
+        self.role_lock=asyncio.Lock()
+        self.gateway_confirmed=False
         self.voice_clock={}
         self.cfg={}
 
@@ -82,8 +95,10 @@ class CommunityLevels(commands.Cog):
         self.voice_tick.cancel()
 
     async def configure(self,**changes):
-        async with self.lock:
-            self.cfg=await asyncio.to_thread(self.ledger.configure,config.GUILD_ID,**changes)
+        # A confirmed pause waits for current Discord role writes to finish.
+        async with self.role_lock:
+            async with self.lock:
+                self.cfg=await asyncio.to_thread(self.ledger.configure,config.GUILD_ID,**changes)
 
     @staticmethod
     def admin(inter):
@@ -103,7 +118,7 @@ class CommunityLevels(commands.Cog):
         e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\nBot 活動每日最多 {cfg['activity_daily_cap']} 次",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
         e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開保留 XP；每週一香港時間自動開始新榜",inline=False)
-        e.set_footer(text='原有 Amari XP 未自動搬入；正式接管前需核對匯入及停用 Amari 派角色。')
+        e.set_footer(text='Auditor：正式接管鎖定。需完成無損搬遷、實際計分及回滾驗證。')
         return e
 
     async def credit(self,member,channel,source,event,now=None):
@@ -117,9 +132,27 @@ class CommunityLevels(commands.Cog):
             await self.apply_rewards(member,result)
 
     async def apply_rewards(self,member,result):
+        async with self.role_lock:
+            if self.cfg['mode'] != 'active':
+                return
+            if isinstance(member,discord.Member):
+                try:
+                    member=await member.guild.fetch_member(member.id)
+                except discord.HTTPException:
+                    log.warning('Could not fetch current level roles; deferred reconciliation')
+                    return
+            latest=await asyncio.to_thread(self.ledger.profile,member.guild.id,member.id)
+            # Supplied award totals may already be superseded by another award or adjustment.
+            await self._apply_rewards_locked(member,(result[0],latest['total']))
+
+    async def _apply_rewards_locked(self,member,result):
         old,new=map(level_for,result)
         # Reconcile on each earned award so a transient permissions/API error is retried.
         pairs=[(int(level),member.guild.get_role(int(rid))) for level,rid in self.cfg['rewards'].items()]
+        if isinstance(member,discord.Member) and any(role and not reward_role_safe(role,member.guild.me) for _,role in pairs):
+            log.warning('Configured level role became unsafe; reconciliation blocked')
+            return
+        notified=await asyncio.to_thread(self.ledger.notice_level,member.guild.id,member.id,old)
         due=[(level,role) for level,role in pairs if level<=new and role]
         highest=max(due,key=lambda p:p[0])[1] if due else None
         if pairs:
@@ -131,14 +164,16 @@ class CommunityLevels(commands.Cog):
                     await member.remove_roles(*remove,reason='Con9sole 等級角色替換')
             except discord.HTTPException:
                 log.warning('Level role update failed; check role hierarchy and Manage Roles')
-        if new>old:
-            crossed=[level for level,_ in due if old<level<=new]
+                return
+        if new>notified:
+            crossed=[level for level,_ in due if notified<level<=new]
             channel=member.guild.get_channel(self.cfg['announcement_channel'])
             if crossed and isinstance(channel,discord.TextChannel):
                 name=REWARD_NAMES.get(max(crossed),'會員')
                 try:
                     await channel.send(f'🎖️ {member.mention} 升至 **Lv.{new}**，成為【{name}】！',
                         allowed_mentions=discord.AllowedMentions(users=self.cfg['announcement_ping'],roles=False,everyone=False))
+                    await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)
                 except discord.HTTPException:
                     log.warning('Level announcement failed')
 
@@ -198,41 +233,68 @@ class CommunityLevels(commands.Cog):
         """Dispatched only AFTER a successful Bartender action, never raw button clicks."""
         await self.credit(member,channel,'activity',f'i:{event}')
 
+    def reconcile_voice_members(self,channel,now):
+        members=[] if channel.id == channel.guild.afk_channel_id else voice_members(channel,self.cfg)
+        valid={(channel.id,m.id) for m in members} if len(members)>=2 else set()
+        for key in list(self.voice_clock):
+            if key[0]==channel.id and key not in valid:
+                self.voice_clock.pop(key,None)
+        for key in valid:
+            self.voice_clock.setdefault(key,now)
+        return members if len(members)>=2 else []
+
     @commands.Cog.listener()
     async def on_voice_state_update(self,member,before,after):
-        # Any eligibility/channel change invalidates elapsed time for the whole room.
-        for channel in (before.channel,after.channel):
-            if channel and member.guild.id==config.GUILD_ID:
-                for key in list(self.voice_clock):
-                    if key[0]==channel.id:
-                        self.voice_clock.pop(key,None)
+        if member.guild.id!=config.GUILD_ID or not self.gateway_confirmed:
+            return
+        # Discord updates channel membership/state before dispatching this event.
+        # Keeping the same eligible set preserves time through mute/video/stream changes.
+        channels={c.id:c for c in (before.channel,after.channel) if c}
+        for channel in channels.values():
+            self.reconcile_voice_members(channel,time.monotonic())
+
+    @commands.Cog.listener()
+    async def on_disconnect(self):
+        self.gateway_confirmed=False
+        self.voice_clock.clear()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.gateway_confirmed=True
+        self.voice_clock.clear()
+
+    @commands.Cog.listener()
+    async def on_resumed(self):
+        self.gateway_confirmed=True
+        self.voice_clock.clear()
 
     @tasks.loop(seconds=30)
     async def voice_tick(self):
         guild=self.bot.get_guild(config.GUILD_ID)
-        if not guild or self.cfg.get('mode')=='off':
+        if not guild or self.cfg.get('mode')=='off' or not self.bot.is_ready() or not self.gateway_confirmed:
             self.voice_clock.clear()
             return
         now=time.monotonic()
         present=set()
         for channel in guild.voice_channels+guild.stage_channels:
-            if channel.id==guild.afk_channel_id:
-                continue
-            members=voice_members(channel,self.cfg)
-            if len(members)<2:
-                continue
+            members=self.reconcile_voice_members(channel,now)
             for member in members:
                 key=(channel.id,member.id)
                 present.add(key)
-                start=self.voice_clock.setdefault(key,now)
+                start=self.voice_clock[key]
                 if now-start>=self.cfg['voice_interval']:
-                    self.voice_clock[key]=now
+                    # Disconnect may occur while another member's DB write is awaited.
+                    if not self.gateway_confirmed or not self.bot.is_ready():
+                        self.voice_clock.clear()
+                        return
                     await self.credit(member,channel,'voice',f'v:{channel.id}:{member.id}:{int(time.time())}')
+                    self.voice_clock[key]=now
         self.voice_clock={k:v for k,v in self.voice_clock.items() if k in present}
 
     @voice_tick.before_loop
     async def before_voice(self):
         await self.bot.wait_until_ready()
+        self.gateway_confirmed=True
 
     @voice_tick.error
     async def voice_error(self,error):
@@ -279,10 +341,11 @@ class CommunityLevels(commands.Cog):
         if not bot.bot or bot.id==self.bot.user.id:
             await inter.followup.send('請選擇 Adventure Frontier Bot。'); return
         entry={'bot':bot.id,'channel':channel.id}
-        async with self.lock:
-            sources=[s for s in self.cfg['sources'] if s!=entry]
-            if not remove: sources.append(entry)
-            self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
+        async with self.role_lock:
+            async with self.lock:
+                sources=[s for s in self.cfg['sources'] if s!=entry]
+                if not remove: sources.append(entry)
+                self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
         await inter.followup.send('已更新來源白名單；只會識別支援嘅戰鬥卡格式。')
 
     @levels.command(name='exclude',description='排除或恢復頻道／分類／身份組計分')
@@ -293,10 +356,11 @@ class CommunityLevels(commands.Cog):
             await inter.followup.send('請揀一個頻道或一個身份組。'); return
         key='excluded_roles' if role else 'excluded_channels'
         target=(role or channel).id
-        async with self.lock:
-            values=set(self.cfg[key])
-            values.discard(target) if remove else values.add(target)
-            self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,**{key:sorted(values)})
+        async with self.role_lock:
+            async with self.lock:
+                values=set(self.cfg[key])
+                values.discard(target) if remove else values.add(target)
+                self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,**{key:sorted(values)})
         self.voice_clock.clear()
         await inter.followup.send('已更新計分排除設定。')
 
@@ -313,22 +377,26 @@ class CommunityLevels(commands.Cog):
     async def reward(self,inter:discord.Interaction,level:app_commands.Range[int,1,10000],role:discord.Role,remove:bool=False):
         if not await self.guard(inter): return
         me=inter.guild.me
-        if not remove and (role.is_default() or role.managed or role>=me.top_role or role.permissions.administrator or role.permissions.manage_guild or role.permissions.manage_roles):
+        if not remove and not reward_role_safe(role,me):
             await inter.followup.send('角色唔適合自動派發；請檢查權限及角色排序。'); return
-        async with self.lock:
-            rewards=dict(self.cfg['rewards'])
-            if remove: rewards.pop(str(level),None)
-            else:
-                if str(role.id) in [str(r) for l,r in rewards.items() if l!=str(level)]:
-                    await inter.followup.send('同一角色不可對應多個等級。'); return
-                rewards[str(level)]=role.id
-            self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,rewards=rewards)
+        async with self.role_lock:
+            async with self.lock:
+                rewards=dict(self.cfg['rewards'])
+                if remove: rewards.pop(str(level),None)
+                else:
+                    if str(role.id) in [str(r) for l,r in rewards.items() if l!=str(level)]:
+                        await inter.followup.send('同一角色不可對應多個等級。'); return
+                    rewards[str(level)]=role.id
+                self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,rewards=rewards)
         await inter.followup.send('已更新獎勵；正式模式只保留最高合資格等級角色。')
 
     @levels.command(name='activate',description='完成舊等級核對及停用 Amari 派角色後正式接管')
     @app_commands.default_permissions(manage_guild=True)
     async def activate(self,inter:discord.Interaction,amari_rewards_disabled:bool,baseline_verified:bool,announcement:discord.TextChannel,ping:bool=False):
         if not await self.guard(inter): return
+        if not REPLACEMENT_READY:
+            await inter.followup.send('Auditor 未批准正式接管：舊 XP／級內進度／週榜完整快照、實際計分對照、戰鬥卡實測及回滾演練未全部驗證。請保持試行；勾選確認不能繞過。')
+            return
         if not amari_rewards_disabled or not baseline_verified or not self.cfg['rewards']:
             await inter.followup.send('請先核對舊等級基準、設定獎勵角色，並停用 Amari 派角色，避免兩套系統互相覆蓋。'); return
         await self.configure(mode='active',announcement_channel=announcement.id,announcement_ping=ping)
@@ -350,6 +418,9 @@ class CommunityLevels(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     async def import_levels(self,inter:discord.Interaction,file:discord.Attachment,commit:bool=False):
         if not await self.guard(inter): return
+        if commit:
+            await inter.followup.send('Auditor 已封鎖只匯入等級：會遺失級內進度，亦可能同試行 XP 重複。現時只准預覽；需先完成原始 XP／週榜快照及切換時間驗證。')
+            return
         if file.size>1_000_000 or not file.filename.lower().endswith('.csv'):
             await inter.followup.send('請提供不超過 1MB 嘅 CSV。'); return
         if self.cfg['mode']=='active':
