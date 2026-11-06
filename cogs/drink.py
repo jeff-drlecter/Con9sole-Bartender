@@ -243,6 +243,9 @@ class Drink(commands.Cog):
                     "飲品已送出，但收藏紀錄暫時保存唔到；請通知管理員，唔使重複叫酒。",
                     ephemeral=True,
                 )
+            if recorded:
+                self.bot.dispatch("community_activity", interaction.user, interaction.channel,
+                                  f"drink:{interaction.id}")
             if recorded and progress.get("is_new"):
                 text = f"酒譜已收藏 {progress['total']} 款。"
                 if progress.get("unlocked"):
