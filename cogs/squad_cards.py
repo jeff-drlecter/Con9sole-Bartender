@@ -237,9 +237,18 @@ def interest_summary(roster):
 
 class InterestRosterPages(SafeView):
     """Private, requester-only pages; public card stays compact."""
-    def __init__(self, user_id, roster, label):
+    def __init__(self, user_id, roster, label, *, source_view=None, source_message=None):
         super().__init__(timeout=180)
         self.user_id, self.roster, self.label, self.page = user_id, roster, label, 0
+        self.source_view, self.source_message = source_view, source_message
+        if source_view is not None:
+            for kind, label in (("once", "🙋 下次叫我"), ("always", "🔔 每次都叫我")):
+                button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary, row=1)
+                async def choose(interaction, choice=kind):
+                    await self.source_view.toggle(interaction, choice,
+                        source_message=self.source_message, roster_pages=self)
+                button.callback = choose
+                self.add_item(button)
         self.previous.disabled = True
         self.next_page.disabled = len(roster) <= 20
 
@@ -313,15 +322,16 @@ class FootprintView(SafeView):
                     return session['id']
         return squad_interest.card_session(message_id)
 
-    async def refresh(self, interaction):
+    async def refresh(self, interaction, *, source_message=None):
+        source_message = source_message if source_message is not None else interaction.message
         await run_stats(squad_interest.track_card, self.topic['id'], interaction.channel_id,
-                        interaction.message.id, self.source_session(interaction.message.id))
+                        source_message.id, self.source_session(source_message.id))
         preferences = await run_stats(squad_interest.preferences, self.topic['id'])
         roster = interest_roster(interaction.guild, interaction.channel, preferences)
         if self.cog is not None:
             await self.cog.refresh_interest_cards(self.topic)
         else:
-            message = await interaction.channel.fetch_message(interaction.message.id)
+            message = await interaction.channel.fetch_message(source_message.id)
             if message.author.id != interaction.client.user.id or not message.embeds:
                 raise ValueError("Not a bot card")
             embed = message.embeds[0].copy()
@@ -336,20 +346,22 @@ class FootprintView(SafeView):
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.lock:
             roster = await self.refresh(interaction)
-        pages = InterestRosterPages(interaction.user.id, roster, self.topic['label'])
+        pages = InterestRosterPages(interaction.user.id, roster, self.topic['label'],
+                                    source_view=self, source_message=interaction.message)
         await interaction.followup.send(embed=pages.embed(), view=pages, ephemeral=True,
                                         allowed_mentions=discord.AllowedMentions.none())
 
-    async def toggle(self, interaction, kind='once'):
+    async def toggle(self, interaction, kind='once', *, source_message=None, roster_pages=None):
         if not await self.permitted(interaction):
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer(ephemeral=True, thinking=roster_pages is None)
+        source_message = source_message if source_message is not None else interaction.message
         async with self.lock:
             joined = await run_stats(squad_interest.toggle, self.topic['id'], interaction.guild_id,
-                                     interaction.user.id, kind, self.source_session(interaction.message.id))
+                                     interaction.user.id, kind, self.source_session(source_message.id))
             refreshed = True
             try:
-                await self.refresh(interaction)
+                roster = await self.refresh(interaction, source_message=source_message)
             except (discord.HTTPException, ValueError):
                 refreshed = False
                 log.exception("Card roster refresh failed: message=%s", interaction.message.id)
@@ -362,7 +374,16 @@ class FootprintView(SafeView):
             text = f"🔔 記低咗，以後每次 **{label}** 開局都叫你！再撳就取消。"
         if not refreshed:
             text += "\n登記已儲存；卡片暫時未更新，可撳「查看／更新名單」重試。"
-        await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        if roster_pages is not None:
+            if refreshed:
+                roster_pages.roster = roster
+            roster_pages.page = min(roster_pages.page, max(0, (len(roster_pages.roster) - 1) // 20))
+            roster_pages.previous.disabled = roster_pages.page == 0
+            roster_pages.next_page.disabled = (roster_pages.page + 1) * 20 >= len(roster_pages.roster)
+            await interaction.edit_original_response(content=text, embed=roster_pages.embed(),
+                view=roster_pages, allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
 class CardView(FootprintView):

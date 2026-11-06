@@ -128,6 +128,40 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(i.followup.send.call_args.kwargs['allowed_mentions'].to_dict(), {'parse': []})
         view.stop()
 
+    async def test_private_roster_buttons_toggle_switch_cancel_and_keep_source_session(self):
+        view = FootprintView(None, self.topic)
+        source, card = self.roster_interaction()
+        storage.track_card(self.topic['id'], 100, card.id, 'live-session')
+        await view.show_roster(source)
+        pages = source.followup.send.call_args.kwargs['view']
+        once, always = pages.children[-2:]
+        self.assertEqual([once.label, always.label], ['🙋 下次叫我', '🔔 每次都叫我'])
+        click, _ = self.roster_interaction()
+        click.message = types.SimpleNamespace(id=999)  # Private panel, never a public card.
+        self.assertTrue(await pages.interaction_check(click))
+        await once.callback(click)
+        self.assertEqual(storage.preferences(self.topic['id']), {10: 'once'})
+        self.assertIn('下次叫我', pages.roster[0][1])
+        self.assertEqual(storage.card_session(500), 'live-session')
+        self.assertFalse(storage.card_session(999))
+        self.assertEqual(click.response.defer.call_args.kwargs['thinking'], False)
+        self.assertEqual(click.edit_original_response.call_args.kwargs['allowed_mentions'].to_dict(), {'parse': []})
+        click.followup.send.assert_not_awaited()
+        await always.callback(click)
+        self.assertEqual(storage.preferences(self.topic['id']), {10: 'always'})
+        self.assertIn('每次都叫我', pages.roster[0][1])
+        await always.callback(click)
+        self.assertEqual(storage.preferences(self.topic['id']), {})
+        self.assertEqual(pages.roster, [])
+        self.assertTrue(pages.previous.disabled)
+        self.assertTrue(pages.next_page.disabled)
+        self.assertIn('已取消', click.edit_original_response.call_args.kwargs['content'])
+        other = interaction()
+        other.user.id = 11
+        self.assertFalse(await pages.interaction_check(other))
+        pages.stop()
+        view.stop()
+
     async def test_concurrent_clicks_render_latest_members(self):
         lock = asyncio.Lock()
         cog = object.__new__(SquadCards)
