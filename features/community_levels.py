@@ -11,10 +11,13 @@ from core.sqlite_storage import connect_sqlite, enable_wal
 from core.storage_paths import DATA_DIR
 
 TZ = ZoneInfo('Asia/Hong_Kong')
+LEVEL_TEMPLATES = {'5': '👋 {user} 升至 Lv.{level}，成為【註冊會員】！正式開展你嘅會員旅程啦～', '15': '✨ {user} 達到 Lv.{level}，升為【活躍會員】！繼續保持好表現！', '30': '💬 {user} 升到 Lv.{level}，晉升【常駐會員】，你已成為群內熟悉的存在～', '50': '📈 {user} 成功達成 Lv.{level}，晉身【高級會員】行列，邁向社群中層！', '75': '🛡️ {user} 獲得 Lv.{level} 成就，晉升為【資深會員】！長期守候有目共睹！', '100': '🎯 {user} 升至 Lv.{level}，正式踏入【核心會員】階層，歡迎加入主力陣線！', '150': '💎 {user} 現已晉升 Lv.{level}，榮獲【白金會員】稱號！高活躍代表！', '200': '🔥 {user} 升至 Lv.{level}，解鎖尊貴角色【黑金會員】！實至名歸！', '300': '🏅 {user} 成為 Lv.{level} 的《榮譽會員》！你嘅持續參與係社群中不可多得！', '400': '🎉 {user} 達成 Lv.{level}！正式晉升為【傳奇會員】👑 無人能及，傳奇由你創！'}
 DEFAULTS = dict(mode='off', text_cooldown=60, activity_cooldown=60,
                 activity_daily_cap=60, voice_interval=300, voice_xp=25,
-                booster_multiplier=2, announcement_channel=0, announcement_ping=False,
-                excluded_channels=[], excluded_roles=[], sources=[], rewards={})
+                booster_multiplier=2, announcement_channel=0, announcement_ping=True,
+                excluded_channels=[], excluded_roles=[], sources=[], rewards={},
+                announcement_mode='all', announcement_template='恭喜 {user.ping} 升級! 依家你係 等級{level}',
+                level_templates=LEVEL_TEMPLATES,clear_on_leave=True)
 REWARD_NAMES = {5:'註冊會員',15:'活躍會員',30:'常駐會員',50:'高級會員',75:'資深會員',
                 100:'核心會員',150:'白金會員',200:'黑金會員',300:'榮譽會員',400:'傳奇會員'}
 
@@ -60,6 +63,15 @@ class Ledger:
               actor INTEGER,delta INTEGER,reason TEXT,stamp REAL);
             CREATE TABLE IF NOT EXISTS bindings(guild INTEGER,bot INTEGER,namehash TEXT,user INTEGER,
               PRIMARY KEY(guild,bot,namehash));
+            CREATE TABLE IF NOT EXISTS xp_events(guild INTEGER,event TEXT,user INTEGER,source TEXT,amount INTEGER,stamp REAL,
+              PRIMARY KEY(guild,event));
+            CREATE TABLE IF NOT EXISTS role_jobs(guild INTEGER,user INTEGER,total INTEGER,old_total INTEGER,
+              PRIMARY KEY(guild,user));
+            CREATE TABLE IF NOT EXISTS departed_users(id INTEGER PRIMARY KEY,guild INTEGER,user INTEGER,stamp REAL,snapshot TEXT);
+            CREATE TABLE IF NOT EXISTS weekly_notices(guild INTEGER,period TEXT,PRIMARY KEY(guild,period));
+            CREATE TABLE IF NOT EXISTS repair_attempts(guild INTEGER,user INTEGER,attempts INTEGER,not_before REAL,PRIMARY KEY(guild,user));
+            CREATE TABLE IF NOT EXISTS migration_manifests(guild INTEGER PRIMARY KEY,digest TEXT,cutover REAL,count INTEGER,
+              period TEXT,backup_path TEXT,backup_sha TEXT);
             CREATE TABLE IF NOT EXISTS notice_state(guild INTEGER,user INTEGER,level INTEGER,
               PRIMARY KEY(guild,user));
             CREATE TABLE IF NOT EXISTS imports(guild INTEGER PRIMARY KEY,digest TEXT,stamp REAL);
@@ -82,7 +94,7 @@ class Ledger:
         if source not in ('text','activity','voice'):
             raise ValueError('Unknown XP source')
         cfg = self.settings(guild)
-        if cfg['mode'] == 'off':
+        if cfg['mode'] == 'off' or now < cfg.get('cutover_at',0):
             return None
         day, week = calendar(now)
         bucket = 'voice' if source == 'voice' else 'engagement'
@@ -109,6 +121,10 @@ class Ledger:
             db.execute('INSERT OR REPLACE INTO cooldowns VALUES(?,?,?,?,?,?)',(guild,user,bucket,now,day,0))
             db.execute('INSERT OR IGNORE INTO xp(guild,user) VALUES(?,?)',(guild,user))
             old = db.execute('SELECT total FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()[0]
+            if db.execute('INSERT OR IGNORE INTO xp_events VALUES(?,?,?,?,?,?)',(guild,event,user,source,amount,now)).rowcount==0:
+                return None
+            if cfg['mode']=='active':
+                db.execute('INSERT INTO role_jobs VALUES(?,?,?,?) ON CONFLICT(guild,user) DO UPDATE SET total=excluded.total',(guild,user,old+amount,old))
             db.execute(f'UPDATE xp SET total=total+?,{source}={source}+? WHERE guild=? AND user=?',
                        (amount,amount,guild,user))
             db.execute('INSERT INTO periods VALUES(?,?,?,?) ON CONFLICT(guild,user,week) DO UPDATE SET points=points+excluded.points',
@@ -121,12 +137,14 @@ class Ledger:
                              (guild,user)).fetchone() or (0,0,0,0,0)
         return dict(zip(('total','text','activity','voice','imported'),row))
 
-    def leaderboard(self,guild,week=None):
+    def leaderboard(self,guild,week=None,page=1):
+        if type(page) is not int or not 1<=page<=10000: raise ValueError("Invalid page")
+        offset=(page-1)*10
         with connect_sqlite(self.path) as db:
             if week:
-                return db.execute('SELECT user,points FROM periods WHERE guild=? AND week=? ORDER BY points DESC,user LIMIT 10',
-                                  (guild,week)).fetchall()
-            return db.execute('SELECT user,total FROM xp WHERE guild=? ORDER BY total DESC,user LIMIT 10',(guild,)).fetchall()
+                return db.execute('SELECT user,points FROM periods WHERE guild=? AND week=? ORDER BY points DESC,user LIMIT 10 OFFSET ?',
+                                  (guild,week,offset)).fetchall()
+            return db.execute('SELECT user,total FROM xp WHERE guild=? ORDER BY total DESC,user LIMIT 10 OFFSET ?',(guild,offset)).fetchall()
 
     def bind(self,guild,bot,name,user):
         digest = hashlib.sha256(name.encode()).hexdigest()
@@ -148,9 +166,53 @@ class Ledger:
             old = db.execute('SELECT total FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()[0]
             new = max(0,old+delta)
             db.execute('UPDATE xp SET total=? WHERE guild=? AND user=?',(new,guild,user))
+            cfgrow=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+            if cfgrow and json.loads(cfgrow[0]).get('mode')=='active':
+                db.execute('INSERT INTO role_jobs VALUES(?,?,?,?) ON CONFLICT(guild,user) DO UPDATE SET total=excluded.total',(guild,user,new,old))
             db.execute('INSERT INTO adjustments(guild,user,actor,delta,reason,stamp) VALUES(?,?,?,?,?,?)',
                        (guild,user,actor,new-old,reason,now))
         return old,new
+
+    def rank_position(self,guild,user):
+        with connect_sqlite(self.path) as db:
+            row=db.execute('SELECT total FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()
+            if row is None: return None
+            return 1+db.execute('SELECT count(*) FROM xp WHERE guild=? AND (total>? OR (total=? AND user<?))',(guild,row[0],row[0],user)).fetchone()[0]
+
+    def member_left(self,guild,user,now):
+        with connect_sqlite(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT * FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()
+            periods=db.execute('SELECT * FROM periods WHERE guild=? AND user=?',(guild,user)).fetchall()
+            if row:
+                db.execute('INSERT INTO departed_users(guild,user,stamp,snapshot) VALUES(?,?,?,?)',(guild,user,now,json.dumps(dict(xp=row,periods=periods))))
+            for table in ('xp','periods','cooldowns','bindings','notice_state','role_jobs','repair_attempts'):
+                db.execute(f'DELETE FROM {table} WHERE guild=? AND user=?',(guild,user))
+
+    def claim_weekly_notice(self,guild,period):
+        with connect_sqlite(self.path) as db:
+            return bool(db.execute('INSERT OR IGNORE INTO weekly_notices VALUES(?,?)',(guild,period)).rowcount)
+
+    def release_weekly_notice(self,guild,period):
+        with connect_sqlite(self.path) as db:db.execute('DELETE FROM weekly_notices WHERE guild=? AND period=?',(guild,period))
+
+    def pending_roles(self,guild,limit=5,now=None):
+        import time
+        now=time.time() if now is None else now
+        with connect_sqlite(self.path) as db:
+            return db.execute('SELECT j.user,j.total,j.old_total FROM role_jobs j LEFT JOIN repair_attempts a ON j.guild=a.guild AND j.user=a.user WHERE j.guild=? AND coalesce(a.not_before,0)<=? ORDER BY coalesce(a.not_before,0),j.user LIMIT ?',(guild,now,limit)).fetchall()
+
+    def mark_repaired(self,guild,user,total):
+        with connect_sqlite(self.path) as db:
+            removed=db.execute('DELETE FROM role_jobs WHERE guild=? AND user=? AND total=?',(guild,user,total)).rowcount
+            if removed: db.execute('DELETE FROM repair_attempts WHERE guild=? AND user=?',(guild,user))
+
+    def defer_repair(self,guild,user,now):
+        with connect_sqlite(self.path) as db:
+            row=db.execute('SELECT attempts FROM repair_attempts WHERE guild=? AND user=?',(guild,user)).fetchone()
+            attempts=(row[0] if row else 0)+1
+            delay=min(3600,30*2**min(attempts,7))
+            db.execute('INSERT OR REPLACE INTO repair_attempts VALUES(?,?,?,?)',(guild,user,attempts,now+delay))
 
     def notice_level(self,guild,user,initial):
         with connect_sqlite(self.path) as db:
@@ -209,3 +271,9 @@ def battle_identity(embeds):
     if pet:
         return None,pet[1]
     return None
+
+
+def render_notice(cfg,member,level,milestone):
+    import discord
+    template=cfg['level_templates'].get(str(milestone),cfg['announcement_template'])
+    return template.replace('{user.ping}',member.mention).replace('{user}',discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))).replace('{level}',str(level))[:1900]

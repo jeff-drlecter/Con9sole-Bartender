@@ -75,6 +75,26 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(calendar(before)[1],'2026-W45')
         self.assertEqual(calendar(before+60)[1],'2026-W46')
 
+    def test_durable_repair_queue_backoff_and_newer_version_not_cleared(self):
+        self.store.configure(1,mode='active')
+        self.store.award(1,10,'text','first',100)
+        self.store.award(1,11,'text','other',100)
+        self.assertEqual(self.store.pending_roles(1,1,now=100),[(10,1,0)])
+        self.store.defer_repair(1,10,100)
+        self.assertEqual(Ledger(self.path).pending_roles(1,1,now=101),[(11,1,0)])
+        self.store.award(1,10,'text','second',200)
+        self.store.mark_repaired(1,10,1)
+        self.assertIn((10,2,0),self.store.pending_roles(1,now=300))
+        self.store.mark_repaired(1,10,2)
+        self.assertNotIn(10,[r[0] for r in self.store.pending_roles(1,now=300)])
+
+    def test_personal_rank_and_paginated_total_board_have_stable_ties(self):
+        for uid in range(10,22):self.store.award(1,uid,'text',f'm{uid}',100)
+        self.assertEqual(self.store.rank_position(1,10),1)
+        self.assertEqual(self.store.rank_position(1,21),12)
+        self.assertEqual(self.store.leaderboard(1,page=2),[(20,1),(21,1)])
+        self.assertIsNone(self.store.rank_position(1,999))
+
     def test_battle_parser_handles_player_pet_death_and_ignores_unrelated(self):
         header={'author':{'name':'example'},'description':'<@10> (Member)'}
         result={'title':'Tharok the Vaultwarden attack!','fields':[{'name':'You','value':'HP: 10\nDamage Taken: 10'}]}
@@ -105,7 +125,7 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
         embeds=[discord.Embed.from_dict({'author':{'name':'example'},'description':'<@10>'}),
                 discord.Embed(title='Enemy attack!',description='Damage Taken: 10')]
         msg=types.SimpleNamespace(author=types.SimpleNamespace(bot=True,id=99),webhook_id=None,
-                                  channel=self.channel,guild=self.guild,embeds=embeds,id=123)
+                                  channel=self.channel,guild=self.guild,embeds=embeds,id=123,created_at=types.SimpleNamespace(timestamp=lambda:100))
         self.cog.apply_rewards=AsyncMock()
         await self.cog.observe_battle(msg)
         self.assertEqual(self.cog.ledger.profile(1,10)['total'],0)
@@ -149,6 +169,36 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.apply_rewards(member,(threshold(5),0))
         member.remove_roles.assert_awaited_once_with(role,reason='Con9sole 等級角色替換')
         member.add_roles.assert_not_awaited()
+
+    async def test_inspector_never_exports_untrusted_or_unrecognized_message(self):
+        self.cog.guard=AsyncMock(return_value=True)
+        inter=types.SimpleNamespace(guild_id=1,user=types.SimpleNamespace(),followup=types.SimpleNamespace(send=AsyncMock()))
+        self.channel.permissions_for=lambda _:types.SimpleNamespace(view_channel=True,read_message_history=True)
+        message=types.SimpleNamespace(author=types.SimpleNamespace(bot=True,id=99),channel=self.channel,
+            webhook_id=None,embeds=[discord.Embed(description='private content')])
+        self.channel.fetch_message=AsyncMock(return_value=message)
+        await self.cog.inspect.callback(self.cog,inter,self.channel,'123')
+        self.assertNotIn('file',inter.followup.send.call_args.kwargs)
+        self.assertNotIn('private content',inter.followup.send.call_args.args[0])
+        message.author.id=20
+        inter.followup.send.reset_mock()
+        await self.cog.inspect.callback(self.cog,inter,self.channel,'123')
+        self.assertNotIn('file',inter.followup.send.call_args.kwargs)
+        self.assertNotIn('private content',inter.followup.send.call_args.args[0])
+
+    async def test_raw_inspector_requires_admin_and_both_read_permissions(self):
+        self.cog.guard=AsyncMock(return_value=True)
+        inter=types.SimpleNamespace(guild_id=1,user=types.SimpleNamespace(guild_permissions=types.SimpleNamespace(administrator=False)),followup=types.SimpleNamespace(send=AsyncMock()))
+        self.channel.permissions_for=lambda _:types.SimpleNamespace(view_channel=True,read_message_history=True)
+        message=types.SimpleNamespace(author=types.SimpleNamespace(bot=True,id=20),channel=self.channel,
+            webhook_id=None,embeds=[discord.Embed(description='private content')])
+        self.channel.fetch_message=AsyncMock(return_value=message)
+        await self.cog.inspect.callback(self.cog,inter,self.channel,'123',raw_private=True)
+        self.assertNotIn('file',inter.followup.send.call_args.kwargs)
+        self.channel.fetch_message.reset_mock()
+        self.channel.permissions_for=lambda _:types.SimpleNamespace(view_channel=False,read_message_history=True)
+        await self.cog.inspect.callback(self.cog,inter,self.channel,'123',raw_private=True)
+        self.channel.fetch_message.assert_not_awaited()
 
     async def test_wrong_guild_never_credits(self):
         self.member.guild=types.SimpleNamespace(id=2)

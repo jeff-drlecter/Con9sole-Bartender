@@ -64,7 +64,7 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
 
     def make_member(self, uid):
         return types.SimpleNamespace(id=uid, guild=self.guild, bot=False,
-            roles=[], voice=None, premium_since=None, mention=f'<@{uid}>')
+            roles=[], voice=None, premium_since=None, mention=f'<@{uid}>', display_name='player')
 
     async def add_roles(self, *roles, **kwargs):
         for role in roles:

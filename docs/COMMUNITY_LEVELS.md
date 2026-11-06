@@ -105,3 +105,25 @@
 尚未驗證：線上原始 Adventure Frontier Embed 是否完全符合 parser、全體 Amari 名單完整度、Fly 當前剩餘記憶體。公開頁面的文字可讀不等於 Discord gateway 已驗證。現有主機設定為 shared CPU ×1／256MB，有持久卷；低額外消耗是設計目標，不是實測帳單保證。
 
 公告可靠性限制：成功送出後、寫入 notice 水位前若 process crash，Discord REST 與 SQLite 無法同一交易，仍有重發窗口。未宣稱 exactly-once。角色／公告的 HTTP 失敗目前在下一次合資格核對才重試，尚未有持久背景重試佇列。
+
+## Follow-up compatibility update
+
+The auditor-driven continuation supersedes prototype policy differences above where applicable:
+
+- Defaults now follow the observed source: all-level announcements, ping on, ten original custom templates, leave-clears-XP on. `/levels announcements` edits templates/mode; `/levels leave_policy` can select retention.
+- `/levels rank` includes personal total rank. `/levels leaderboard page:... period:YYYY-Www` supports pagination/history; `period:amari-legacy` preserves the imported source counter. `/levels winners` previews top3 and can publish in active mode; old counters are not deleted.
+- Automatic persistent role/notice repair runs with backoff while ready/active. This supersedes the earlier next-interaction-only retry limitation. The crash-after-send-before-ack ambiguity still applies.
+- Raw snapshot migration and recovery primitives now exist, with executable failure tests. They are offline-only and do not remove `REPLACEMENT_READY=False`. The level-only Discord import remains blocked.
+
+Offline transfer commands (Bot must be stopped and feature off):
+
+```bash
+python scripts/level_transfer.py --db /data/community_levels.sqlite3 --guild GUILD_ID --offline backup --output /data/levels-before.sqlite3
+python scripts/level_transfer.py --db /data/community_levels.sqlite3 --guild GUILD_ID --offline import-snapshot --snapshot /secure/amari.json --roster /secure/independent_ids.json --source-count SOURCE_COUNT --backup /data/levels-before-import.sqlite3
+# Add --commit only after preview, authoritative source and cutoff evidence are reviewed.
+python scripts/level_transfer.py --db /data/community_levels.sqlite3 --guild GUILD_ID --offline restore --backup /data/levels-before.sqlite3 --sha256 BACKUP_SHA --checkpoint /data/levels-before-restore.sqlite3
+```
+
+Snapshot schema1 requires `source:amari`, guild_id, UTC captured_at/cutover_at/source_frozen_at, explicit source weekly_period, and users containing user_id/total_xp/level/level_xp/weekly_xp. Source frozen_at must equal the common cutover timestamp. IDs/expected count are independently supplied; the snapshot cannot certify itself complete. The current tool imports XP/weekly counters only; settings/role snapshots must be separately reviewed and restored through a safe plan. A restored SQLite DB does not by itself restore Discord roles or write new XP back into Amari.
+
+`/levels inspect ... raw_private:true` is a trusted-source-only Administrator diagnostic that returns the real embed schema privately. It does not credit XP or alter bindings. Default unsupported formats return structure-only metadata. Source allowlist and both channel/history read permissions are required before any content export. Review and sanitize captured fixtures before publishing them.

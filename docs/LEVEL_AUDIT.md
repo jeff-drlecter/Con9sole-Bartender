@@ -76,3 +76,29 @@ All gates must have concrete evidence before changing `REPLACEMENT_READY`. There
 ## Review independence
 
 The auditor read implementation/docs, independently reproduced the stale-role downgrade and added `tests/test_level_audit.py`; the implementer changed production code. Auditor tests use no production secrets/data and do not log into Discord. Final production replacement verdict remains NO-GO regardless of offline pass count.
+
+## Continuation — executable transfer/recovery and parity work
+
+The follow-up implementation adds `features/level_migration.py` plus offline-only `scripts/level_transfer.py`:
+
+- Strict JSON, exact ID/XP types, independent roster/count matching, exact level/within-level validation, source freeze/cutover provenance.
+- Atomic raw-XP replacement of preview totals. Accepted post-cutover journal events are replayed once; earlier shadow scores are discarded. Late pre-cutover message events are rejected by source timestamp.
+- Shared cooldowns and same-day activity caps reconstructed from bridge events. Post-cutover manual adjustments/departures refuse migration pending an explicit policy instead of silently losing data.
+- Original Amari weekly counter preserved as `amari-legacy`; it is not mislabeled as a known calendar week. Zero-XP members are included in the independent scope.
+- SQLite backup API, standalone DELETE-journal artifacts, SHA256 and exact staged-byte validation, sidecar rejection, schema/integrity checks, all-table guild checks, restore forced off, and mandatory current-state checkpoint before restore.
+- Level-role restore **plan** only, with canonical ID normalization and rejection of duplicate/unsafe role IDs. Actual Discord role application remains a separate live acceptance item.
+- Durable role-repair jobs with backoff and version-specific acknowledgement. Failed users cannot monopolize the first repair batch. No further user interaction is required for retry while gateway is ready/active.
+- Personal total rank, paginated rankings, historical ISO week/legacy counter selection, weekly top3 preview/publication command, ten original custom notices and editable all/milestone/off announcement policy.
+- The latest observed original level log contains ordinary levels14/28/44/3/4/8/46/16/35/6, so the compatibility default is now all-level notices, ping on. `clear_on_leave` matches the verified Amari setting on, with optional retention and pre-clear archive. These replace the prototype's proposed policy differences.
+
+Read-only public leaderboard observation covered **120 unique ranks**, including **12 Unknown entries**. All120 displayed XP/level pairs satisfy the current curve. The page provides no stable Discord IDs, so this is useful runtime level evidence, **not** a complete identity-safe migration export. Unknown names are not guessed or matched by rank.
+
+Independent auditor added `tests/test_level_migration_audit.py` and reproduced/fixed reset cooldowns/caps, lost post-T adjustments, incompatible schema restore, normalized role-ID mistakes and a WAL overlay checksum bypass. All source fixes were performed by the implementer; auditor maintained its own tests.
+
+These are implemented/tested primitives. No real source freeze, real score import, live role restore or inverse writeback to Amari has occurred. CLI requires Bot stopped and feature off; its `--offline` flag is an operator attestation, not proof that an external process has stopped. Never run it concurrently with the Bot.
+
+### OFF diagnostic release acceptance
+
+260 offline tests pass, including14 independent original audit regressions and10 independent migration audit regressions. Inspector now refuses exports outside the exact source allowlist; both view-channel and history permissions are required. Default unsupported messages return structural metadata only. Explicit private raw payload export is restricted to Administrator and the trusted Bot/thread. Standard fixture text is labeled as best-effort replacement requiring review, not guaranteed anonymization. No capture is automatically written to git.
+
+Conditional approval is for OFF diagnostic deployment and existing-core smoke tests only. Main source settings/scores remain Amari-owned. No migration CLI, source freeze or activation is part of this release.

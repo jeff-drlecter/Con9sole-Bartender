@@ -5,6 +5,8 @@ import asyncio
 import csv
 import io
 import logging
+import json
+import re
 import sqlite3
 import time
 
@@ -13,7 +15,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
-from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold
+from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
 
 log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
@@ -117,7 +119,7 @@ class CommunityLevels(commands.Cog):
                        description=f"狀態：**{cfg['mode']}**\n試行會記錄獨立 XP，但唔派角色／發升級公告。")
         e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\nBot 活動每日最多 {cfg['activity_daily_cap']} 次",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
-        e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開保留 XP；每週一香港時間自動開始新榜",inline=False)
+        e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開清分 {cfg['clear_on_leave']}；每週一香港時間自動開始新榜",inline=False)
         e.set_footer(text='Auditor：正式接管鎖定。需完成無損搬遷、實際計分及回滾驗證。')
         return e
 
@@ -143,7 +145,10 @@ class CommunityLevels(commands.Cog):
                     return
             latest=await asyncio.to_thread(self.ledger.profile,member.guild.id,member.id)
             # Supplied award totals may already be superseded by another award or adjustment.
-            await self._apply_rewards_locked(member,(result[0],latest['total']))
+            success=await self._apply_rewards_locked(member,(result[0],latest['total']))
+            if success:
+                await asyncio.to_thread(self.ledger.mark_repaired,member.guild.id,member.id,latest['total'])
+            return bool(success)
 
     async def _apply_rewards_locked(self,member,result):
         old,new=map(level_for,result)
@@ -165,17 +170,21 @@ class CommunityLevels(commands.Cog):
             except discord.HTTPException:
                 log.warning('Level role update failed; check role hierarchy and Manage Roles')
                 return
-        if new>notified:
-            crossed=[level for level,_ in due if notified<level<=new]
+        if new>notified and self.cfg['announcement_mode']!='off':
+            crossed=([new] if self.cfg['announcement_mode']=='all' else [level for level,_ in due if notified<level<=new])
             channel=member.guild.get_channel(self.cfg['announcement_channel'])
             if crossed and isinstance(channel,discord.TextChannel):
                 name=REWARD_NAMES.get(max(crossed),'會員')
                 try:
-                    await channel.send(f'🎖️ {member.mention} 升至 **Lv.{new}**，成為【{name}】！',
+                    await channel.send(render_notice(self.cfg,member,new,max(crossed)),
                         allowed_mentions=discord.AllowedMentions(users=self.cfg['announcement_ping'],roles=False,everyone=False))
                     await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)
                 except discord.HTTPException:
                     log.warning('Level announcement failed')
+                    return False
+            elif crossed and self.cfg['announcement_channel']:
+                return False
+        return True
 
     @commands.Cog.listener()
     async def on_message(self,message):
@@ -185,9 +194,9 @@ class CommunityLevels(commands.Cog):
             await self.observe_battle(message)
         elif isinstance(message.author,discord.Member):
             content=message.content.strip()
-            if content.startswith((':?','/','!')) or (not content and not message.attachments):
+            if not content and not message.attachments:
                 return
-            await self.credit(message.author,message.channel,'text',f'm:{message.id}')
+            await self.credit(message.author,message.channel,'text',f'm:{message.id}',message.created_at.timestamp())
 
     async def observe_battle(self,message):
         if not message.author.bot or message.webhook_id:
@@ -204,13 +213,15 @@ class CommunityLevels(commands.Cog):
             # Bind only a direct mention paired with the member's exact current account name.
             if not member or member.bot or member.name!=name:
                 return
-            await asyncio.to_thread(self.ledger.bind,message.guild.id,message.author.id,name,uid)
+            async with self.lock:
+                if self.cfg['mode']=='off': return
+                await asyncio.to_thread(self.ledger.bind,message.guild.id,message.author.id,name,uid)
         else:
             uid=await asyncio.to_thread(self.ledger.resolve,message.guild.id,message.author.id,name)
             member=message.guild.get_member(uid) if uid else None
             if not member or member.name!=name:
                 return
-        await self.credit(member,message.channel,'activity',f'm:{message.id}')
+        await self.credit(member,message.channel,'activity',f'm:{message.id}',message.created_at.timestamp())
 
     @commands.Cog.listener()
     async def on_raw_message_edit(self,payload):
@@ -244,6 +255,15 @@ class CommunityLevels(commands.Cog):
         return members if len(members)>=2 else []
 
     @commands.Cog.listener()
+    async def on_member_remove(self,member):
+        if member.guild.id!=config.GUILD_ID or self.cfg['mode']!='active' or not self.cfg['clear_on_leave']:
+            return
+        async with self.role_lock:
+            async with self.lock:
+                if self.cfg['mode']=='active' and self.cfg['clear_on_leave']:
+                    await asyncio.to_thread(self.ledger.member_left,member.guild.id,member.id,time.time())
+
+    @commands.Cog.listener()
     async def on_voice_state_update(self,member,before,after):
         if member.guild.id!=config.GUILD_ID or not self.gateway_confirmed:
             return
@@ -268,12 +288,32 @@ class CommunityLevels(commands.Cog):
         self.gateway_confirmed=True
         self.voice_clock.clear()
 
+    async def repair_pending(self):
+        if self.cfg['mode']!='active' or not self.bot.is_ready() or not self.gateway_confirmed:
+            return
+        guild=self.bot.get_guild(config.GUILD_ID)
+        if not guild: return
+        pending=await asyncio.to_thread(self.ledger.pending_roles,config.GUILD_ID)
+        for uid,total,old in pending:
+            member=guild.get_member(uid)
+            if member is None:
+                try: member=await guild.fetch_member(uid)
+                except discord.NotFound:
+                    await asyncio.to_thread(self.ledger.mark_repaired,config.GUILD_ID,uid,total)
+                    continue
+                except discord.HTTPException:
+                    await asyncio.to_thread(self.ledger.defer_repair,config.GUILD_ID,uid,time.time())
+                    continue
+            if not await self.apply_rewards(member,(old,total)):
+                await asyncio.to_thread(self.ledger.defer_repair,config.GUILD_ID,uid,time.time())
+
     @tasks.loop(seconds=30)
     async def voice_tick(self):
         guild=self.bot.get_guild(config.GUILD_ID)
         if not guild or self.cfg.get('mode')=='off' or not self.bot.is_ready() or not self.gateway_confirmed:
             self.voice_clock.clear()
             return
+        await self.repair_pending()
         now=time.monotonic()
         present=set()
         for channel in guild.voice_channels+guild.stage_channels:
@@ -311,22 +351,26 @@ class CommunityLevels(commands.Cog):
         await inter.response.defer(ephemeral=True)
         target=member or inter.user
         p=await asyncio.to_thread(self.ledger.profile,inter.guild_id,target.id)
+        position=await asyncio.to_thread(self.ledger.rank_position,inter.guild_id,target.id)
         level=level_for(p['total'])
         earned=p['total']-threshold(level)
         required=threshold(level+1)-threshold(level)
         filled=min(10,earned*10//required)
         e=discord.Embed(title='🎖️ 會員等級',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
+        e.add_field(name='總榜排名',value=str(position) if position else '未上榜')
         e.add_field(name='XP 來源',value=f"文字 {p['text']:,}｜互動 {p['activity']:,}｜語音 {p['voice']:,}\n匯入基準 {p['imported']:,}",inline=False)
         e.set_footer(text=f'模式：{self.cfg["mode"]}｜獨立計分，未同步 Amari；管理調整另計')
         await inter.followup.send(embed=e,allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='leaderboard',description='查看總榜或香港時間每週榜')
-    async def leaderboard(self,inter:discord.Interaction,weekly:bool=False):
+    async def leaderboard(self,inter:discord.Interaction,weekly:bool=False,page:app_commands.Range[int,1,10000]=1,period:str|None=None):
         await inter.response.defer(ephemeral=True)
-        week=calendar(time.time())[1] if weekly else None
-        rows=await asyncio.to_thread(self.ledger.leaderboard,inter.guild_id,week)
-        text='\n'.join(f'{i}. <@{uid}> · {points:,} XP' for i,(uid,points) in enumerate(rows,1)) or '暫時未有紀錄。'
-        await inter.followup.send(embed=discord.Embed(title='🏆 '+(f'每週榜 {week}' if weekly else '會員總榜'),description=text),allowed_mentions=discord.AllowedMentions.none())
+        if period and not re.fullmatch(r'(?:[0-9]{4}-W(?:0[1-9]|[1-4][0-9]|5[0-3])|amari-legacy)',period):
+            await inter.followup.send('期數請填 YYYY-Www，或 amari-legacy。'); return
+        week=period or (calendar(time.time())[1] if weekly else None)
+        rows=await asyncio.to_thread(self.ledger.leaderboard,inter.guild_id,week,page)
+        text='\n'.join(f'{i}. <@{uid}> · {points:,} XP' for i,(uid,points) in enumerate(rows,(page-1)*10+1)) or '暫時未有紀錄。'
+        await inter.followup.send(embed=discord.Embed(title='🏆 '+(f'期數 {week}' if week else '會員總榜'),description=text),allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='admin',description='管理等級設定及試行狀態')
     @app_commands.default_permissions(manage_guild=True)
@@ -390,6 +434,56 @@ class CommunityLevels(commands.Cog):
                 self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,rewards=rewards)
         await inter.followup.send('已更新獎勵；正式模式只保留最高合資格等級角色。')
 
+    @levels.command(name='leave_policy',description='設定離開伺服器時清分或保留 XP')
+    @app_commands.default_permissions(manage_guild=True)
+    async def leave_policy(self,inter:discord.Interaction,clear:bool):
+        if not await self.guard(inter):return
+        await self.configure(clear_on_leave=clear)
+        await inter.followup.send('已設定離開清分。舊紀錄會先封存供復原核對。' if clear else '已設定離開保留 XP。')
+
+    @levels.command(name='winners',description='預覽或發佈指定期數頭三名；不刪除舊週榜')
+    @app_commands.default_permissions(manage_guild=True)
+    async def winners(self,inter:discord.Interaction,period:str,publish:bool=False):
+        if not await self.guard(inter):return
+        if not re.fullmatch(r'(?:[0-9]{4}-W(?:0[1-9]|[1-4][0-9]|5[0-3])|amari-legacy)',period):
+            await inter.followup.send('期數格式需係 YYYY-Www 或 amari-legacy。');return
+        rows=(await asyncio.to_thread(self.ledger.leaderboard,inter.guild_id,period))[:3]
+        text='\n'.join(f'{i}. <@{uid}> · {xp:,} XP' for i,(uid,xp) in enumerate(rows,1)) or '暫時未有紀錄。'
+        embed=discord.Embed(title=f'🏆 {period} 頭三名',description=text)
+        if not publish:
+            await inter.followup.send(embed=embed,allowed_mentions=discord.AllowedMentions.none());return
+        if self.cfg['mode']!='active':
+            await inter.followup.send('只可喺正式模式發佈；試行只提供預覽。');return
+        channel=inter.guild.get_channel(self.cfg['announcement_channel'])
+        if not isinstance(channel,discord.TextChannel):
+            await inter.followup.send('請先設定公告頻道。');return
+        async with self.role_lock:
+            if self.cfg['mode']!='active':
+                await inter.followup.send('模式已改變，今次冇發佈。');return
+            if not await asyncio.to_thread(self.ledger.claim_weekly_notice,inter.guild_id,period):
+                await inter.followup.send('呢個期數已發佈過。');return
+            try:await channel.send(embed=embed,allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException:
+                await asyncio.to_thread(self.ledger.release_weekly_notice,inter.guild_id,period)
+                await inter.followup.send('未能發佈，請稍後再試。');return
+        await inter.followup.send('已發佈；歷史週榜保留。')
+
+    @levels.command(name='announcements',description='設定升級公告模式及原有各級自訂字句')
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(mode=[app_commands.Choice(name='只報角色階梯',value='milestones'),app_commands.Choice(name='每次升級',value='all'),app_commands.Choice(name='關閉',value='off')])
+    async def announcements(self,inter:discord.Interaction,mode:app_commands.Choice[str],template:str|None=None,level:app_commands.Range[int,1,10000]|None=None,ping:bool=False):
+        if not await self.guard(inter): return
+        if template is not None and (not template.strip() or len(template)>1800):
+            await inter.followup.send('公告字句需有 1–1800 字。');return
+        async with self.role_lock:
+            async with self.lock:
+                changes=dict(announcement_mode=mode.value,announcement_ping=ping)
+                if template is not None:
+                    if level is None:changes['announcement_template']=template
+                    else:changes['level_templates']={**self.cfg['level_templates'],str(level):template}
+                self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,**changes)
+        await inter.followup.send('已更新公告設定。支援 {user}、{user.ping}、{level}。')
+
     @levels.command(name='activate',description='完成舊等級核對及停用 Amari 派角色後正式接管')
     @app_commands.default_permissions(manage_guild=True)
     async def activate(self,inter:discord.Interaction,amari_rewards_disabled:bool,baseline_verified:bool,announcement:discord.TextChannel,ping:bool=False):
@@ -443,17 +537,50 @@ class CommunityLevels(commands.Cog):
 
     @levels.command(name='inspect',description='只讀檢查指定討論串戰鬥卡可否識別，不加分')
     @app_commands.default_permissions(manage_guild=True)
-    async def inspect(self,inter:discord.Interaction,channel:discord.Thread,message_id:str):
+    async def inspect(self,inter:discord.Interaction,channel:discord.Thread,message_id:str,raw_private:bool=False):
         if not await self.guard(inter): return
         if not message_id.isdecimal():
             await inter.followup.send('請填訊息 ID。'); return
-        if not channel.permissions_for(inter.user).read_message_history:
+        perms=channel.permissions_for(inter.user)
+        if not perms.view_channel or not perms.read_message_history:
             await inter.followup.send('你未有讀取記錄權限。'); return
         try:
             msg=await channel.fetch_message(int(message_id))
             trusted={'bot':msg.author.id,'channel':channel.id} in self.cfg['sources'] and msg.author.bot and not msg.webhook_id
-            identity=battle_identity([e.to_dict() for e in msg.embeds]) if trusted else None
-            await inter.followup.send(f'白名單來源：{trusted}\n可識別戰鬥格式：{identity is not None}\n呢次檢查唔會加分或建立玩家對應。')
+            if not trusted:
+                await inter.followup.send('來源不在 Bot＋討論串白名單，冇匯出內容。');return
+            payload=[e.to_dict() for e in msg.embeds]
+            if raw_private:
+                if not inter.user.guild_permissions.administrator:
+                    await inter.followup.send('原始樣本只限 Administrator，並需查看及讀取記錄權限。');return
+                await inter.followup.send('私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。',
+                    file=discord.File(io.BytesIO(json.dumps(dict(embeds=payload),ensure_ascii=False,indent=2).encode()),filename='battle_raw_private.json'))
+                return
+            identity=battle_identity(payload)
+            if not identity:
+                shape=[dict(index=i,has_title='title' in e,has_author='author' in e,
+                    has_description='description' in e,field_count=len(e.get('fields',[]))) for i,e in enumerate(payload)]
+                await inter.followup.send('未識別格式，只回傳結構，冇匯出文字或玩家 ID。\n```json\n'+json.dumps(shape)+'\n```');return
+            uid,name=identity if identity else (None,None)
+            resolved=msg.guild.get_member(uid) if uid else None
+            if identity and not uid:
+                saved=await asyncio.to_thread(self.ledger.resolve,inter.guild_id,msg.author.id,name)
+                resolved=msg.guild.get_member(saved) if saved else None
+            fixtures=[]
+            for index,embed in enumerate(msg.embeds):
+                raw=embed.to_dict();safe={k:raw[k] for k in ('title','description','fields','author') if k in raw}
+                if 'author' in safe:safe['author']={'name':safe['author'].get('name','')}
+                text=json.dumps(safe,ensure_ascii=False)
+                text=re.sub(r'<a?:[A-Za-z0-9_]+:[0-9]+>','',text)
+                text=re.sub(r'<@!?[0-9]+>','<@10>',text)
+                if name:text=text.replace(name,'player')
+                elif index==0:
+                    for m in msg.guild.members:
+                        if len(m.name)>2:text=text.replace(m.name,'player')
+                fixtures.append(json.loads(text))
+            proof=json.dumps(dict(embeds=fixtures),ensure_ascii=False,indent=2).encode()
+            await inter.followup.send(f'白名單來源：{trusted}\n可識別格式：{identity is not None}\n玩家可對應：{resolved is not None}\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。',
+                file=discord.File(io.BytesIO(proof),filename='battle_fixture.json'))
         except discord.HTTPException:
             await inter.followup.send('讀唔到訊息，請檢查 ID 同權限。')
 
