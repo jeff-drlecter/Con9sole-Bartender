@@ -76,7 +76,7 @@ class Bot(commands.Bot):
                 except Exception as exc:
                     log.exception("Failed loading %s: %r", full, exc)
 
-        core_modules = {"cogs.menu", "cogs.drink", "cogs.teams", "cogs.tempvc", "cogs.squad_cards", "cogs.activity_reminder"}
+        core_modules = {"cogs.menu", "cogs.drink", "cogs.teams", "cogs.tempvc", "cogs.squad_cards", "cogs.activity_reminder", "cogs.community_levels"}
         missing = core_modules.difference(loaded)
         if missing:
             raise RuntimeError(f"Core extensions failed to load: {sorted(missing)}")

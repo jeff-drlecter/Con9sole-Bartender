@@ -319,6 +319,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem("quick_bar", "吧枱", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
     MenuItem("drink_collection", "我的收藏", "🍾", "primary", "home", 0, "Drink", "collection_entry"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "home", 0, "DailyBar"),
+    MenuItem("community_rank", "會員等級", "🎖️", "secondary", "home", 0, "CommunityLevels"),
     MenuItem("cheers", "打氣", "🎉", "success", "home", 1, "Cheers"),
     MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "home", 1, "Cheers", "cheer_for_member_entry"),
     MenuItem("invite", "邀請朋友", "🔗", "secondary", "home", 2, "Menu", "create_invite_link_from_button"),
@@ -330,6 +331,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
 
 
 ADMIN_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("community_levels_admin", "等級管理", "🎖️", "secondary", "admin", 2, "CommunityLevels", "admin_entry", admin_only=True),
     MenuItem(
         id="home_menu",
         label="Menu",
