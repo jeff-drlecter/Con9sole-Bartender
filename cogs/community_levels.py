@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
 # Release gate: turn on only after the evidence checklist in LEVEL_AUDIT.md passes.
 REPLACEMENT_READY = False
-HISTORICAL_BASE_POLICY_ACCEPTED = False
+# Owner-authorized historical compensation uses the existing ordinary 1-XP rate.
+HISTORICAL_BASE_POLICY_ACCEPTED = True
 
 
 def reward_role_safe(role, me):
@@ -844,7 +845,7 @@ class CommunityLevels(commands.Cog):
             if not status_only:
                 if job in self.history_discovery:raise ValueError('呢個批次正在探索頻道；唔會重複開始。')
                 self.history_discovery.add(job);discovery_job=job
-                await inter.followup.send('已開始探索文字頻道及封存討論串；暫時未補分。完成範圍核對後會另行回報。')
+                await inter.followup.send('已開始探索文字頻道及封存討論串；暫時未補分。完成範圍核對後會另行回報。',ephemeral=True)
                 with connect_sqlite(self.ledger.path) as db:
                     applied=db.execute("SELECT plan,manifest FROM hybrid_plans WHERE guild=? AND state='applied'",(inter.guild_id,)).fetchall()
                 if len(applied)!=1:raise ValueError('需要唯一已套用基線批次。')
@@ -880,7 +881,7 @@ class CommunityLevels(commands.Cog):
             text=await asyncio.to_thread(self.history_audit.text_scope,job)
             if text['state']!='complete':
                 complete=sum(bool(c[2]) for c in text['cursors'])
-                await inter.followup.send(f'文字CD核數 {text["state"]}｜已完成 {complete}/{len(text["cursors"])} 個範圍；未有私人核數結果，冇補分。')
+                await inter.followup.send(f'文字CD核數 {text["state"]}｜已完成 {complete}/{len(text["cursors"])} 個範圍；未有私人核數結果，冇補分。',ephemeral=True)
                 return
             await self.check_history_scope(inter,text)
             complete=sum(bool(c[2]) for c in text['cursors'])
@@ -889,13 +890,13 @@ class CommunityLevels(commands.Cog):
                 replay=await asyncio.to_thread(self.history_audit.text_replay,job,inter.guild_id)
                 message+='\n'+'\n'.join(f'<@{uid}>：合併後 {row["combined"]} − 原文字 {row["text_only"]} = {row["base_xp"]} 基礎XP候選' for uid,row in list(replay['users'].items())[:10])
                 message+='\n只反映保留中嘅歷史；已刪訊息及歷史Booster倍數未知。未補分。'
-                await inter.followup.send(message,file=discord.File(io.BytesIO(json.dumps(replay,ensure_ascii=False,indent=2).encode()),filename='history_cd_private.json'),allowed_mentions=discord.AllowedMentions.none())
-            else:await inter.followup.send(message,allowed_mentions=discord.AllowedMentions.none())
+                await inter.followup.send(message,file=discord.File(io.BytesIO(json.dumps(replay,ensure_ascii=False,indent=2).encode()),filename='history_cd_private.json'),allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
+            else:await inter.followup.send(message,allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
         except (ValueError,discord.HTTPException,sqlite3.OperationalError) as exc:
-            await inter.followup.send(('核數未完成：'+str(exc))[:1500])
+            await inter.followup.send(('核數未完成：'+str(exc))[:1500],ephemeral=True)
         except Exception as exc:
             log.exception('Historical text command failed')
-            await inter.followup.send(f'文字核數暫停（{type(exc).__name__}）；未補分。')
+            await inter.followup.send(f'文字核數暫停（{type(exc).__name__}）；未補分。',ephemeral=True)
         finally:
             if discovery_job:self.history_discovery.discard(discovery_job)
 

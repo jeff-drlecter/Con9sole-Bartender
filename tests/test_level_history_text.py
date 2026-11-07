@@ -70,3 +70,21 @@ class TextScopeAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('file',kwargs)
             self.assertIn('權限',inter.followup.send.call_args.args[0])
             self.assertNotIn('合併後',inter.followup.send.call_args.args[0])
+
+    async def test_completed_text_attachment_is_explicitly_private(self):
+        from unittest.mock import AsyncMock,MagicMock
+        import types
+        import discord
+        from cogs.community_levels import CommunityLevels
+        with tempfile.TemporaryDirectory() as temp:
+            audit=HistoryAudit(Path(temp)/'audit');job=audit.start(1,100,1000,[{'bot':2,'channel':3}])
+            audit.state(job,'complete');audit.start_text(job,1,[3],dict(cutoff=900,cooldown=60,baseline='plan',users=[10]))
+            audit.text_checkpoint(job,3,1,[],True);audit.text_state(job,'complete')
+            guild=types.SimpleNamespace(id=1,me=object())
+            channel=types.SimpleNamespace(guild=guild,permissions_for=lambda member:discord.Permissions(view_channel=True,read_message_history=True))
+            bot=MagicMock();bot.get_channel.return_value=channel
+            cog=CommunityLevels(bot);cog.history_audit=audit;cog.guard=AsyncMock(return_value=True)
+            inter=types.SimpleNamespace(guild_id=1,guild=guild,user=object(),followup=types.SimpleNamespace(send=AsyncMock()))
+            await cog.history_text_command.callback(cog,inter,status_only=True)
+            self.assertTrue(inter.followup.send.call_args.kwargs['ephemeral'])
+            self.assertIn('file',inter.followup.send.call_args.kwargs)
