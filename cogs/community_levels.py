@@ -294,11 +294,23 @@ class CommunityLevels(commands.Cog):
     async def on_ready(self):
         self.gateway_confirmed=True
         self.voice_clock.clear()
+        await self.reconcile_sources()
 
     @commands.Cog.listener()
     async def on_resumed(self):
         self.gateway_confirmed=True
         self.voice_clock.clear()
+        await self.reconcile_sources()
+
+    async def reconcile_sources(self):
+        """Restore subscriptions after downtime without reopening archived threads."""
+        for channel_id in sorted({s['channel'] for s in self.cfg.get('sources',[])}):
+            try:
+                channel=self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+                if isinstance(channel,discord.Thread) and channel.guild.id==config.GUILD_ID and not channel.archived:
+                    await channel.join()
+            except discord.HTTPException:
+                log.warning('Could not restore allowlisted game thread subscription')
 
     async def repair_pending(self):
         if self.cfg['mode']!='active' or not self.bot.is_ready() or not self.gateway_confirmed:
@@ -567,7 +579,7 @@ class CommunityLevels(commands.Cog):
         try:
             channel,message=await self.resolve_card_link(inter,message_link)
             if not message.author.bot or message.webhook_id or message.author.id==self.bot.user.id:
-                raise ValueError('請選擇 Adventure Frontier Bot 嘅戰鬥卡，唔係真人／webhook 訊息。')
+                raise ValueError(f'來源未加入：Bot={message.author.bot}；Webhook={bool(message.webhook_id)}；本 Bot={message.author.id==self.bot.user.id}。請選擇原始遊戲 Bot 嘅戰鬥訊息。')
             entry={'bot':message.author.id,'channel':channel.id}
             if not remove and not channel.archived:
                 await channel.join()
@@ -576,7 +588,8 @@ class CommunityLevels(commands.Cog):
                     sources=[s for s in self.cfg['sources'] if s!=entry]
                     if not remove:sources.append(entry)
                     self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
-            await inter.followup.send('已按指定卡片更新唯一 Bot＋討論串來源；模式冇改變，亦冇加分。')
+            parsed=battle_identity([e.to_dict() for e in message.embeds]) is not None
+            await inter.followup.send(f'已更新指定 Bot＋討論串來源；戰鬥格式可識別：{parsed}（未識別嘅卡片唔會計分）。模式冇改變，亦冇加分。')
         except (ValueError,discord.HTTPException) as exc:
             await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '讀唔到卡片，請核對 Bot 嘅查看及讀取記錄權限。')
 
@@ -607,7 +620,9 @@ class CommunityLevels(commands.Cog):
             msg=await channel.fetch_message(int(message_id))
             trusted={'bot':msg.author.id,'channel':channel.id} in self.cfg['sources'] and msg.author.bot and not msg.webhook_id
             if not trusted:
-                await inter.followup.send('來源不在 Bot＋討論串白名單，冇匯出內容。');return
+                shape=[dict(index=i,has_title=bool(e.title),has_author=bool(e.author.name),
+                    has_description=bool(e.description),field_count=len(e.fields)) for i,e in enumerate(msg.embeds)]
+                await inter.followup.send(f'來源未獲信任，冇匯出內容或加分。Bot={msg.author.bot}；Webhook={bool(msg.webhook_id)}。\n```json\n'+json.dumps(shape)+'\n```');return
             payload=[e.to_dict() for e in msg.embeds]
             if raw_private:
                 if not inter.user.guild_permissions.administrator:

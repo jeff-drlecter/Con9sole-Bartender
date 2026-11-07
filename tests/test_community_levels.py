@@ -107,6 +107,28 @@ class LedgerTests(unittest.TestCase):
 
 
 class CogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ready_restores_only_live_same_guild_threads_and_continues_after_failure(self):
+        active=MagicMock(spec=discord.Thread)
+        active.guild=types.SimpleNamespace(id=1)
+        active.archived=False
+        active.join=AsyncMock()
+        archived=MagicMock(spec=discord.Thread)
+        archived.guild=types.SimpleNamespace(id=1)
+        archived.archived=True
+        archived.join=AsyncMock()
+        foreign=MagicMock(spec=discord.Thread)
+        foreign.guild=types.SimpleNamespace(id=2)
+        foreign.archived=False
+        foreign.join=AsyncMock()
+        self.cog.cfg['sources']=[{'bot':20,'channel':i} for i in (30,31,32,33)]
+        self.cog.bot.get_channel=lambda cid:{30:archived,32:foreign,33:active}.get(cid)
+        self.cog.bot.fetch_channel=AsyncMock(side_effect=discord.NotFound(MagicMock(status=404,reason='missing'),'missing'))
+        await self.cog.on_ready()
+        active.join.assert_awaited_once()
+        archived.join.assert_not_awaited()
+        foreign.join.assert_not_awaited()
+        self.assertTrue(self.cog.gateway_confirmed)
+
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.cog=CommunityLevels(MagicMock())
