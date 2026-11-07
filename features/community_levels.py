@@ -142,6 +142,10 @@ class Ledger:
             return db.execute('SELECT user,amount,stamp FROM xp_events WHERE guild=? AND event=?',
                               (guild,event)).fetchone()
 
+    def engagement_events(self,guild,start,cutoff):
+        with connect_sqlite(self.path) as db:
+            return db.execute("SELECT event,user,stamp FROM xp_events WHERE guild=? AND source IN ('text','activity') AND stamp>=? AND stamp<=?",(guild,start,cutoff)).fetchall()
+
     def leaderboard(self,guild,week=None,page=1):
         if type(page) is not int or not 1<=page<=10000: raise ValueError("Invalid page")
         offset=(page-1)*10

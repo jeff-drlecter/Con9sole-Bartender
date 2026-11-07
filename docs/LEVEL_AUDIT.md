@@ -135,3 +135,9 @@ This proves read-only source/normal-identity acceptance, not an actual XP award,
 ## Owner cooldown policy — 2026-11-07
 
 Bot activity is an additional path through the same 60-second text engagement cooldown; neither path gets a separate claim. Voice remains independently every 300 seconds. Owner rejected the additional 60-per-day bot cap; the default and live configuration must use activity_daily_cap=0 (unlimited). A 65-event regression verifies no daily cap while text shares the activity cooldown and voice retains its own interval. Optional positive caps remain backward-compatible for explicit future configuration only.
+
+## Historical request and read-only collector — 2026-11-07
+
+Owner requests Amari baseline migration plus Adventure Frontier compensation from 2026-08-18 00:00 Hong Kong. A separate persistent history audit database records immutable card IDs, timestamps and hashes, fixed source/cutoff scope and resumable cursors. Raw content/account names are not retained. Ordinary cards provide historical ID/name-hash collision evidence; late-edited cards never supply an owner association. Pets resolve only after all source collection and require a unique historical owner plus an exact current account-name hash. Renamed/departed/ambiguous identities stay unawarded. Current preview text/activity events are considered when excluding nearby candidates.
+
+This is read-only collection and provisional game-only counting, not compensation or snapshot import. All candidates still lack historical Amari text-award evidence and historical Booster evidence. No changes to live XP, cooldowns, weekly periods or reward roles occur. An exact ID-bearing Amari baseline is still required; leaderboard display names are not safe ID evidence. Unknown rows are treated as departed per owner instruction. Validation: 276 tests pass, including collector isolation, crash/resume/idempotent observations, owner collisions and exclusion of late-edit identity evidence.
