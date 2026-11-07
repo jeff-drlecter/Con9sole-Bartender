@@ -110,7 +110,8 @@ class CommunityLevels(commands.Cog):
         if not self.admin(inter):
             await inter.response.send_message('需要管理伺服器權限。',ephemeral=True)
             return False
-        await inter.response.defer(ephemeral=True)
+        if not inter.response.is_done():
+            await inter.response.defer(ephemeral=True)
         return True
 
     async def settings_embed(self):
@@ -230,6 +231,9 @@ class CommunityLevels(commands.Cog):
         if not any(s['channel']==payload.channel_id for s in self.cfg['sources']):
             return
         channel=self.bot.get_channel(payload.channel_id)
+        if channel is None:
+            try:channel=await self.bot.fetch_channel(payload.channel_id)
+            except discord.HTTPException:return
         if channel:
             try:
                 message=await channel.fetch_message(payload.message_id)
@@ -272,6 +276,14 @@ class CommunityLevels(commands.Cog):
         channels={c.id:c for c in (before.channel,after.channel) if c}
         for channel in channels.values():
             self.reconcile_voice_members(channel,time.monotonic())
+
+    @commands.Cog.listener()
+    async def on_thread_update(self,before,after):
+        if after.guild.id!=config.GUILD_ID or after.archived:
+            return
+        if any(s['channel']==after.id for s in self.cfg['sources']):
+            try:await after.join()
+            except discord.HTTPException:log.warning('Could not join allowlisted game thread')
 
     @commands.Cog.listener()
     async def on_disconnect(self):
@@ -535,6 +547,53 @@ class CommunityLevels(commands.Cog):
         except (ValueError,UnicodeError,KeyError,TypeError,csv.Error) as exc:
             await inter.followup.send(discord.utils.escape_mentions(str(exc)))
 
+    async def resolve_card_link(self,inter,link):
+        match=re.fullmatch(r'https://discord\.com/channels/([0-9]+)/([0-9]+)/([0-9]+)/?',link.strip())
+        if not match or int(match[1])!=config.GUILD_ID:
+            raise ValueError('請貼上本伺服器嘅 Discord 訊息連結。')
+        channel=self.bot.get_channel(int(match[2])) or await self.bot.fetch_channel(int(match[2]))
+        if not isinstance(channel,discord.Thread) or channel.guild.id!=config.GUILD_ID:
+            raise ValueError('訊息必須位於本伺服器嘅討論串。')
+        perms=channel.permissions_for(inter.user)
+        if not perms.view_channel or not perms.read_message_history:
+            raise ValueError('你未有查看或讀取討論串記錄嘅權限。')
+        message=await channel.fetch_message(int(match[3]))
+        return channel,message
+
+    @levels.command(name='source_card',description='直接貼 Adventure Frontier 戰鬥訊息連結設定來源，支援舊討論串')
+    @app_commands.default_permissions(manage_guild=True)
+    async def source_card(self,inter:discord.Interaction,message_link:str,remove:bool=False):
+        if not await self.guard(inter):return
+        try:
+            channel,message=await self.resolve_card_link(inter,message_link)
+            if not message.author.bot or message.webhook_id or message.author.id==self.bot.user.id:
+                raise ValueError('請選擇 Adventure Frontier Bot 嘅戰鬥卡，唔係真人／webhook 訊息。')
+            entry={'bot':message.author.id,'channel':channel.id}
+            if not remove and not channel.archived:
+                await channel.join()
+            async with self.role_lock:
+                async with self.lock:
+                    sources=[s for s in self.cfg['sources'] if s!=entry]
+                    if not remove:sources.append(entry)
+                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
+            await inter.followup.send('已按指定卡片更新唯一 Bot＋討論串來源；模式冇改變，亦冇加分。')
+        except (ValueError,discord.HTTPException) as exc:
+            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '讀唔到卡片，請核對 Bot 嘅查看及讀取記錄權限。')
+
+    @levels.command(name='inspect_link',description='直接貼戰鬥訊息連結做只讀格式驗證')
+    @app_commands.default_permissions(manage_guild=True)
+    async def inspect_link(self,inter:discord.Interaction,message_link:str,raw_private:bool=False):
+        # Resolve before handing to the shared inspector; acknowledge only once.
+        if not self.admin(inter):
+            await inter.response.send_message('需要管理伺服器權限。',ephemeral=True);return
+        try:
+            # Metadata/history fetch may take >3s; defer now, guard detects that below.
+            await inter.response.defer(ephemeral=True)
+            channel,message=await self.resolve_card_link(inter,message_link)
+            await self.inspect.callback(self,inter,channel,str(message.id),raw_private=raw_private)
+        except (ValueError,discord.HTTPException) as exc:
+            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '讀唔到訊息，請核對 ID 同權限。')
+
     @levels.command(name='inspect',description='只讀檢查指定討論串戰鬥卡可否識別，不加分')
     @app_commands.default_permissions(manage_guild=True)
     async def inspect(self,inter:discord.Interaction,channel:discord.Thread,message_id:str,raw_private:bool=False):
@@ -553,7 +612,14 @@ class CommunityLevels(commands.Cog):
             if raw_private:
                 if not inter.user.guild_permissions.administrator:
                     await inter.followup.send('原始樣本只限 Administrator，並需查看及讀取記錄權限。');return
-                await inter.followup.send('私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。',
+                projection=[]
+                for item in payload:
+                    fields={k:item[k] for k in ('title','description','fields') if k in item}
+                    if 'author' in item:fields['author']={'name':item['author'].get('name','')}
+                    projection.append(fields)
+                compact=re.sub(r'<a?:[A-Za-z0-9_]+:[0-9]+>','',json.dumps(projection,ensure_ascii=False,separators=(',',':')))
+                preview=('\n```json\n'+compact+'\n```') if len(compact)<1600 else ''
+                await inter.followup.send('私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。'+preview,
                     file=discord.File(io.BytesIO(json.dumps(dict(embeds=payload),ensure_ascii=False,indent=2).encode()),filename='battle_raw_private.json'))
                 return
             identity=battle_identity(payload)
@@ -579,7 +645,9 @@ class CommunityLevels(commands.Cog):
                         if len(m.name)>2:text=text.replace(m.name,'player')
                 fixtures.append(json.loads(text))
             proof=json.dumps(dict(embeds=fixtures),ensure_ascii=False,indent=2).encode()
-            await inter.followup.send(f'白名單來源：{trusted}\n可識別格式：{identity is not None}\n玩家可對應：{resolved is not None}\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。',
+            compact=json.dumps(fixtures,ensure_ascii=False,separators=(',',':'))
+            preview=('\n```json\n'+compact+'\n```') if len(compact)<1600 else ''
+            await inter.followup.send(f'白名單來源：{trusted}\n可識別格式：{identity is not None}\n玩家可對應：{resolved is not None}\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。'+preview,
                 file=discord.File(io.BytesIO(proof),filename='battle_fixture.json'))
         except discord.HTTPException:
             await inter.followup.send('讀唔到訊息，請檢查 ID 同權限。')

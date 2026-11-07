@@ -200,6 +200,24 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.inspect.callback(self.cog,inter,self.channel,'123',raw_private=True)
         self.channel.fetch_message.assert_not_awaited()
 
+    async def test_message_link_resolves_uncached_thread_and_checks_scope(self):
+        thread=MagicMock(spec=discord.Thread)
+        thread.guild=types.SimpleNamespace(id=1)
+        thread.permissions_for.return_value=types.SimpleNamespace(view_channel=True,read_message_history=True)
+        thread.fetch_message=AsyncMock(return_value='card')
+        self.cog.bot.get_channel.return_value=None
+        self.cog.bot.fetch_channel=AsyncMock(return_value=thread)
+        inter=types.SimpleNamespace(user=self.member)
+        actual,message=await self.cog.resolve_card_link(inter,'https://discord.com/channels/1/30/123')
+        self.assertIs(actual,thread);self.assertEqual(message,'card')
+        self.cog.bot.fetch_channel.assert_awaited_once_with(30)
+        for link in ('https://evil.com/channels/1/30/123','https://discord.com/channels/2/30/123'):
+            with self.assertRaises(ValueError):await self.cog.resolve_card_link(inter,link)
+        thread.permissions_for.return_value.view_channel=False
+        thread.fetch_message.reset_mock()
+        with self.assertRaises(ValueError):await self.cog.resolve_card_link(inter,'https://discord.com/channels/1/30/123')
+        thread.fetch_message.assert_not_awaited()
+
     async def test_wrong_guild_never_credits(self):
         self.member.guild=types.SimpleNamespace(id=2)
         await self.cog.credit(self.member,self.channel,'activity','i1')
