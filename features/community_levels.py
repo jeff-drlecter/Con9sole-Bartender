@@ -169,6 +169,19 @@ class Ledger:
             row = db.execute('SELECT user FROM bindings WHERE guild=? AND bot=? AND namehash=?',(guild,bot,digest)).fetchone()
         return row[0] if row else None
 
+    def engagement_inventory(self,guild,start,cutoff):
+        """Distinguish retained XP from pre-baseline shadow, keyed by durable event ID."""
+        with connect_sqlite(self.path) as db:
+            live=db.execute("SELECT event,user,source,amount,stamp FROM xp_events WHERE guild=? AND source IN ('text','activity') AND stamp>=? AND stamp<=?",(guild,start,cutoff)).fetchall()
+            archived=db.execute("SELECT s.events FROM hybrid_shadow s JOIN hybrid_plans p ON p.plan=s.plan AND p.guild=s.guild WHERE s.guild=? AND p.state='applied'",(guild,)).fetchall()
+        retained={row[0]:dict(user=row[1],source=row[2],amount=row[3],stamp=row[4]) for row in live}
+        shadow={}
+        for (encoded,) in archived:
+            for event,user,source,amount,stamp in json.loads(encoded):
+                if source in ('text','activity') and start<=stamp<=cutoff and event not in retained:
+                    shadow[event]=dict(user=user,source=source,amount=amount,stamp=stamp)
+        return dict(retained=retained,archived=shadow)
+
     def adjust(self,guild,user,actor,delta,reason,now):
         if not reason.strip() or len(reason)>200 or abs(delta)>1_000_000:
             raise ValueError('需要原因（最多 200 字），每次最多調整 1,000,000 XP。')
