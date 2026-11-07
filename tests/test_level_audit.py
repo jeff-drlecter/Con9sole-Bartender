@@ -48,7 +48,7 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.low, self.high = Role(50, 5), Role(150, 15)
         self.cog.cfg = self.cog.ledger.configure(1, mode='active',
             rewards={'5': 50, '15': 150})
-        self.guild = types.SimpleNamespace(id=1, afk_channel_id=None,
+        self.guild = types.SimpleNamespace(id=1, afk_channel=None,
             voice_channels=[], stage_channels=[],
             get_role=lambda rid: {50: self.low, 150: self.high}.get(rid),
             get_channel=lambda cid: None)

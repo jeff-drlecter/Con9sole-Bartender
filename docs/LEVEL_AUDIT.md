@@ -13,8 +13,8 @@ The full observed120 ranks must be present, captured recently, and all ten actua
 | Baseline | Full120 public rows captured;87 unique current aliases plus5 role floors committed, with verified backup and archived shadow; live Top10 agrees |19 unmatched public ranks held;101 members without evidence unchanged;12 Unknown treated departed |
 | XP rules | Text/activity share60s,1 baseXP, no extra activity daily cap; Booster×2; voice25XP/300s with2 eligible humans | Live voice/reconnect and role recovery drill |
 | Activity | Actual ordinary/pet application response payloads and single award verified | Historical shared-text cooldown evidence and bonus commit |
-| Historical audit | Archived and retained preview events now reconciled separately | Candidate counts are not final XP; no historical bonus applied |
-| Rewards | Missing-role reconciliation fails closed; complete10-role preflight and safe configuration command added | Live hierarchy/permissions check and all-member reconciliation/restore drill |
+| Historical audit | Full1,898-scope text audit complete; shared-CD net replay and archived/live reconciliation verified | Retained-history ordinary-rate compensation completed for two verified members, with backup; historical Booster/deleted-message data not inferred |
+| Rewards | Missing-role reconciliation fails closed; complete10-role preflight and safe configuration command added | All10 mappings passed live hierarchy/permissions and were configured in preview; all-member reconciliation/restore drill remains |
 | Weekly | New calendar weeks retained; old Amari weekly XP unknown | Never fabricate old weekly balances |
 | Activation | Hard-disabled independently of baseline | Finish live acceptance and recovery evidence; disable Amari rewards before takeover |
 
@@ -159,3 +159,9 @@ The evidence preview greedily replays text plus recognized game cards under the 
 The history_bonus preview includes the exact net base-XP changes, evidence hash, member scope, baseline, time range and policy. The owner authorized historical compensation under the original ordinary1-XP/shared60s policy. After the full retained-history scan, the release gate permits that base-only compensation. It does not infer missing messages or historical Booster bonuses; an exact preview digest, explicit base_only flag and verified backup remain required. The formal replacement gate remains false.
 
 The prepared writer creates a verified backup and atomically adds compensated totals plus administrator adjustment records and a durable full-manifest marker in existing settings (no schema change). Same-manifest retries are no-ops; another historical batch is rejected. It preserves current weekly counters, cooldowns, receipts and events, seeds notice watermarks and leaves mode OFF. Tests cover restore and rollback when a later member fails. No compensation had been applied when this preview was prepared; live execution is recorded separately.
+
+## Live voice timer defect and correction
+
+The real existing call exposed zero new voice XP. Inspection of the installed discord.py Guild class confirms that afk_channel_id is not a public property; afk_channel is the supported property. The old timer and diagnostic used the unsupported attribute, which raises AttributeError. Production now reads the public AFK channel object; a regression uses an actual Guild instance, avoiding the fake attribute that masked this bug.
+
+The independent auditor also reproduced a second failure: a voice listener could remove another member's clock while the first award awaited SQLite, causing KeyError and stopping the loop. The timer now revalidates current membership and missing clocks, checks gateway/cohort again under the credit lock, never revives removed clocks after awaiting, and preserves newly added listener clocks. Five independent interleaving regressions cover departure, deafening, disconnect, lock wait and new joins. All320 offline tests pass; live25XP/5-minute acceptance is still required after this correction.
