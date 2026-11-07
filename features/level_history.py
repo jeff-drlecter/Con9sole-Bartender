@@ -119,3 +119,75 @@ class HistoryAudit:
         return dict(state=scope['state'],start=scope['start'],cutoff=scope['cutoff'],reasons=reasons,
                     potential=users,preview=preview,cooldown=cooldown,archived_candidates=archived_candidates,
                     complete_channels=sum(bool(c[2]) for c in scope['cursors']),channels=len(scope['cursors']))
+
+    def start_text(self,job,guild,channels,policy):
+        self.job(job,guild)
+        with connect_sqlite(self.path) as db:
+            db.executescript('''
+            CREATE TABLE IF NOT EXISTS text_scopes(job TEXT PRIMARY KEY,policy TEXT,state TEXT);
+            CREATE TABLE IF NOT EXISTS text_cursors(job TEXT,channel INTEGER,message INTEGER,done INTEGER,PRIMARY KEY(job,channel));
+            CREATE TABLE IF NOT EXISTS text_events(job TEXT,message INTEGER,user INTEGER,stamp REAL,PRIMARY KEY(job,message));
+            ''')
+            body=json.dumps(policy,sort_keys=True)
+            old=db.execute('SELECT policy FROM text_scopes WHERE job=?',(job,)).fetchone()
+            if old and old[0]!=body:raise ValueError('Historical text policy changed; use a new history batch')
+            if not old:
+                db.execute('INSERT INTO text_scopes VALUES(?,?,?)',(job,body,'paused'))
+                db.executemany('INSERT INTO text_cursors VALUES(?,?,0,0)',[(job,cid) for cid in sorted(set(channels))])
+            actual={r[0] for r in db.execute('SELECT channel FROM text_cursors WHERE job=?',(job,))}
+            if actual!=set(channels):raise ValueError('Text channel scope changed; use a new history batch')
+
+    def text_scope(self,job):
+        with connect_sqlite(self.path) as db:
+            row=db.execute('SELECT policy,state FROM text_scopes WHERE job=?',(job,)).fetchone()
+            if not row:raise ValueError('Text audit not started')
+            cursors=db.execute('SELECT channel,message,done FROM text_cursors WHERE job=? ORDER BY channel',(job,)).fetchall()
+        return dict(policy=json.loads(row[0]),state=row[1],cursors=cursors)
+
+    def text_checkpoint(self,job,channel,message,events,done=False):
+        with connect_sqlite(self.path) as db:
+            db.executemany('INSERT OR IGNORE INTO text_events VALUES(?,?,?,?)',[(job,*row) for row in events])
+            db.execute('UPDATE text_cursors SET message=max(message,?),done=? WHERE job=? AND channel=?',(message,int(done),job,channel))
+
+    def text_state(self,job,state):
+        if state not in ('running','paused','complete'):raise ValueError('Invalid text audit state')
+        with connect_sqlite(self.path) as db:db.execute('UPDATE text_scopes SET state=? WHERE job=?',(state,job))
+
+    def text_replay(self,job,guild):
+        """Net base XP after replaying text plus games, relative to text alone.
+
+        Replay only before the applied baseline cutoff. This is an evidence preview,
+        not permission to infer deleted messages or historical Booster membership.
+        """
+        scope=self.job(job,guild);text=self.text_scope(job);policy=text['policy']
+        if scope['state']!='complete' or text['state']!='complete' or not all(c[2] for c in text['cursors']):
+            raise ValueError('Both game and text scans must be complete')
+        start=scope['start'];cutoff=policy['cutoff'];cd=policy['cooldown']
+        with connect_sqlite(self.path) as db:
+            games=db.execute("SELECT message,user,stamp FROM cards WHERE job=? AND reason='candidate' AND stamp>=? AND stamp<? ORDER BY stamp,message",(job,start,cutoff)).fetchall()
+            texts=db.execute('SELECT message,user,stamp FROM text_events WHERE job=? AND stamp<? ORDER BY stamp,message',(job,cutoff)).fetchall()
+        games=[row for row in games if row[1] in set(policy['users'])]
+        users={uid for _,uid,_ in games};result={}
+        for uid in sorted(users):
+            human=[(stamp,mid,'text') for mid,user,stamp in texts if user==uid]
+            activity=[(stamp,mid,'activity') for mid,user,stamp in games if user==uid]
+            prefix=sorted(human+[min(activity)])
+            first_game=min(stamp for stamp,_,_ in activity)
+            before=[stamp for stamp,_,_ in prefix if stamp<=first_game]
+            if before and before[0]<start and not any(b-a>=cd for a,b in zip(before,before[1:])):
+                raise ValueError('Initial text cooldown cannot be reconstructed before first game')
+            def replay(events):
+                clock=None;accepted=[]
+                for stamp,mid,kind in sorted(events):
+                    if clock is None or stamp-clock>=cd:
+                        clock=stamp
+                        if stamp>=start:accepted.append((mid,kind,stamp))
+                return accepted
+            old=replay(human);combined=replay(human+activity)
+            delta=len(combined)-len(old)
+            if delta<0:raise ValueError('Negative replay delta requires manual reconciliation')
+            result[uid]=dict(base_xp=delta,text_only=len(old),combined=len(combined),game_candidates=len(activity),
+                game_accepted=sum(kind=='activity' for _,kind,_ in combined))
+        return dict(algorithm='net-shared-cooldown-v1',policy=policy,users=result,
+            text_channels=len(text['cursors']),text_observations=len(texts),
+            limitations=['retained Discord history only; deleted history unavailable','historical Booster multipliers not inferred'])
