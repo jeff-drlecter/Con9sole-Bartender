@@ -63,7 +63,7 @@ class BonusTests(unittest.TestCase):
 class BonusReleaseGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_base_flag_cannot_bypass_unselected_policy(self):
         import types
-        from unittest.mock import MagicMock,AsyncMock
+        from unittest.mock import MagicMock,AsyncMock,patch
         from cogs.community_levels import CommunityLevels
         from features.level_history import HistoryAudit
         with tempfile.TemporaryDirectory() as temp:
@@ -81,7 +81,8 @@ class BonusReleaseGateTests(unittest.IsolatedAsyncioTestCase):
             guild=types.SimpleNamespace(id=1,me=admin,members=[types.SimpleNamespace(id=10,bot=False)],fetch_member=AsyncMock())
             inter=types.SimpleNamespace(guild_id=1,guild=guild,user=admin,followup=types.SimpleNamespace(send=AsyncMock()))
             cog=CommunityLevels(MagicMock());cog.ledger=ledger;cog.history_audit=audit;cog.cfg=ledger.settings(1);cog.guard=AsyncMock(return_value=True)
-            await cog.history_bonus_command.callback(cog,inter,commit=True,base_only=True,digest='irrelevant')
+            with patch('cogs.community_levels.HISTORICAL_BASE_POLICY_ACCEPTED',False):
+                await cog.history_bonus_command.callback(cog,inter,commit=True,base_only=True,digest='irrelevant')
             self.assertIn('未選定',inter.followup.send.call_args.args[0])
             guild.fetch_member.assert_not_awaited()
             self.assertEqual(ledger.settings(1)['mode'],'preview');self.assertEqual(ledger.profile(1,10)['total'],100)

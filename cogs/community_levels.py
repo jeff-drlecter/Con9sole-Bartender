@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
 # Release gate: turn on only after the evidence checklist in LEVEL_AUDIT.md passes.
 REPLACEMENT_READY = False
-HISTORICAL_BASE_POLICY_ACCEPTED = False
+# Owner-authorized historical compensation uses the existing ordinary 1-XP rate.
+HISTORICAL_BASE_POLICY_ACCEPTED = True
 
 
 def reward_role_safe(role, me):
