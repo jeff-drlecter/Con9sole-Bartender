@@ -9,6 +9,7 @@ import json
 import re
 import sqlite3
 import time
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
@@ -16,6 +17,7 @@ from discord.ext import commands, tasks
 
 import config
 from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
+from features.level_history import HistoryAudit
 
 log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
@@ -100,15 +102,20 @@ class CommunityLevels(commands.Cog):
         self.gateway_confirmed=False
         self.voice_clock={}
         self.cfg={}
+        self.history_audit=None
+        self.history_tasks={}
 
     async def cog_load(self):
         self.ledger=await asyncio.to_thread(Ledger)
         self.cfg=await asyncio.to_thread(self.ledger.settings,config.GUILD_ID)
+        self.history_audit=await asyncio.to_thread(HistoryAudit)
         self.voice_tick.add_exception_type(sqlite3.OperationalError)
         self.voice_tick.start()
 
     async def cog_unload(self):
         self.voice_tick.cancel()
+        for task in self.history_tasks.values():task.cancel()
+        if self.history_tasks:await asyncio.gather(*self.history_tasks.values(),return_exceptions=True)
 
     async def configure(self,**changes):
         # A confirmed pause waits for current Discord role writes to finish.
@@ -651,6 +658,90 @@ class CommunityLevels(commands.Cog):
                 lines.append('其中一個來源讀取失敗，請核對權限。')
             if len(lines)>=10:break
         await inter.followup.send(('只讀核對；冇加分、綁定或改模式。最多 10 張／各來源最近 20 訊息。\n'+'\n'.join(lines) if lines else '未找到可讀取嘅來源卡片。')[:1950],allowed_mentions=discord.AllowedMentions.none())
+
+    async def collect_history(self,job):
+        """Restartable audit only. No live XP, roles, cooldowns or current bindings are written."""
+        scope=await asyncio.to_thread(self.history_audit.job,job,config.GUILD_ID)
+        try:
+            await asyncio.to_thread(self.history_audit.state,job,'running')
+            for cid,cursor,done in scope['cursors']:
+                if done:continue
+                channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+                if not isinstance(channel,discord.Thread) or channel.guild.id!=config.GUILD_ID:raise ValueError('Source no longer available')
+                after=discord.Object(id=cursor) if cursor else datetime.fromtimestamp(scope['start'],timezone.utc)
+                before=datetime.fromtimestamp(scope['cutoff'],timezone.utc)
+                async for msg in channel.history(limit=None,after=after,before=before,oldest_first=True):
+                    if {'bot':msg.author.id,'channel':cid} in scope['sources'] and original_bot_message(msg):
+                        payload=[e.to_dict() for e in msg.embeds]
+                        identity=battle_identity(payload)
+                        uid=None;name=None;kind='unknown';reason='format_unrecognized'
+                        if identity:
+                            uid,name=identity;kind='normal' if uid else 'pet'
+                            member=msg.guild.get_member(uid) if uid else None
+                            reason='identity_unresolved'
+                            if member and not member.bot and member.name==name:
+                                reason='candidate'
+                            elif member:reason='name_changed_or_mismatch'
+                            elif uid:reason='departed_or_not_cached'
+                        edited=msg.edited_at.timestamp() if msg.edited_at else None
+                        if edited and edited-msg.created_at.timestamp()>120:reason='edited_card_history_unavailable'
+                        # Preserve conflicting old associations too; eligibility is separate from identity evidence.
+                        if kind=='normal' and uid and reason!='edited_card_history_unavailable':
+                            await asyncio.to_thread(self.history_audit.remember_owner,job,msg.author.id,name,uid)
+                        proof=await asyncio.to_thread(self.ledger.event_proof,config.GUILD_ID,f'm:{msg.id}')
+                        await asyncio.to_thread(self.history_audit.record,job,message=msg.id,channel=cid,bot=msg.author.id,
+                            stamp=msg.created_at.timestamp(),edited=edited,user=uid,name=name,kind=kind,reason=reason,
+                            payload=payload,preview_xp=proof[1] if proof else 0)
+                    # Advance only after the observation is durable; replay is idempotent.
+                    cursor=msg.id
+                    await asyncio.to_thread(self.history_audit.checkpoint,job,cid,cursor)
+                await asyncio.to_thread(self.history_audit.checkpoint,job,cid,cursor,done=True)
+            guild=self.bot.get_guild(config.GUILD_ID)
+            if not guild:raise ValueError('Guild unavailable')
+            current_names={m.id:self.history_audit.owner_hash(m.name) for m in guild.members if not m.bot}
+            await asyncio.to_thread(self.history_audit.finalize_pets,job,current_names)
+            preview=await asyncio.to_thread(self.ledger.engagement_events,config.GUILD_ID,scope['start']-60,scope['cutoff']+60)
+            await asyncio.to_thread(self.history_audit.preview_events,job,preview)
+            await asyncio.to_thread(self.history_audit.state,job,'complete')
+        except asyncio.CancelledError:
+            await asyncio.to_thread(self.history_audit.state,job,'paused')
+            raise
+        except (discord.HTTPException,ValueError,sqlite3.Error):
+            await asyncio.to_thread(self.history_audit.state,job,'paused')
+            log.warning('Historical game audit paused; resume through administrator command')
+
+    @levels.command(name='history_audit',description='唯讀掃描2026年8月18日起遊戲紀錄；不補分；可續跑或查進度')
+    @app_commands.default_permissions(manage_guild=True)
+    async def history_audit_command(self,inter:discord.Interaction,status_only:bool=False):
+        if not await self.guard(inter):return
+        for cid in {s['channel'] for s in self.cfg['sources']}:
+            channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+            perms=channel.permissions_for(inter.user)
+            if not perms.view_channel or not perms.read_message_history:
+                await inter.followup.send('需要所有來源嘅查看及讀取記錄權限。');return
+        latest=await asyncio.to_thread(self.history_audit.latest,inter.guild_id)
+        if status_only:
+            if not latest:await inter.followup.send('未有歷史核數批次。');return
+            job=latest[0]
+        else:
+            start=datetime.fromisoformat('2026-08-18T00:00:00+08:00').timestamp()
+            job=await asyncio.to_thread(self.history_audit.start,inter.guild_id,start,time.time(),self.cfg['sources'])
+        # Old paused batches retain their original scope even if live sources changed.
+        scope=await asyncio.to_thread(self.history_audit.job,job,inter.guild_id)
+        for cid in {s['channel'] for s in scope['sources']}:
+            channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+            perms=channel.permissions_for(inter.user)
+            if not perms.view_channel or not perms.read_message_history:
+                await inter.followup.send('需要核數原始來源嘅查看及讀取記錄權限。');return
+        if not status_only and (job not in self.history_tasks or self.history_tasks[job].done()):
+            self.history_tasks[job]=asyncio.create_task(self.collect_history(job))
+        result=await asyncio.to_thread(self.history_audit.summary,job,inter.guild_id)
+        counts='\n'.join(f'{key}: {value}' for key,value in sorted(result['reasons'].items())) or '尚未讀取卡片'
+        users='\n'.join(f'<@{uid}>：{count} 次候選' for uid,count in sorted(result['potential'].items(),key=lambda row:-row[1])[:15])
+        await inter.followup.send((f'歷史核數 {job}｜{result["state"]}｜完成來源 {result["complete_channels"]}/{result["channels"]}\n'
+            f'範圍：<t:{int(result["start"])}:F> 至 <t:{int(result["cutoff"])}:F>\n{counts}\n'
+            f'遊戲內60秒重複：{result["cooldown"]}；已見試行得分：{result["preview"]}\n{users}\n'
+            '以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。')[:1950],allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='inspect',description='只讀檢查指定討論串戰鬥卡可否識別，不加分')
     @app_commands.default_permissions(manage_guild=True)
