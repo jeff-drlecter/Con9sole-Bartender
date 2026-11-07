@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | XP ledger, rewards, notices, cooldowns and recovery primitives | Implemented; 262 local tests pass | Actual Discord scoring, voice and role recovery drill |
 | Raw XP migration | Offline strict importer, cutoff replay and verified SQLite restore implemented | Authoritative full member-ID/XP/weekly export; shared freeze/cutover evidence |
-| Real leaderboard | 120 unique ranks observed; XP/level curve agrees | Public rows have no reliable member IDs; 12 unknown users cannot be guessed |
-| Diagnostic message links | PR54 deployed successfully, Fly run42337400816 | Selected old battle link was rejected as non-original source; reason needs verification |
+| Real leaderboard | 120 unique ranks observed; XP/level curve agrees | Public rows have no reliable member IDs; Unknown rows are treated as departed per owner instruction; no identity guessing |
+| Diagnostic message links | PR54 deployed successfully, Fly run42337400816 | Live metadata confirms selected battle uses a webhook; strict matching application/webhook/author identity support added, raw format still unverified |
 | Reconnect source subscriptions | Ready/resume reconciliation added with archived/foreign/404 tests | Live reconnect observation |
 | Battle parser and repeated button actions | Exact source allowlist; unrecognized cards do not earn XP | Original gateway payloads, same-card reuse behavior and actual preview award |
 | Activation | Hard-disabled | All migration and live acceptance evidence above |
@@ -121,3 +121,7 @@ These are implemented/tested primitives. No real source freeze, real score impor
 260 offline tests pass, including14 independent original audit regressions and10 independent migration audit regressions. Inspector now refuses exports outside the exact source allowlist; both view-channel and history permissions are required. Default unsupported messages return structural metadata only. Explicit private raw payload export is restricted to Administrator and the trusted Bot/thread. Standard fixture text is labeled as best-effort replacement requiring review, not guaranteed anonymization. No capture is automatically written to git.
 
 Conditional approval is for OFF diagnostic deployment and existing-core smoke tests only. Main source settings/scores remain Amari-owned. No migration CLI, source freeze or activation is part of this release.
+
+## Application response source correction — 2026-11-07
+
+Live OFF diagnostics report Bot=True and Webhook=True for the selected game card. Discord documents interaction followups at `/webhooks/{application_id}/{interaction_token}` and exposes server-supplied `application_id` on messages. Accept this path only when application ID, webhook ID and author ID all match, plus the existing exact source allowlist. Arbitrary incoming webhooks remain rejected. Official references: https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx and https://github.com/discord/discord-api-docs/blob/main/developers/interactions/receiving-and-responding.mdx . Actual three-ID agreement and parser acceptance require live validation.

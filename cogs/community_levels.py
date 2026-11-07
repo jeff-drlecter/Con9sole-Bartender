@@ -75,6 +75,20 @@ class LevelsPanel(discord.ui.View):
         await inter.edit_original_response(embed=await self.cog.settings_embed(),view=self)
 
 
+def original_bot_message(message):
+    """Accept bot sends or application interaction responses, never arbitrary webhooks.
+
+    Discord interaction followups use the application ID as webhook ID.
+    Require all three server-supplied identities to agree for that path.
+    """
+    if not message.author.bot:
+        return False
+    if not message.webhook_id:
+        return True
+    app_id=getattr(message,'application_id',None)
+    return type(app_id) is int and app_id==message.webhook_id==message.author.id
+
+
 class CommunityLevels(commands.Cog):
     levels = app_commands.Group(name='levels',description='Con9sole 會員等級及活躍紀錄',guild_ids=[config.GUILD_ID])
 
@@ -200,7 +214,7 @@ class CommunityLevels(commands.Cog):
             await self.credit(message.author,message.channel,'text',f'm:{message.id}',message.created_at.timestamp())
 
     async def observe_battle(self,message):
-        if not message.author.bot or message.webhook_id:
+        if not original_bot_message(message):
             return
         source={'bot':message.author.id,'channel':message.channel.id}
         if source not in self.cfg['sources']:
@@ -578,7 +592,7 @@ class CommunityLevels(commands.Cog):
         if not await self.guard(inter):return
         try:
             channel,message=await self.resolve_card_link(inter,message_link)
-            if not message.author.bot or message.webhook_id or message.author.id==self.bot.user.id:
+            if not original_bot_message(message) or message.author.id==self.bot.user.id:
                 raise ValueError(f'來源未加入：Bot={message.author.bot}；Webhook={bool(message.webhook_id)}；本 Bot={message.author.id==self.bot.user.id}。請選擇原始遊戲 Bot 嘅戰鬥訊息。')
             entry={'bot':message.author.id,'channel':channel.id}
             if not remove and not channel.archived:
@@ -618,7 +632,7 @@ class CommunityLevels(commands.Cog):
             await inter.followup.send('你未有讀取記錄權限。'); return
         try:
             msg=await channel.fetch_message(int(message_id))
-            trusted={'bot':msg.author.id,'channel':channel.id} in self.cfg['sources'] and msg.author.bot and not msg.webhook_id
+            trusted={'bot':msg.author.id,'channel':channel.id} in self.cfg['sources'] and original_bot_message(msg)
             if not trusted:
                 shape=[dict(index=i,has_title=bool(e.title),has_author=bool(e.author.name),
                     has_description=bool(e.description),field_count=len(e.fields)) for i,e in enumerate(msg.embeds)]
