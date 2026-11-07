@@ -18,6 +18,8 @@ from discord.ext import commands, tasks
 import config
 from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
 from features.level_history import HistoryAudit
+from features.level_bonus import prepare as prepare_bonus,apply as apply_bonus
+from features.level_migration import digest as manifest_digest
 from features.level_baseline import stage_public,build_manifest,save_plan,load_plan,apply_plan,role_mapping
 from core.storage_paths import DATA_DIR
 from core.sqlite_storage import connect_sqlite
@@ -26,6 +28,7 @@ log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
 # Release gate: turn on only after the evidence checklist in LEVEL_AUDIT.md passes.
 REPLACEMENT_READY = False
+HISTORICAL_BASE_POLICY_ACCEPTED = False
 
 
 def reward_role_safe(role, me):
@@ -582,7 +585,7 @@ class CommunityLevels(commands.Cog):
     async def activate(self,inter:discord.Interaction,amari_rewards_disabled:bool,baseline_verified:bool,announcement:discord.TextChannel,ping:bool=False):
         if not await self.guard(inter): return
         if not REPLACEMENT_READY:
-            await inter.followup.send('正式派角色／公告仍未批准開啟：基線搬遷、實際計分對照及還原演練需完成驗收。簡化角色基線可用 baseline 指令另行處理。')
+            await inter.followup.send('正式派角色／公告尚未通過驗收：基線搬遷、實際計分對照及還原演練需完成驗收。簡化角色基線可用 baseline 指令另行處理。')
             return
         if not amari_rewards_disabled or not baseline_verified or not self.cfg['rewards']:
             await inter.followup.send('請先核對舊等級基準、設定獎勵角色，並停用 Amari 派角色，避免兩套系統互相覆蓋。'); return
@@ -879,12 +882,7 @@ class CommunityLevels(commands.Cog):
                 complete=sum(bool(c[2]) for c in text['cursors'])
                 await inter.followup.send(f'文字CD核數 {text["state"]}｜已完成 {complete}/{len(text["cursors"])} 個範圍；未有私人核數結果，冇補分。')
                 return
-            for cid,_,_ in text['cursors']:
-                channel=self.bot.get_channel(cid) or self.history_channels.get(cid) or await self.bot.fetch_channel(cid)
-                if channel.guild.id!=inter.guild_id:raise ValueError('核數頻道不屬於呢個伺服器。')
-                for viewer in (inter.user,inter.guild.me):
-                    perms=channel.permissions_for(viewer)
-                    if not (perms.view_channel and perms.read_message_history):raise ValueError('需要所有原始文字核數頻道嘅查看及讀取權限。')
+            await self.check_history_scope(inter,text)
             complete=sum(bool(c[2]) for c in text['cursors'])
             message=f'文字CD核數 {job}｜{text["state"]}｜完成頻道／討論串 {complete}/{len(text["cursors"])}。只保留用家ID及時間，冇保存訊息內容。'
             if text['state']=='complete':
@@ -900,6 +898,58 @@ class CommunityLevels(commands.Cog):
             await inter.followup.send(f'文字核數暫停（{type(exc).__name__}）；未補分。')
         finally:
             if discovery_job:self.history_discovery.discard(discovery_job)
+
+    async def check_history_scope(self,inter,text):
+        if all(getattr(getattr(viewer,'guild_permissions',None),'administrator',False) for viewer in (inter.user,inter.guild.me)):
+            return  # Discord Administrator bypasses channel overwrites and private-thread membership.
+        for cid,_,_ in text['cursors']:
+            channel=self.bot.get_channel(cid) or self.history_channels.get(cid) or await self.bot.fetch_channel(cid)
+            if channel.guild.id!=inter.guild_id:raise ValueError('核數頻道不屬於呢個伺服器。')
+            for viewer in (inter.user,inter.guild.me):
+                perms=channel.permissions_for(viewer)
+                if not (perms.view_channel and perms.read_message_history):raise ValueError('需要所有原始文字核數頻道嘅查看及讀取權限。')
+
+    @levels.command(name='history_bonus',description='預覽歷史基礎XP補償；接受估算政策後按核對摘要一次性提交')
+    @app_commands.default_permissions(manage_guild=True)
+    async def history_bonus_command(self,inter:discord.Interaction,commit:bool=False,base_only:bool=False,digest:str|None=None):
+        if not await self.guard(inter):return
+        try:
+            latest=await asyncio.to_thread(self.history_audit.latest,inter.guild_id)
+            if not latest:raise ValueError('未有歷史核數。')
+            job=latest[0];scope=await asyncio.to_thread(self.history_audit.job,job,inter.guild_id)
+            text=await asyncio.to_thread(self.history_audit.text_scope,job)
+            await self.check_history_scope(inter,text)
+            replay=await asyncio.to_thread(self.history_audit.text_replay,job,inter.guild_id)
+            members={m.id for m in inter.guild.members if not m.bot}
+            manifest=await asyncio.to_thread(prepare_bonus,self.ledger,inter.guild_id,inter.user.id,job,scope['start'],replay,members)
+            sha=manifest_digest(manifest)
+            existing=self.cfg.get('historical_bonus')
+            if existing:
+                await inter.followup.send('歷史補償已完成；呢個基線唔會重複加分。');return
+            if not commit:
+                lines=[]
+                for row in manifest['users']:
+                    profile=await asyncio.to_thread(self.ledger.profile,inter.guild_id,row['user'])
+                    lines.append(f'<@{row["user"]}>：+{row["amount"]:,}（{profile["total"]:,} → {profile["total"]+row["amount"]:,} XP）')
+                await inter.followup.send('歷史補分預覽，未改分。\n'+'\n'.join(lines[:10])+f'\n摘要：{sha}\n政策：按現存記錄重播共用CD，補普通基礎XP；不推斷已刪訊息及歷史Booster倍數。舊週榜不補造。',file=discord.File(io.BytesIO(json.dumps(manifest,ensure_ascii=False,indent=2).encode()),filename='history_bonus_private.json'),allowed_mentions=discord.AllowedMentions.none())
+                return
+            if not HISTORICAL_BASE_POLICY_ACCEPTED:raise ValueError('歷史估算政策未選定；目前只提供補分預覽。')
+            if not base_only or digest!=sha:raise ValueError('提交需接受普通基礎XP估算政策，並提供完全相同嘅預覽摘要。')
+            for row in manifest['users']:
+                member=await inter.guild.fetch_member(row['user'])
+                if member.bot:raise ValueError('補分對象必須係現有真人。')
+            backup=DATA_DIR/'level_backups'/f'history-{sha[:20]}.sqlite3'
+            async with self.role_lock:
+                async with self.lock:
+                    current={m.id for m in inter.guild.members if not m.bot}
+                    fresh=await asyncio.to_thread(self.history_audit.text_replay,job,inter.guild_id)
+                    if manifest_digest(fresh)!=manifest_digest(replay):raise ValueError('核數證據已改變，請重新預覽。')
+                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,mode='off')
+                    result=await asyncio.to_thread(apply_bonus,self.ledger,manifest,backup,time.time(),actor=inter.user.id,current_users=current,accept_base_only=True)
+                    self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
+            self.voice_clock.clear()
+            await inter.followup.send(f'歷史補償已完成（同批次不重複）：{result["count"]} 人；已備份。現時OFF，冇改週榜／冷卻／角色；可用管理面板恢復試行。')
+        except (ValueError,discord.HTTPException,sqlite3.Error) as exc:await inter.followup.send(str(exc)[:1500])
 
     @staticmethod
     def baseline_roster(guild):

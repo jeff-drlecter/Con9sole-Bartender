@@ -153,3 +153,9 @@ This is read-only collection and provisional game-only counting, not compensatio
 The read-only history_text command fixes its user scope and baseline cutoff before scanning. It enumerates current message-capable channels, active threads and public/private archived threads, refuses missing permissions, persists only target user/message IDs and timestamps, and checkpoints atomically with observations. Status and replay also recheck the saved scope's permissions. Replays exclude users outside that fixed scope.
 
 The evidence preview greedily replays text plus recognized game cards under the shared cooldown, subtracting text-only accepted events. A game that merely displaces a later text award is not counted as an extra XP. Post-baseline cards are excluded and an ambiguous initial cooldown is held. Results are **base-XP candidates**, never automatic bonus writes: retained history cannot recover deleted messages or historical Booster membership. No current cooldown, total, weekly score, roles or announcements are changed.
+
+## Historical compensation preview and guarded writer
+
+The history_bonus preview includes the exact net base-XP changes, evidence hash, member scope, baseline, time range and policy. A separate release constant blocks committing until the owner chooses the retained-history/base-XP estimation policy. A checked digest and base_only flag cannot bypass that gate.
+
+The prepared writer creates a verified backup and atomically adds compensated totals plus administrator adjustment records and a durable full-manifest marker in existing settings (no schema change). Same-manifest retries are no-ops; another historical batch is rejected. It preserves current weekly counters, cooldowns, receipts and events, seeds notice watermarks and leaves mode OFF. Tests cover restore and rollback when a later member fails. No compensation has been applied.

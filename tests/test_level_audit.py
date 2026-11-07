@@ -262,7 +262,7 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
             announcement=types.SimpleNamespace(id=999), ping=True)
         self.cog.configure.assert_not_awaited()
         self.assertEqual(self.cog.cfg['mode'], 'preview')
-        self.assertIn('未批准', inter.followup.send.call_args.args[0])
+        self.assertIn('未通過驗收', inter.followup.send.call_args.args[0])
 
     def test_curve_matches_independent_official_table_examples(self):
         # Values transcribed from current Amari XP Info during the audit.
