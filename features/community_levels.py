@@ -137,6 +137,11 @@ class Ledger:
                              (guild,user)).fetchone() or (0,0,0,0,0)
         return dict(zip(('total','text','activity','voice','imported'),row))
 
+    def event_proof(self,guild,event):
+        with connect_sqlite(self.path) as db:
+            return db.execute('SELECT user,amount,stamp FROM xp_events WHERE guild=? AND event=?',
+                              (guild,event)).fetchone()
+
     def leaderboard(self,guild,week=None,page=1):
         if type(page) is not int or not 1<=page<=10000: raise ValueError("Invalid page")
         offset=(page-1)*10
