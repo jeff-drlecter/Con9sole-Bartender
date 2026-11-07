@@ -20,6 +20,7 @@ from features.community_levels import Ledger, REWARD_NAMES, battle_identity, cal
 from features.level_history import HistoryAudit
 from features.level_baseline import stage_public,build_manifest,save_plan,load_plan,apply_plan,role_mapping
 from core.storage_paths import DATA_DIR
+from core.sqlite_storage import connect_sqlite
 
 log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
@@ -793,6 +794,96 @@ class CommunityLevels(commands.Cog):
             f'範圍：<t:{int(result["start"])}:F> 至 <t:{int(result["cutoff"])}:F>\n{counts}\n'
             f'遊戲內60秒重複：{result["cooldown"]}；目前仍保留得分：{result["preview"]}；已封存須重新對帳：{result["archived_candidates"]}\n{users}\n'
             '以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。')[:1950],allowed_mentions=discord.AllowedMentions.none())
+
+    async def collect_history_text(self,job):
+        """Read-only, restartable text timing evidence; never store message bodies."""
+        try:
+            scope=await asyncio.to_thread(self.history_audit.job,job,config.GUILD_ID)
+            text=await asyncio.to_thread(self.history_audit.text_scope,job)
+            policy=text['policy'];users=set(policy['users'])
+            await asyncio.to_thread(self.history_audit.text_state,job,'running')
+            for cid,cursor,done in text['cursors']:
+                if done:continue
+                channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+                if channel.guild.id!=config.GUILD_ID:raise ValueError('Foreign text scope')
+                perms=channel.permissions_for(channel.guild.me)
+                if not (perms.view_channel and perms.read_message_history):raise ValueError('Text history permission missing')
+                after=discord.Object(id=cursor) if cursor else datetime.fromtimestamp(scope['start']-policy['cooldown'],timezone.utc)
+                before=datetime.fromtimestamp(policy['cutoff'],timezone.utc)
+                pending=[];count=0
+                async for msg in channel.history(limit=None,after=after,before=before,oldest_first=True):
+                    if msg.author.id in users and not msg.author.bot and (msg.content.strip() or msg.attachments):
+                        pending.append((msg.id,msg.author.id,msg.created_at.timestamp()))
+                    cursor=msg.id;count+=1
+                    if count%100==0:
+                        await asyncio.to_thread(self.history_audit.text_checkpoint,job,cid,cursor,pending)
+                        pending=[]
+                await asyncio.to_thread(self.history_audit.text_checkpoint,job,cid,cursor,pending,True)
+            await asyncio.to_thread(self.history_audit.text_state,job,'complete')
+        except asyncio.CancelledError:
+            await asyncio.to_thread(self.history_audit.text_state,job,'paused');raise
+        except (discord.HTTPException,ValueError,sqlite3.Error):
+            await asyncio.to_thread(self.history_audit.text_state,job,'paused')
+            log.warning('Historical text timing audit paused; no XP changed')
+
+    @levels.command(name='history_text',description='唯讀核對歷史文字及遊戲共用CD；不補分，可續跑')
+    @app_commands.default_permissions(manage_guild=True)
+    async def history_text_command(self,inter:discord.Interaction,status_only:bool=False):
+        if not await self.guard(inter):return
+        try:
+            latest=await asyncio.to_thread(self.history_audit.latest,inter.guild_id)
+            if not latest:raise ValueError('請先完成 history_audit。')
+            job=latest[0];scope=await asyncio.to_thread(self.history_audit.job,job,inter.guild_id)
+            if scope['state']!='complete':raise ValueError('遊戲核數未完成。')
+            if not status_only:
+                with connect_sqlite(self.ledger.path) as db:
+                    applied=db.execute("SELECT plan,manifest FROM hybrid_plans WHERE guild=? AND state='applied'",(inter.guild_id,)).fetchall()
+                if len(applied)!=1:raise ValueError('需要唯一已套用基線批次。')
+                plan,encoded=applied[0];baseline=json.loads(encoded)
+                inventory=await asyncio.to_thread(self.ledger.engagement_inventory,inter.guild_id,scope['start']-60,scope['cutoff']+60)
+                summary=await asyncio.to_thread(self.history_audit.summary,job,inter.guild_id,inventory)
+                users=sorted(summary['potential'])
+                if self.cfg['excluded_roles']:raise ValueError('歷史排除身份組未有時序證據，需先核對。')
+                if not set(users)<={row['user_id'] for row in baseline['rows']}:raise ValueError('候選用家未有已核對基線。')
+                channels={c.id:c for c in inter.guild.channels if hasattr(c,'history')}
+                channels.update({c.id:c for c in await inter.guild.active_threads()})
+                for parent in inter.guild.channels:
+                    if isinstance(parent,(discord.TextChannel,discord.ForumChannel)):
+                        async for thread in parent.archived_threads(limit=None):channels[thread.id]=thread
+                        if isinstance(parent,discord.TextChannel):
+                            async for thread in parent.archived_threads(limit=None,private=True):channels[thread.id]=thread
+                selected=[]
+                for channel in channels.values():
+                    ids={channel.id,getattr(channel,'parent_id',None),getattr(channel,'category_id',None)}
+                    if ids.intersection(self.cfg['excluded_channels']):continue
+                    perms=channel.permissions_for(inter.guild.me)
+                    admin_perms=channel.permissions_for(inter.user)
+                    if not (perms.view_channel and perms.read_message_history and admin_perms.view_channel and admin_perms.read_message_history):
+                        raise ValueError('部分文字頻道／討論串未能完整讀取，唔會聲稱CD核對完成。')
+                    selected.append(channel.id)
+                policy=dict(baseline=plan,cutoff=min(scope['cutoff'],baseline['cutover']),users=users,
+                    cooldown=max(self.cfg['text_cooldown'],self.cfg['activity_cooldown']),
+                    excluded_channels=sorted(self.cfg['excluded_channels']),excluded_roles=sorted(self.cfg['excluded_roles']))
+                await asyncio.to_thread(self.history_audit.start_text,job,inter.guild_id,selected,policy)
+                key='text:'+job
+                if key not in self.history_tasks or self.history_tasks[key].done():self.history_tasks[key]=asyncio.create_task(self.collect_history_text(job))
+            text=await asyncio.to_thread(self.history_audit.text_scope,job)
+            for cid,_,_ in text['cursors']:
+                channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+                if channel.guild.id!=inter.guild_id:raise ValueError('核數頻道不屬於呢個伺服器。')
+                for viewer in (inter.user,inter.guild.me):
+                    perms=channel.permissions_for(viewer)
+                    if not (perms.view_channel and perms.read_message_history):raise ValueError('需要所有原始文字核數頻道嘅查看及讀取權限。')
+            complete=sum(bool(c[2]) for c in text['cursors'])
+            message=f'文字CD核數 {job}｜{text["state"]}｜完成頻道／討論串 {complete}/{len(text["cursors"])}。只保留用家ID及時間，冇保存訊息內容。'
+            if text['state']=='complete':
+                replay=await asyncio.to_thread(self.history_audit.text_replay,job,inter.guild_id)
+                message+='\n'+'\n'.join(f'<@{uid}>：合併後 {row["combined"]} − 原文字 {row["text_only"]} = {row["base_xp"]} 基礎XP候選' for uid,row in list(replay['users'].items())[:10])
+                message+='\n只反映保留中嘅歷史；已刪訊息及歷史Booster倍數未知。未補分。'
+                await inter.followup.send(message,file=discord.File(io.BytesIO(json.dumps(replay,ensure_ascii=False,indent=2).encode()),filename='history_cd_private.json'),allowed_mentions=discord.AllowedMentions.none())
+            else:await inter.followup.send(message,allowed_mentions=discord.AllowedMentions.none())
+        except (ValueError,discord.HTTPException,sqlite3.OperationalError) as exc:
+            await inter.followup.send(('核數未完成：'+str(exc))[:1500])
 
     @staticmethod
     def baseline_roster(guild):
