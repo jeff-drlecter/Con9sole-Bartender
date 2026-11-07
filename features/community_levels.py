@@ -13,7 +13,7 @@ from core.storage_paths import DATA_DIR
 TZ = ZoneInfo('Asia/Hong_Kong')
 LEVEL_TEMPLATES = {'5': '👋 {user} 升至 Lv.{level}，成為【註冊會員】！正式開展你嘅會員旅程啦～', '15': '✨ {user} 達到 Lv.{level}，升為【活躍會員】！繼續保持好表現！', '30': '💬 {user} 升到 Lv.{level}，晉升【常駐會員】，你已成為群內熟悉的存在～', '50': '📈 {user} 成功達成 Lv.{level}，晉身【高級會員】行列，邁向社群中層！', '75': '🛡️ {user} 獲得 Lv.{level} 成就，晉升為【資深會員】！長期守候有目共睹！', '100': '🎯 {user} 升至 Lv.{level}，正式踏入【核心會員】階層，歡迎加入主力陣線！', '150': '💎 {user} 現已晉升 Lv.{level}，榮獲【白金會員】稱號！高活躍代表！', '200': '🔥 {user} 升至 Lv.{level}，解鎖尊貴角色【黑金會員】！實至名歸！', '300': '🏅 {user} 成為 Lv.{level} 的《榮譽會員》！你嘅持續參與係社群中不可多得！', '400': '🎉 {user} 達成 Lv.{level}！正式晉升為【傳奇會員】👑 無人能及，傳奇由你創！'}
 DEFAULTS = dict(mode='off', text_cooldown=60, activity_cooldown=60,
-                activity_daily_cap=60, voice_interval=300, voice_xp=25,
+                activity_daily_cap=0, voice_interval=300, voice_xp=25,
                 booster_multiplier=2, announcement_channel=0, announcement_ping=True,
                 excluded_channels=[], excluded_roles=[], sources=[], rewards={},
                 announcement_mode='all', announcement_template='恭喜 {user.ping} 升級! 依家你係 等級{level}',
@@ -113,7 +113,7 @@ class Ledger:
             countrow = db.execute('SELECT day,count FROM cooldowns WHERE guild=? AND user=? AND bucket=?',
                                  (guild,user,'activity_cap')).fetchone()
             count = countrow[1] if countrow and countrow[0] == day else 0
-            if source == 'activity' and count >= cfg['activity_daily_cap']:
+            if source == 'activity' and cfg['activity_daily_cap']>0 and count >= cfg['activity_daily_cap']:
                 return None
             if source == 'activity':
                 db.execute('INSERT OR REPLACE INTO cooldowns VALUES(?,?,?,?,?,?)',

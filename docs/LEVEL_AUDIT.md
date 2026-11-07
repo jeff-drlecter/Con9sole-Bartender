@@ -131,3 +131,7 @@ Live OFF diagnostics report Bot=True and Webhook=True for the selected game card
 PR56 deployment completed (Fly run42338138300). The selected original application response passed exact application/webhook/author agreement and source configuration while mode stayed OFF. Standard inspection confirmed trusted source, recognized normal battle format and an existing Discord member identity match. Pet inspection initially failed; explicit Administrator-only private raw inspection showed the owner line is followed by level/species details. Parser now anchors the first line, rejects pet fallback when mentions exist, and redacted real normal/pet projections are regression fixtures. No real account name or source message ID is committed in the fixtures.
 
 This proves read-only source/normal-identity acceptance, not an actual XP award, pet binding, repeated-card behavior or successful Amari cutover. Those checks remain open.
+
+## Owner cooldown policy — 2026-11-07
+
+Bot activity is an additional path through the same 60-second text engagement cooldown; neither path gets a separate claim. Voice remains independently every 300 seconds. Owner rejected the additional 60-per-day bot cap; the default and live configuration must use activity_daily_cap=0 (unlimited). A 65-event regression verifies no daily cap while text shares the activity cooldown and voice retains its own interval. Optional positive caps remain backward-compatible for explicit future configuration only.

@@ -132,7 +132,8 @@ class CommunityLevels(commands.Cog):
         cfg=self.cfg
         e=discord.Embed(title='🎖️ Con9sole 等級管理',color=0xe5b65b,
                        description=f"狀態：**{cfg['mode']}**\n試行會記錄獨立 XP，但唔派角色／發升級公告。")
-        e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\nBot 活動每日最多 {cfg['activity_daily_cap']} 次",inline=False)
+        cap_note=f"Bot 活動每日最多 {cfg['activity_daily_cap']} 次" if cfg['activity_daily_cap'] else 'Bot 活動冇額外每日上限'
+        e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
         e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開清分 {cfg['clear_on_leave']}；每週一香港時間自動開始新榜",inline=False)
         e.set_footer(text='Auditor：正式接管鎖定。需完成無損搬遷、實際計分及回滾驗證。')
@@ -448,7 +449,7 @@ class CommunityLevels(commands.Cog):
 
     @levels.command(name='rates',description='設定冷卻、每日互動上限及語音 XP')
     @app_commands.default_permissions(manage_guild=True)
-    async def rates(self,inter:discord.Interaction,cooldown:app_commands.Range[int,30,3600]=60,activity_cap:app_commands.Range[int,1,500]=60,voice_minutes:app_commands.Range[int,1,60]=5,voice_xp:app_commands.Range[int,1,100]=25):
+    async def rates(self,inter:discord.Interaction,cooldown:app_commands.Range[int,30,3600]=60,activity_cap:app_commands.Range[int,0,500]=0,voice_minutes:app_commands.Range[int,1,60]=5,voice_xp:app_commands.Range[int,1,100]=25):
         if not await self.guard(inter): return
         await self.configure(text_cooldown=cooldown,activity_cooldown=cooldown,activity_daily_cap=activity_cap,voice_interval=voice_minutes*60,voice_xp=voice_xp)
         self.voice_clock.clear()

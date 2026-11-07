@@ -42,6 +42,15 @@ class LedgerTests(unittest.TestCase):
         self.assertIsNone(self.store.award(1,10,'activity','next',200))
         self.assertIsNotNone(self.store.award(1,10,'activity','tomorrow',100+86400))
 
+    def test_default_bot_path_uses_text_cooldown_without_extra_daily_cap(self):
+        for i in range(65):
+            self.assertIsNotNone(self.store.award(1,10,'activity',f'bot{i}',100+i*60))
+        self.assertIsNone(self.store.award(1,10,'text','text-too-soon',100+64*60+59))
+        self.assertIsNotNone(self.store.award(1,10,'text','text-ready',100+65*60))
+        self.assertIsNotNone(self.store.award(1,10,'voice','voice',100+65*60))
+        self.assertIsNone(self.store.award(1,10,'voice','voice-early',100+65*60+299))
+        self.assertIsNotNone(self.store.award(1,10,'voice','voice-ready',100+65*60+300))
+
     def test_booster_voice_is_independent_and_weekly_admin_points_excluded(self):
         self.assertEqual(self.store.award(1,10,'text','m1',100,multiplier=2),(0,2))
         self.assertEqual(self.store.award(1,10,'voice','v1',101,multiplier=2),(2,27))
