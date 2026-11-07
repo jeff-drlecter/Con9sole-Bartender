@@ -64,6 +64,10 @@ def eligible(member, channel, cfg):
     return not ids.intersection(cfg['excluded_channels'])
 
 
+def afk_id(guild):
+    return getattr(guild.afk_channel,'id',None)
+
+
 def voice_members(channel,cfg):
     return [m for m in channel.members if eligible(m,channel,cfg) and m.voice and
             not (m.voice.self_deaf or m.voice.deaf or m.voice.afk or m.voice.suppress)]
@@ -176,6 +180,10 @@ class CommunityLevels(commands.Cog):
             return
         multiplier=self.cfg['booster_multiplier'] if member.premium_since else 1
         async with self.lock:
+            if source=='voice':
+                cohort=voice_members(channel,self.cfg) if channel.id!=afk_id(channel.guild) else []
+                if not self.gateway_confirmed or not self.bot.is_ready() or len(cohort)<2 or member.id not in {m.id for m in cohort}:
+                    return
             result=await asyncio.to_thread(self.ledger.award,config.GUILD_ID,member.id,source,event,
                                           time.time() if now is None else now,multiplier=multiplier)
         if result and self.cfg['mode']=='active':
@@ -299,7 +307,7 @@ class CommunityLevels(commands.Cog):
         await self.credit(member,channel,'activity',f'i:{event}')
 
     def reconcile_voice_members(self,channel,now):
-        members=[] if channel.id == channel.guild.afk_channel_id else voice_members(channel,self.cfg)
+        members=[] if channel.id == afk_id(channel.guild) else voice_members(channel,self.cfg)
         valid={(channel.id,m.id) for m in members} if len(members)>=2 else set()
         for key in list(self.voice_clock):
             if key[0]==channel.id and key not in valid:
@@ -389,21 +397,32 @@ class CommunityLevels(commands.Cog):
             return
         await self.repair_pending()
         now=time.monotonic()
-        present=set()
         for channel in guild.voice_channels+guild.stage_channels:
             members=self.reconcile_voice_members(channel,now)
             for member in members:
+                if not self.gateway_confirmed or not self.bot.is_ready() or self.cfg.get('mode')=='off':
+                    self.voice_clock.clear()
+                    return
                 key=(channel.id,member.id)
-                present.add(key)
-                start=self.voice_clock[key]
+                start=self.voice_clock.get(key)
+                current=voice_members(channel,self.cfg) if channel.id!=afk_id(channel.guild) else []
+                if start is None or len(current)<2 or member.id not in {m.id for m in current}:
+                    continue
                 if now-start>=self.cfg['voice_interval']:
-                    # Disconnect may occur while another member's DB write is awaited.
-                    if not self.gateway_confirmed or not self.bot.is_ready():
+                    await self.credit(member,channel,'voice',f'v:{channel.id}:{member.id}:{int(time.time())}')
+                    # A listener may have removed/replaced clocks while the DB write awaited.
+                    if not self.gateway_confirmed or not self.bot.is_ready() or self.cfg.get('mode')=='off':
                         self.voice_clock.clear()
                         return
-                    await self.credit(member,channel,'voice',f'v:{channel.id}:{member.id}:{int(time.time())}')
-                    self.voice_clock[key]=now
-        self.voice_clock={k:v for k,v in self.voice_clock.items() if k in present}
+                    if self.voice_clock.get(key)==start:
+                        current=voice_members(channel,self.cfg) if channel.id!=afk_id(channel.guild) else []
+                        if len(current)>=2 and member.id in {m.id for m in current}:
+                            self.voice_clock[key]=now
+            # Reconcile current membership, preserving clocks listeners added during awaits.
+            self.reconcile_voice_members(channel,time.monotonic())
+        channel_ids={c.id for c in guild.voice_channels+guild.stage_channels}
+        for key in list(self.voice_clock):
+            if key[0] not in channel_ids:self.voice_clock.pop(key,None)
 
     @voice_tick.before_loop
     async def before_voice(self):
@@ -436,13 +455,13 @@ class CommunityLevels(commands.Cog):
         for channel in inter.guild.voice_channels+inter.guild.stage_channels:
             humans=[m for m in channel.members if not m.bot]
             if not humans or not channel.permissions_for(inter.user).view_channel:continue
-            valid=voice_members(channel,self.cfg) if channel.id!=inter.guild.afk_channel_id else []
+            valid=voice_members(channel,self.cfg) if channel.id!=afk_id(inter.guild) else []
             lines.append(f'{channel.name}：真人 {len(humans)}，有效 {len(valid)}')
             for member in humans:
                 state=member.voice
                 reasons=[]
                 if not eligible(member,channel,self.cfg):reasons.append('排除頻道／角色')
-                if channel.id==inter.guild.afk_channel_id:reasons.append('AFK頻道')
+                if channel.id==afk_id(inter.guild):reasons.append('AFK頻道')
                 if state:
                     if state.self_deaf or state.deaf:reasons.append('耳聾')
                     if state.afk:reasons.append('AFK')
