@@ -107,6 +107,18 @@ class LedgerTests(unittest.TestCase):
 
 
 class CogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_application_response_identity_rejects_incoming_webhook_spoofs(self):
+        from cogs.community_levels import original_bot_message
+        msg=types.SimpleNamespace(author=types.SimpleNamespace(bot=True,id=20),webhook_id=20,application_id=20)
+        self.assertTrue(original_bot_message(msg))
+        for app,webhook,author in [(None,20,20),(20,21,20),(21,21,20),(20,20,21)]:
+            msg.application_id, msg.webhook_id, msg.author.id=app,webhook,author
+            self.assertFalse(original_bot_message(msg))
+        msg.webhook_id=None
+        self.assertTrue(original_bot_message(msg))
+        msg.author.bot=False
+        self.assertFalse(original_bot_message(msg))
+
     async def test_ready_restores_only_live_same_guild_threads_and_continues_after_failure(self):
         active=MagicMock(spec=discord.Thread)
         active.guild=types.SimpleNamespace(id=1)
