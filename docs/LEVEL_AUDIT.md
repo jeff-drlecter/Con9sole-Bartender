@@ -1,3 +1,22 @@
+# Current replacement status — 2026-11-07 (Hong Kong)
+
+**NO-GO for active Amari replacement.** OFF diagnostics are deployed; Amari remains authoritative. The sections below the historical divider are a dated audit trail, not the current gap list.
+
+| Area | Current evidence | Remaining acceptance |
+| --- | --- | --- |
+| XP ledger, rewards, notices, cooldowns and recovery primitives | Implemented; 262 local tests pass | Actual Discord scoring, voice and role recovery drill |
+| Raw XP migration | Offline strict importer, cutoff replay and verified SQLite restore implemented | Authoritative full member-ID/XP/weekly export; shared freeze/cutover evidence |
+| Real leaderboard | 120 unique ranks observed; XP/level curve agrees | Public rows have no reliable member IDs; 12 unknown users cannot be guessed |
+| Diagnostic message links | PR54 deployed successfully, Fly run42337400816 | Selected old battle link was rejected as non-original source; reason needs verification |
+| Reconnect source subscriptions | Ready/resume reconciliation added with archived/foreign/404 tests | Live reconnect observation |
+| Battle parser and repeated button actions | Exact source allowlist; unrecognized cards do not earn XP | Original gateway payloads, same-card reuse behavior and actual preview award |
+| Activation | Hard-disabled | All migration and live acceptance evidence above |
+
+No real scores or reward roles have been migrated. An API access/export limitation prevents proving lossless transfer; it does not justify a level-only import. Best-effort fixture redaction is not guaranteed anonymity.
+
+---
+# Historical audit trail (superseded where the current table differs)
+
 # Independent replacement audit — PR53
 
 Date: 2026-11-06 (Asia/Hong_Kong). User explicitly requested an independent auditor alongside implementation.
