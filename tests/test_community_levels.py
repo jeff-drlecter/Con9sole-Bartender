@@ -105,6 +105,20 @@ class LedgerTests(unittest.TestCase):
         self.assertIsNone(battle_identity([header,{'title':'Inventory','description':'Damage Taken'}]))
         self.assertIsNone(battle_identity([dict(header,description='<@10> <@11>'),result]))
 
+    def test_real_game_card_projections_with_player_identity_redacted(self):
+        # Captured via OFF diagnostics on 2026-11-07; account identity replaced.
+        normal=[{'title':'player','description':'<@10> (👑 Member)\n⬆️ **Level:** 100\n\n🔶 **Experience:** 999 / 999'},
+            {'title':'Tharok the Vaultwarden attack!','fields':[
+                {'name':'You','value':'\n**❤️ HP:** 10,168 / 19,488\n**🗡️ Damage Taken:** 1,966\n\n','inline':False},
+                {'name':'Tharok the Vaultwarden','value':'\n**❤️ HP:** 4,850,898 / 6,425,000\n**🗡️ Damage Taken:** 139,773','inline':False}]}]
+        pet=[{'title':'Emerald Whelp 🐾','description':"*player's pet attacking*\n⬆️ **Level:** 10\n\nEmerald Whelp (* Epic*)"},
+            {'title':'Tharok the Vaultwarden attack!','description':'**You casted 🐾 Emerald Whelp Attack**!\n',
+             'fields':[{'name':'Tharok the Vaultwarden','value':'\n**❤️ HP:** 4,388,298 / 6,425,000\n**🗡️ Damage Taken:** 462,600','inline':False}]}]
+        self.assertEqual(battle_identity(normal),(10,'player'))
+        self.assertEqual(battle_identity(pet),(None,'player'))
+        pet[0]['description']='<@11>\n'+pet[0]['description']
+        self.assertNotEqual(battle_identity(pet),(None,'player'))
+
 
 class CogTests(unittest.IsolatedAsyncioTestCase):
     async def test_application_response_identity_rejects_incoming_webhook_spoofs(self):
