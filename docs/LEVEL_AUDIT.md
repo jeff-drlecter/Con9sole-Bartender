@@ -6,19 +6,19 @@ The full observed120 ranks must be present, captured recently, and all ten actua
 
 # Current replacement status — 2026-11-07 (Hong Kong)
 
-**NO-GO for active Amari replacement.** OFF diagnostics are deployed; Amari remains authoritative. The sections below the historical divider are a dated audit trail, not the current gap list.
+**Preview enabled; formal role/announcement replacement remains gated.** The owner-approved approximate baseline is complete. The historical divider below contains old blockers and must not be read as current migration policy.
 
-| Area | Current evidence | Remaining acceptance |
+| Area | Verified current state | Remaining work |
 | --- | --- | --- |
-| XP ledger, rewards, notices, cooldowns and recovery primitives | Implemented; 262 local tests pass | Actual Discord scoring, voice and role recovery drill |
-| Raw XP migration | Offline strict importer, cutoff replay and verified SQLite restore implemented | Authoritative full member-ID/XP/weekly export; shared freeze/cutover evidence |
-| Real leaderboard | 120 unique ranks observed; XP/level curve agrees | Public rows have no reliable member IDs; Unknown rows are treated as departed per owner instruction; no identity guessing |
-| Diagnostic message links | PR54 deployed successfully, Fly run42337400816 | Live metadata confirms selected battle uses a webhook; strict matching application/webhook/author identity support added, raw format still unverified |
-| Reconnect source subscriptions | Ready/resume reconciliation added with archived/foreign/404 tests | Live reconnect observation |
-| Battle parser and repeated button actions | Exact source allowlist; unrecognized cards do not earn XP | Original gateway payloads, same-card reuse behavior and actual preview award |
-| Activation | Hard-disabled | All migration and live acceptance evidence above |
+| Baseline | Full120 public rows captured;87 unique current aliases plus5 role floors committed, with verified backup and archived shadow; live Top10 agrees |19 unmatched public ranks held;101 members without evidence unchanged;12 Unknown treated departed |
+| XP rules | Text/activity share60s,1 baseXP, no extra activity daily cap; Booster×2; voice25XP/300s with2 eligible humans | Live voice/reconnect and role recovery drill |
+| Activity | Actual ordinary/pet application response payloads and single award verified | Historical shared-text cooldown evidence and bonus commit |
+| Historical audit | Archived and retained preview events now reconciled separately | Candidate counts are not final XP; no historical bonus applied |
+| Rewards | Missing-role reconciliation fails closed; complete10-role preflight and safe configuration command added | Live hierarchy/permissions check and all-member reconciliation/restore drill |
+| Weekly | New calendar weeks retained; old Amari weekly XP unknown | Never fabricate old weekly balances |
+| Activation | Hard-disabled independently of baseline | Finish live acceptance and recovery evidence; disable Amari rewards before takeover |
 
-No real scores or reward roles have been migrated. An API access/export limitation prevents proving lossless transfer; it does not justify a level-only import. Best-effort fixture redaction is not guaranteed anonymity.
+The signed-in Developer Portal limitation no longer blocks the authorized hybrid baseline. No further API export is required for that completed operation. Public exact scores and role-floor approximations retain their separate provenance.
 
 ---
 # Historical audit trail (superseded where the current table differs)

@@ -89,12 +89,19 @@ class HistoryAudit:
         if state not in ('running','paused','complete'):raise ValueError('Invalid state')
         with connect_sqlite(self.path) as db:db.execute('UPDATE jobs SET state=? WHERE id=?',(state,job))
 
-    def summary(self,job,guild):
+    def summary(self,job,guild,inventory=None):
         scope=self.job(job,guild)
         with connect_sqlite(self.path) as db:
             reasons=dict(db.execute('SELECT reason,count(*) FROM cards WHERE job=? GROUP BY reason',(job,)))
             rows=db.execute("SELECT message,user,stamp,preview_xp FROM cards WHERE job=? AND reason='candidate' ORDER BY stamp,message",(job,)).fetchall()
             prior=db.execute('SELECT user,stamp FROM preview WHERE job=?',(job,)).fetchall()
+        archived_candidates=0
+        if inventory is not None:
+            live=inventory['retained'];shadow=inventory['archived']
+            archived_candidates=sum(f'm:{message}' in shadow for message,_,_,_ in rows)
+            # Old immutable observations say an event WAS awarded, not whether it survived baseline replacement.
+            rows=[(message,user,stamp,int(f'm:{message}' in live)) for message,user,stamp,_ in rows]
+            prior=[(row['user'],row['stamp']) for row in live.values()]
         # Potential game-only claims, not additional awards: historical text CD evidence is still required.
         clocks={};users={};preview=0;cooldown=0
         preview_times={}
@@ -110,5 +117,5 @@ class HistoryAudit:
             clocks[user]=stamp
             users[user]=users.get(user,0)+1
         return dict(state=scope['state'],start=scope['start'],cutoff=scope['cutoff'],reasons=reasons,
-                    potential=users,preview=preview,cooldown=cooldown,
+                    potential=users,preview=preview,cooldown=cooldown,archived_candidates=archived_candidates,
                     complete_channels=sum(bool(c[2]) for c in scope['cursors']),channels=len(scope['cursors']))

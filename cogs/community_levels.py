@@ -18,7 +18,7 @@ from discord.ext import commands, tasks
 import config
 from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
 from features.level_history import HistoryAudit
-from features.level_baseline import stage_public,build_manifest,save_plan,load_plan,apply_plan
+from features.level_baseline import stage_public,build_manifest,save_plan,load_plan,apply_plan,role_mapping
 from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,22 @@ def reward_role_safe(role, me):
     return not (role.is_default() or role.managed or role >= me.top_role or
                 any(getattr(role.permissions, p, False) for p in powers))
 
+
+
+def replacement_preflight(guild,rewards,announcement=None):
+    """Require all verified roles and current Discord permissions before activation."""
+    expected=role_mapping([dict(id=r.id,name=r.name) for r in guild.roles])
+    actual={int(level):int(rid) for level,rid in rewards.items()}
+    if actual!=expected:raise ValueError('獎勵需完整對應全部10個已核對等級角色。')
+    me=guild.me
+    if not me or not me.guild_permissions.manage_roles:raise ValueError('Bot 缺少管理角色權限。')
+    for rid in actual.values():
+        role=guild.get_role(rid)
+        if role is None or not reward_role_safe(role,me):raise ValueError('等級角色失效、權限不安全或高於 Bot。')
+    if announcement is not None:
+        perms=announcement.permissions_for(me)
+        if not (perms.view_channel and perms.send_messages):raise ValueError('Bot 未能查看／發送升級公告。')
+    return actual
 
 
 def eligible(member, channel, cfg):
@@ -145,7 +161,7 @@ class CommunityLevels(commands.Cog):
         e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
         e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開清分 {cfg['clear_on_leave']}；每週一香港時間自動開始新榜",inline=False)
-        e.set_footer(text='Auditor：正式接管鎖定。需完成無損搬遷、實際計分及回滾驗證。')
+        e.set_footer(text='Auditor：正式接管鎖定。基線已按核對方案搬遷；仍需角色、實際計分及回滾驗證。')
         return e
 
     async def credit(self,member,channel,source,event,now=None):
@@ -179,7 +195,10 @@ class CommunityLevels(commands.Cog):
         old,new=map(level_for,result)
         # Reconcile on each earned award so a transient permissions/API error is retried.
         pairs=[(int(level),member.guild.get_role(int(rid))) for level,rid in self.cfg['rewards'].items()]
-        if isinstance(member,discord.Member) and any(role and not reward_role_safe(role,member.guild.me) for _,role in pairs):
+        if any(role is None for _,role in pairs):
+            log.warning('Configured level role missing; reconciliation blocked without changing roles')
+            return False
+        if isinstance(member,discord.Member) and any(not reward_role_safe(role,member.guild.me) for _,role in pairs):
             log.warning('Configured level role became unsafe; reconciliation blocked')
             return
         notified=await asyncio.to_thread(self.ledger.notice_level,member.guild.id,member.id,old)
@@ -479,8 +498,31 @@ class CommunityLevels(commands.Cog):
                     if str(role.id) in [str(r) for l,r in rewards.items() if l!=str(level)]:
                         await inter.followup.send('同一角色不可對應多個等級。'); return
                     rewards[str(level)]=role.id
+                if self.cfg['mode']=='active':
+                    try:
+                        channel=inter.guild.get_channel(self.cfg['announcement_channel'])
+                        if not isinstance(channel,discord.TextChannel):raise ValueError('公告頻道不存在。')
+                        replacement_preflight(inter.guild,rewards,channel)
+                    except ValueError as exc:
+                        await inter.followup.send(str(exc));return
                 self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,rewards=rewards)
         await inter.followup.send('已更新獎勵；正式模式只保留最高合資格等級角色。')
+
+    @levels.command(name='rewards_sync',description='核對全部10個既有等級角色；只設定對應，不派角色')
+    @app_commands.default_permissions(manage_guild=True)
+    async def rewards_sync(self,inter:discord.Interaction,commit:bool=False):
+        if not await self.guard(inter):return
+        try:
+            async with self.role_lock:
+                async with self.lock:
+                    if self.cfg['mode']=='active':raise ValueError('請先暫停正式模式。')
+                    mapping=role_mapping([dict(id=r.id,name=r.name) for r in inter.guild.roles])
+                    replacement_preflight(inter.guild,mapping)
+                    if commit:
+                        self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,rewards={str(k):v for k,v in mapping.items()})
+            lines='\n'.join(f'Lv{level} → <@&{rid}>' for level,rid in sorted(mapping.items()))
+            await inter.followup.send(('已設定全部10個獎勵對應；未派角色。' if commit else '角色對應預覽；未改設定。')+'\n'+lines,allowed_mentions=discord.AllowedMentions.none())
+        except ValueError as exc:await inter.followup.send(str(exc))
 
     @levels.command(name='leave_policy',description='設定離開伺服器時清分或保留 XP')
     @app_commands.default_permissions(manage_guild=True)
@@ -541,7 +583,13 @@ class CommunityLevels(commands.Cog):
             return
         if not amari_rewards_disabled or not baseline_verified or not self.cfg['rewards']:
             await inter.followup.send('請先核對舊等級基準、設定獎勵角色，並停用 Amari 派角色，避免兩套系統互相覆蓋。'); return
-        await self.configure(mode='active',announcement_channel=announcement.id,announcement_ping=ping)
+        try:
+            async with self.role_lock:
+                async with self.lock:
+                    replacement_preflight(inter.guild,self.cfg['rewards'],announcement)
+                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,mode='active',announcement_channel=announcement.id,announcement_ping=ping)
+        except ValueError as exc:
+            await inter.followup.send(str(exc));return
         self.voice_clock.clear()
         await inter.followup.send('已正式接管；保留試行 XP。原有 Amari 資料不會被修改。')
 
@@ -737,12 +785,13 @@ class CommunityLevels(commands.Cog):
                 await inter.followup.send('需要核數原始來源嘅查看及讀取記錄權限。');return
         if not status_only and (job not in self.history_tasks or self.history_tasks[job].done()):
             self.history_tasks[job]=asyncio.create_task(self.collect_history(job))
-        result=await asyncio.to_thread(self.history_audit.summary,job,inter.guild_id)
+        inventory=await asyncio.to_thread(self.ledger.engagement_inventory,inter.guild_id,scope['start']-60,scope['cutoff']+60)
+        result=await asyncio.to_thread(self.history_audit.summary,job,inter.guild_id,inventory)
         counts='\n'.join(f'{key}: {value}' for key,value in sorted(result['reasons'].items())) or '尚未讀取卡片'
         users='\n'.join(f'<@{uid}>：{count} 次候選' for uid,count in sorted(result['potential'].items(),key=lambda row:-row[1])[:15])
         await inter.followup.send((f'歷史核數 {job}｜{result["state"]}｜完成來源 {result["complete_channels"]}/{result["channels"]}\n'
             f'範圍：<t:{int(result["start"])}:F> 至 <t:{int(result["cutoff"])}:F>\n{counts}\n'
-            f'遊戲內60秒重複：{result["cooldown"]}；已見試行得分：{result["preview"]}\n{users}\n'
+            f'遊戲內60秒重複：{result["cooldown"]}；目前仍保留得分：{result["preview"]}；已封存須重新對帳：{result["archived_candidates"]}\n{users}\n'
             '以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。')[:1950],allowed_mentions=discord.AllowedMentions.none())
 
     @staticmethod
