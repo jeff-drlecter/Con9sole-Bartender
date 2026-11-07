@@ -6,3 +6,6 @@ data/
 # Runtime SQLite databases
 data/*.sqlite3
 *.sqlite3
+.venv/
+# Private export staging, rosters, manifests and reports (never commit real member data)
+migration_private/
