@@ -123,6 +123,8 @@ class CommunityLevels(commands.Cog):
         self.cfg={}
         self.history_audit=None
         self.history_tasks={}
+        self.history_channels={}
+        self.history_discovery=set()
 
     async def cog_load(self):
         self.ledger=await asyncio.to_thread(Ledger)
@@ -804,7 +806,7 @@ class CommunityLevels(commands.Cog):
             await asyncio.to_thread(self.history_audit.text_state,job,'running')
             for cid,cursor,done in text['cursors']:
                 if done:continue
-                channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+                channel=self.bot.get_channel(cid) or self.history_channels.get(cid) or await self.bot.fetch_channel(cid)
                 if channel.guild.id!=config.GUILD_ID:raise ValueError('Foreign text scope')
                 perms=channel.permissions_for(channel.guild.me)
                 if not (perms.view_channel and perms.read_message_history):raise ValueError('Text history permission missing')
@@ -830,12 +832,16 @@ class CommunityLevels(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     async def history_text_command(self,inter:discord.Interaction,status_only:bool=False):
         if not await self.guard(inter):return
+        discovery_job=None
         try:
             latest=await asyncio.to_thread(self.history_audit.latest,inter.guild_id)
             if not latest:raise ValueError('請先完成 history_audit。')
             job=latest[0];scope=await asyncio.to_thread(self.history_audit.job,job,inter.guild_id)
             if scope['state']!='complete':raise ValueError('遊戲核數未完成。')
             if not status_only:
+                if job in self.history_discovery:raise ValueError('呢個批次正在探索頻道；唔會重複開始。')
+                self.history_discovery.add(job);discovery_job=job
+                await inter.followup.send('已開始探索文字頻道及封存討論串；暫時未補分。完成範圍核對後會另行回報。')
                 with connect_sqlite(self.ledger.path) as db:
                     applied=db.execute("SELECT plan,manifest FROM hybrid_plans WHERE guild=? AND state='applied'",(inter.guild_id,)).fetchall()
                 if len(applied)!=1:raise ValueError('需要唯一已套用基線批次。')
@@ -864,12 +870,17 @@ class CommunityLevels(commands.Cog):
                 policy=dict(baseline=plan,cutoff=min(scope['cutoff'],baseline['cutover']),users=users,
                     cooldown=max(self.cfg['text_cooldown'],self.cfg['activity_cooldown']),
                     excluded_channels=sorted(self.cfg['excluded_channels']),excluded_roles=sorted(self.cfg['excluded_roles']))
+                self.history_channels.update(channels)
                 await asyncio.to_thread(self.history_audit.start_text,job,inter.guild_id,selected,policy)
                 key='text:'+job
                 if key not in self.history_tasks or self.history_tasks[key].done():self.history_tasks[key]=asyncio.create_task(self.collect_history_text(job))
             text=await asyncio.to_thread(self.history_audit.text_scope,job)
+            if text['state']!='complete':
+                complete=sum(bool(c[2]) for c in text['cursors'])
+                await inter.followup.send(f'文字CD核數 {text["state"]}｜已完成 {complete}/{len(text["cursors"])} 個範圍；未有私人核數結果，冇補分。')
+                return
             for cid,_,_ in text['cursors']:
-                channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+                channel=self.bot.get_channel(cid) or self.history_channels.get(cid) or await self.bot.fetch_channel(cid)
                 if channel.guild.id!=inter.guild_id:raise ValueError('核數頻道不屬於呢個伺服器。')
                 for viewer in (inter.user,inter.guild.me):
                     perms=channel.permissions_for(viewer)
@@ -884,6 +895,11 @@ class CommunityLevels(commands.Cog):
             else:await inter.followup.send(message,allowed_mentions=discord.AllowedMentions.none())
         except (ValueError,discord.HTTPException,sqlite3.OperationalError) as exc:
             await inter.followup.send(('核數未完成：'+str(exc))[:1500])
+        except Exception as exc:
+            log.exception('Historical text command failed')
+            await inter.followup.send(f'文字核數暫停（{type(exc).__name__}）；未補分。')
+        finally:
+            if discovery_job:self.history_discovery.discard(discovery_job)
 
     @staticmethod
     def baseline_roster(guild):
