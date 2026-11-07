@@ -188,6 +188,7 @@ class HistoryAudit:
             if delta<0:raise ValueError('Negative replay delta requires manual reconciliation')
             result[uid]=dict(base_xp=delta,text_only=len(old),combined=len(combined),game_candidates=len(activity),
                 game_accepted=sum(kind=='activity' for _,kind,_ in combined))
-        return dict(algorithm='net-shared-cooldown-v1',policy=policy,users=result,
+        evidence=hashlib.sha256(json.dumps([policy,games,texts],sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        return dict(algorithm='net-shared-cooldown-v1',evidence_digest=evidence,policy=policy,users=result,
             text_channels=len(text['cursors']),text_observations=len(texts),
             limitations=['retained Discord history only; deleted history unavailable','historical Booster multipliers not inferred'])
