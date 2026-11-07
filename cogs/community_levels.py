@@ -9,6 +9,7 @@ import json
 import re
 import sqlite3
 import time
+import uuid
 from datetime import datetime, timezone
 
 import discord
@@ -18,6 +19,8 @@ from discord.ext import commands, tasks
 import config
 from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
 from features.level_history import HistoryAudit
+from features.level_role_drill import restore as restore_role_drill
+from features.level_migration import create_backup
 from features.level_bonus import prepare as prepare_bonus,apply as apply_bonus
 from features.level_migration import digest as manifest_digest
 from features.level_baseline import stage_public,build_manifest,save_plan,load_plan,apply_plan,role_mapping
@@ -133,6 +136,7 @@ class CommunityLevels(commands.Cog):
         self.history_tasks={}
         self.history_channels={}
         self.history_discovery=set()
+        self.role_restore_after=0
 
     async def cog_load(self):
         self.ledger=await asyncio.to_thread(Ledger)
@@ -392,7 +396,11 @@ class CommunityLevels(commands.Cog):
     @tasks.loop(seconds=30)
     async def voice_tick(self):
         guild=self.bot.get_guild(config.GUILD_ID)
-        if not guild or self.cfg.get('mode')=='off' or not self.bot.is_ready() or not self.gateway_confirmed:
+        if not guild or not self.bot.is_ready() or not self.gateway_confirmed:
+            self.voice_clock.clear()
+            return
+        await self.retry_role_drill(guild)
+        if self.cfg.get('mode')=='off':
             self.voice_clock.clear()
             return
         await self.repair_pending()
@@ -583,6 +591,58 @@ class CommunityLevels(commands.Cog):
             lines='\n'.join(f'Lv{level} → <@&{rid}>' for level,rid in sorted(mapping.items()))
             await inter.followup.send(('已設定全部10個獎勵對應；未派角色。' if commit else '角色對應預覽；未改設定。')+'\n'+lines,allowed_mentions=discord.AllowedMentions.none())
         except ValueError as exc:await inter.followup.send(str(exc))
+
+    @levels.command(name='role_drill',description='核對測試帳號既有等級角色；選填演練移除並立即還原')
+    @app_commands.default_permissions(manage_guild=True)
+    async def role_drill_command(self,inter:discord.Interaction,member:discord.Member,run:bool=False):
+        if not await self.guard(inter):return
+        try:
+            async with self.role_lock:
+                async with self.lock:
+                    if self.cfg['mode']=='active':raise ValueError('演練只可喺試行／暫停模式。')
+                    if member.bot:raise ValueError('只可用真人測試帳號。')
+                    mapping=replacement_preflight(inter.guild,self.cfg['rewards'])
+                    current=await inter.guild.fetch_member(member.id)
+                    original=[r for r in current.roles if r.id in set(mapping.values())]
+                    if len(original)!=1:raise ValueError('演練帳號需有且只有一個已核對等級角色。')
+                    if not run:
+                        await inter.followup.send(f'只讀預覽：<@{member.id}> 目前持有 <@&{original[0].id}>。演練只移除呢個既有等級角色再立即還原；不改XP或其他角色。',allowed_mentions=discord.AllowedMentions.none(),ephemeral=True);return
+                    prior=self.cfg.get('role_drill')
+                    if prior and prior['state'] in ('pending','rollback'):raise ValueError('上一次演練尚待還原；唔會開始另一批。')
+                    if current.joined_at is None:raise ValueError('測試帳號加入時間未能核對。')
+                    batch=uuid.uuid4().hex[:16];backup=DATA_DIR/'level_backups'/f'roles-{batch}.sqlite3'
+                    marker=dict(id=batch,user=member.id,joined_at=current.joined_at.timestamp(),mapping={str(k):v for k,v in mapping.items()},roles=[r.id for r in original],state='pending',actor=inter.user.id,backup_path=str(backup),backup_sha=None,remove_succeeded=False,remove_observed=False)
+                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,role_drill=marker)
+                    sha=await asyncio.to_thread(create_backup,self.ledger,backup)
+                    marker={**marker,'backup_sha':sha}
+                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,role_drill=marker)
+                    try:
+                        await current.remove_roles(*original,reason='Con9sole 測試帳號角色還原演練')
+                        removed=await inter.guild.fetch_member(member.id)
+                        if removed.joined_at!=current.joined_at or any(r.id in {o.id for o in original} for r in removed.roles):raise ValueError('未能確認原角色已移除；會先還原。')
+                        marker={**marker,'remove_succeeded':True,'remove_observed':True}
+                        self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,role_drill=marker)
+                    finally:
+                        try:await restore_role_drill(inter.guild,self.ledger,marker,reward_role_safe)
+                        finally:self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
+            await inter.followup.send('測試角色已移除及還原，現有角色核對一致；已備份，冇改XP／其他角色。',ephemeral=True)
+        except (ValueError,discord.HTTPException,sqlite3.Error) as exc:
+            await inter.followup.send(('演練未完成；如已移除會保留還原工作：'+str(exc))[:1500],ephemeral=True)
+
+    async def retry_role_drill(self,guild):
+        if time.monotonic()<self.role_restore_after:return
+        async with self.role_lock:
+            async with self.lock:
+                self.cfg=await asyncio.to_thread(self.ledger.settings,guild.id)
+                marker=self.cfg.get('role_drill')
+                if not marker or marker['state'] not in ('pending','rollback'):return
+                try:
+                    async with asyncio.timeout(8):
+                        await restore_role_drill(guild,self.ledger,marker,reward_role_safe)
+                except Exception:
+                    self.role_restore_after=time.monotonic()+60
+                    log.exception('Test role restore remains pending; voice timer continues')
+                finally:self.cfg=await asyncio.to_thread(self.ledger.settings,guild.id)
 
     @levels.command(name='leave_policy',description='設定離開伺服器時清分或保留 XP')
     @app_commands.default_permissions(manage_guild=True)
