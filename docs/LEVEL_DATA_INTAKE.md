@@ -1,5 +1,13 @@
 # Receiving Amari data
 
+## Owner-approved simplified alternative (2026-11-07)
+
+The owner subsequently authorized migrating from the full public leaderboard without waiting for an official export. `/levels baseline` stages the currently verified120 public rows (including12 Unknown/departed labels). It uses public XP where a label uniquely matches one current account alias; ambiguous labels or duplicate account matches fall back to an actual mapped level role. Each row records this identity method rather than claiming an authenticated ID-bearing Amari export. A public score below a known role floor is held as a conflict. Members with no usable public match or mapped role are held without inventing a zero baseline.
+
+All ten actual level-role IDs must be captured and rechecked. Fallback uses the highest role's threshold: Lv5=355 XP, Lv15=3,955 XP. Public capture counts, freshness, manifest hashes, current identities and roles are checked before committing. This is an explicitly approximate migration for role-floor members; it is separate from the exact import workflow below.
+
+Commit takes a verified backup and atomically replaces the selected baseline. Earlier shadow profiles/events/weekly values are archived, not added to Amari XP; post-capture accepted events are replayed. Existing cooldowns are retained and the feature remains OFF without assigning roles or announcing levels. Old Amari weekly balances remain unknown, and historical game compensation is not part of this baseline batch. Same-batch retries do not add XP again; a different applied baseline requires reviewed recovery.
+
 The intake tool prepares a **private staging report only**. It cannot import XP, modify the running bot, assign roles, change weekly standings or activate replacement. Its `source: amari-staging` output is deliberately rejected by the frozen-snapshot importer.
 
 ## Information to obtain from official support
