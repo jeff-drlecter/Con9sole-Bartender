@@ -623,27 +623,26 @@ class CommunityLevels(commands.Cog):
                         marker={**marker,'remove_succeeded':True,'remove_observed':True}
                         self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,role_drill=marker)
                     finally:
-                        result=await restore_role_drill(inter.guild,self.ledger,marker,reward_role_safe)
-                        self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
+                        try:await restore_role_drill(inter.guild,self.ledger,marker,reward_role_safe)
+                        finally:self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
             await inter.followup.send('測試角色已移除及還原，現有角色核對一致；已備份，冇改XP／其他角色。',ephemeral=True)
         except (ValueError,discord.HTTPException,sqlite3.Error) as exc:
             await inter.followup.send(('演練未完成；如已移除會保留還原工作：'+str(exc))[:1500],ephemeral=True)
 
     async def retry_role_drill(self,guild):
-        marker=self.cfg.get('role_drill')
-        if not marker or marker['state'] not in ('pending','rollback'):return
         if time.monotonic()<self.role_restore_after:return
         async with self.role_lock:
             async with self.lock:
+                self.cfg=await asyncio.to_thread(self.ledger.settings,guild.id)
                 marker=self.cfg.get('role_drill')
                 if not marker or marker['state'] not in ('pending','rollback'):return
                 try:
                     async with asyncio.timeout(8):
                         await restore_role_drill(guild,self.ledger,marker,reward_role_safe)
-                    self.cfg=await asyncio.to_thread(self.ledger.settings,guild.id)
                 except Exception:
                     self.role_restore_after=time.monotonic()+60
                     log.exception('Test role restore remains pending; voice timer continues')
+                finally:self.cfg=await asyncio.to_thread(self.ledger.settings,guild.id)
 
     @levels.command(name='leave_policy',description='設定離開伺服器時清分或保留 XP')
     @app_commands.default_permissions(manage_guild=True)

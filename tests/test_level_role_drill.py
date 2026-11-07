@@ -56,3 +56,31 @@ class RoleDrillTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await restore(self.guild,self.ledger,self.marker,lambda r,m:True)
         self.assertEqual(self.member.roles,[])
         self.assertEqual(self.ledger.settings(1)['role_drill']['state'],'aborted_rejoined')
+
+    async def test_failed_rollback_retries_durable_phase_not_stale_memory(self):
+        from unittest.mock import MagicMock,patch
+        from cogs.community_levels import CommunityLevels
+        async def add(*roles,**kwargs):
+            self.member.roles.extend(roles);self.member.joined_at=datetime.fromtimestamp(2000,timezone.utc)
+        async def remove(*roles,**kwargs):self.member.roles=[r for r in self.member.roles if r not in roles]
+        self.member.add_roles.side_effect=add;self.member.remove_roles=AsyncMock(side_effect=ValueError('REST failed'))
+        with self.assertRaises(ValueError):await restore(self.guild,self.ledger,self.marker,lambda r,m:True)
+        self.assertEqual(self.ledger.settings(1)['role_drill']['state'],'rollback')
+        cog=CommunityLevels(MagicMock());cog.ledger=self.ledger;cog.cfg={'role_drill':self.marker}
+        self.member.remove_roles.side_effect=remove
+        with patch('cogs.community_levels.reward_role_safe',return_value=True):await cog.retry_role_drill(self.guild)
+        self.assertEqual(self.member.roles,[])
+        self.assertEqual(cog.cfg['role_drill']['state'],'aborted_rejoined')
+    async def test_restart_after_grant_intent_detects_rejoined_stale_grant(self):
+        async def add(*roles,**kwargs):
+            self.member.roles.extend(roles);self.member.joined_at=datetime.fromtimestamp(2000,timezone.utc)
+        async def remove(*roles,**kwargs):self.member.roles=[r for r in self.member.roles if r not in roles]
+        self.member.add_roles.side_effect=add;self.member.remove_roles=AsyncMock(side_effect=remove)
+        self.guild.fetch_member.side_effect=[self.member,RuntimeError('process stopped')]
+        with self.assertRaises(RuntimeError):await restore(self.guild,self.ledger,self.marker,lambda r,m:True)
+        restarted=Ledger(self.ledger.path);marker=restarted.settings(1)['role_drill']
+        self.assertEqual(marker['grant_intent'],[50])
+        self.guild.fetch_member.side_effect=None
+        with self.assertRaises(ValueError):await restore(self.guild,restarted,marker,lambda r,m:True)
+        self.assertEqual(self.member.roles,[])
+        self.assertEqual(restarted.settings(1)['role_drill']['state'],'aborted_rejoined')
