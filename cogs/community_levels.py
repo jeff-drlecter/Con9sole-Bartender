@@ -621,6 +621,36 @@ class CommunityLevels(commands.Cog):
         except (ValueError,discord.HTTPException) as exc:
             await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '讀唔到訊息，請核對 ID 同權限。')
 
+    @levels.command(name='activity_check',description='只讀核對白名單近期戰鬥卡與實際加分，不補計')
+    @app_commands.default_permissions(manage_guild=True)
+    async def activity_check(self,inter:discord.Interaction):
+        if not await self.guard(inter):return
+        lines=[]
+        for cid in sorted({s['channel'] for s in self.cfg['sources']})[:5]:
+            try:
+                channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+                if not isinstance(channel,discord.Thread) or channel.guild.id!=inter.guild_id:continue
+                perms=channel.permissions_for(inter.user)
+                if not perms.view_channel or not perms.read_message_history:continue
+                async for msg in channel.history(limit=20):
+                    if {'bot':msg.author.id,'channel':cid} not in self.cfg['sources'] or not original_bot_message(msg):continue
+                    identity=battle_identity([e.to_dict() for e in msg.embeds])
+                    member=None
+                    if identity:
+                        uid,name=identity
+                        if uid is None:uid=await asyncio.to_thread(self.ledger.resolve,inter.guild_id,msg.author.id,name)
+                        member=msg.guild.get_member(uid) if uid else None
+                        if member and (member.bot or member.name!=name):member=None
+                    proof=await asyncio.to_thread(self.ledger.event_proof,inter.guild_id,f'm:{msg.id}')
+                    outcome=f'已計 {proof[1]} XP → <@{proof[0]}>' if proof else '無加分紀錄（唔等於漏計；可能冷卻／上限／試行前）'
+                    edited=f'｜修改 <t:{int(msg.edited_at.timestamp())}:T>' if msg.edited_at else ''
+                    lines.append(f'{msg.jump_url}\n<t:{int(msg.created_at.timestamp())}:T>{edited}｜格式 {bool(identity)}｜玩家 {member.mention if member else "未對應"}｜{outcome}')
+                    if len(lines)>=10:break
+            except discord.HTTPException:
+                lines.append('其中一個來源讀取失敗，請核對權限。')
+            if len(lines)>=10:break
+        await inter.followup.send(('只讀核對；冇加分、綁定或改模式。最多 10 張／各來源最近 20 訊息。\n'+'\n'.join(lines) if lines else '未找到可讀取嘅來源卡片。')[:1950],allowed_mentions=discord.AllowedMentions.none())
+
     @levels.command(name='inspect',description='只讀檢查指定討論串戰鬥卡可否識別，不加分')
     @app_commands.default_permissions(manage_guild=True)
     async def inspect(self,inter:discord.Interaction,channel:discord.Thread,message_id:str,raw_private:bool=False):

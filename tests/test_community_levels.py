@@ -119,8 +119,25 @@ class LedgerTests(unittest.TestCase):
         pet[0]['description']='<@11>\n'+pet[0]['description']
         self.assertNotEqual(battle_identity(pet),(None,'player'))
 
+    def test_event_proof_reads_only_recorded_awards_and_stays_guild_scoped(self):
+        self.store.award(1,10,'activity','m:123',100)
+        self.assertEqual(self.store.event_proof(1,'m:123'),(10,1,100))
+        self.assertIsNone(self.store.event_proof(2,'m:123'))
+        self.assertIsNone(self.store.event_proof(1,'m:456'))
+
 
 class CogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_activity_check_never_reads_history_without_both_permissions(self):
+        self.cog.guard=AsyncMock(return_value=True)
+        inter=types.SimpleNamespace(guild_id=1,user=types.SimpleNamespace(),followup=types.SimpleNamespace(send=AsyncMock()))
+        channel=MagicMock(spec=discord.Thread)
+        channel.guild=self.guild
+        self.cog.bot.get_channel.return_value=channel
+        for view,history in [(False,True),(True,False)]:
+            channel.permissions_for.return_value=types.SimpleNamespace(view_channel=view,read_message_history=history)
+            await self.cog.activity_check.callback(self.cog,inter)
+        channel.history.assert_not_called()
+
     async def test_application_response_identity_rejects_incoming_webhook_spoofs(self):
         from cogs.community_levels import original_bot_message
         msg=types.SimpleNamespace(author=types.SimpleNamespace(bot=True,id=20),webhook_id=20,application_id=20)
