@@ -420,6 +420,40 @@ class CommunityLevels(commands.Cog):
     async def admin_entry(self,inter):
         await self.panel.callback(self,inter)
 
+    @levels.command(name='voice_check',description='唯讀核對現有語音出席、排除原因、計時及語音XP')
+    @app_commands.default_permissions(manage_guild=True)
+    async def voice_check(self,inter:discord.Interaction):
+        if not await self.guard(inter):return
+        task=self.voice_tick.get_task()
+        error=None
+        if task and task.done() and not task.cancelled():
+            failure=task.exception()
+            if failure:error=f'{type(failure).__name__}: {str(failure)[:180]}'
+        lines=[f'模式 {self.cfg["mode"]}｜Gateway {self.gateway_confirmed}｜Ready {self.bot.is_ready()}｜計時工作 {self.voice_tick.is_running()}｜Failed {self.voice_tick.failed()}',
+            f'語音 {self.cfg["voice_xp"]} XP/{self.cfg["voice_interval"]} 秒；只讀，不重設計時。']
+        if error:lines.append('工作錯誤：'+error)
+        now=time.monotonic()
+        for channel in inter.guild.voice_channels+inter.guild.stage_channels:
+            humans=[m for m in channel.members if not m.bot]
+            if not humans or not channel.permissions_for(inter.user).view_channel:continue
+            valid=voice_members(channel,self.cfg) if channel.id!=inter.guild.afk_channel_id else []
+            lines.append(f'{channel.name}：真人 {len(humans)}，有效 {len(valid)}')
+            for member in humans:
+                state=member.voice
+                reasons=[]
+                if not eligible(member,channel,self.cfg):reasons.append('排除頻道／角色')
+                if channel.id==inter.guild.afk_channel_id:reasons.append('AFK頻道')
+                if state:
+                    if state.self_deaf or state.deaf:reasons.append('耳聾')
+                    if state.afk:reasons.append('AFK')
+                    if state.suppress:reasons.append('舞台聽眾')
+                else:reasons.append('未有VoiceState')
+                clock=self.voice_clock.get((channel.id,member.id))
+                elapsed='未開始' if clock is None else f'{max(0,int(now-clock))}秒'
+                profile=await asyncio.to_thread(self.ledger.profile,inter.guild_id,member.id)
+                lines.append(f'<@{member.id}>：{",".join(reasons) or "有效"}；計時 {elapsed}；語音XP {profile["voice"]}')
+        await inter.followup.send('\n'.join(lines)[:1900],allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
+
     @levels.command(name='rank',description='查看等級、升級進度及 XP 來源')
     async def rank(self,inter:discord.Interaction,member:discord.Member|None=None):
         await inter.response.defer(ephemeral=True)
