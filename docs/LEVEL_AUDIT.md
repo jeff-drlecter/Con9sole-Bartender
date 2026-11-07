@@ -125,3 +125,9 @@ Conditional approval is for OFF diagnostic deployment and existing-core smoke te
 ## Application response source correction — 2026-11-07
 
 Live OFF diagnostics report Bot=True and Webhook=True for the selected game card. Discord documents interaction followups at `/webhooks/{application_id}/{interaction_token}` and exposes server-supplied `application_id` on messages. Accept this path only when application ID, webhook ID and author ID all match, plus the existing exact source allowlist. Arbitrary incoming webhooks remain rejected. Official references: https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx and https://github.com/discord/discord-api-docs/blob/main/developers/interactions/receiving-and-responding.mdx . Actual three-ID agreement and parser acceptance require live validation.
+
+## Real game payload acceptance — 2026-11-07
+
+PR56 deployment completed (Fly run42338138300). The selected original application response passed exact application/webhook/author agreement and source configuration while mode stayed OFF. Standard inspection confirmed trusted source, recognized normal battle format and an existing Discord member identity match. Pet inspection initially failed; explicit Administrator-only private raw inspection showed the owner line is followed by level/species details. Parser now anchors the first line, rejects pet fallback when mentions exist, and redacted real normal/pet projections are regression fixtures. No real account name or source message ID is committed in the fixtures.
+
+This proves read-only source/normal-identity acceptance, not an actual XP award, pet binding, repeated-card behavior or successful Amari cutover. Those checks remain open.

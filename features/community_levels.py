@@ -267,8 +267,9 @@ def battle_identity(embeds):
     name=header.get('author',{}).get('name','') or header.get('title','')
     if len(set(mentions))==1 and name:
         return int(mentions[0]),name
-    pet=re.fullmatch(r"\*?([a-zA-Z0-9_.]+)'s pet attacking\*?",desc.strip())
-    if pet:
+    # Real pet cards append level and species details after the owner line.
+    pet=re.fullmatch(r"\*?([a-zA-Z0-9_.]+)'s pet attacking\*?",desc.strip().split('\n',1)[0])
+    if pet and not mentions:
         return None,pet[1]
     return None
 
