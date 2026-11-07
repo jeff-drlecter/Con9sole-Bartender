@@ -1,3 +1,9 @@
+# Owner-approved hybrid baseline update — 2026-11-07
+
+The owner explicitly accepts public-leaderboard XP with unique current account-alias reconciliation and highest role-floor fallback, instead of waiting for an official lossless export. This supersedes the earlier requirement for an ID-bearing API export as a prerequisite for **this approximate baseline operation**. Ambiguous alias matches/duplicate public owners use role floors; public scores below a known role are held; unknown/departed rows are excluded, and members without evidence are not assigned invented zero baselines.
+
+The full observed120 ranks must be present, captured recently, and all ten actual level-role IDs verified. The source capture time is preserved, never refreshed by re-submitting old data. Plans capture per-member source kind, roster hash and role mapping. Commit uses role/ledger locks, rechecks current identities/roles, creates a verified backup, replaces the baseline transactionally and archives the pre-capture shadow ledger. Post-capture accepted events are replayed; cooldowns are retained. Retrying the same plan is idempotent. Old Amari weekly balances remain unknown; historical bonus remains separate. Formal role/announcement activation remains gated independently.
+
 # Current replacement status — 2026-11-07 (Hong Kong)
 
 **NO-GO for active Amari replacement.** OFF diagnostics are deployed; Amari remains authoritative. The sections below the historical divider are a dated audit trail, not the current gap list.

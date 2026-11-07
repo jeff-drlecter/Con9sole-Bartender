@@ -18,6 +18,8 @@ from discord.ext import commands, tasks
 import config
 from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
 from features.level_history import HistoryAudit
+from features.level_baseline import stage_public,build_manifest,save_plan,load_plan,apply_plan
+from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
@@ -535,7 +537,7 @@ class CommunityLevels(commands.Cog):
     async def activate(self,inter:discord.Interaction,amari_rewards_disabled:bool,baseline_verified:bool,announcement:discord.TextChannel,ping:bool=False):
         if not await self.guard(inter): return
         if not REPLACEMENT_READY:
-            await inter.followup.send('Auditor 未批准正式接管：舊 XP／級內進度／週榜完整快照、實際計分對照、戰鬥卡實測及回滾演練未全部驗證。請保持試行；勾選確認不能繞過。')
+            await inter.followup.send('正式派角色／公告仍未批准開啟：基線搬遷、實際計分對照及還原演練需完成驗收。簡化角色基線可用 baseline 指令另行處理。')
             return
         if not amari_rewards_disabled or not baseline_verified or not self.cfg['rewards']:
             await inter.followup.send('請先核對舊等級基準、設定獎勵角色，並停用 Amari 派角色，避免兩套系統互相覆蓋。'); return
@@ -559,7 +561,7 @@ class CommunityLevels(commands.Cog):
     async def import_levels(self,inter:discord.Interaction,file:discord.Attachment,commit:bool=False):
         if not await self.guard(inter): return
         if commit:
-            await inter.followup.send('Auditor 已封鎖只匯入等級：會遺失級內進度，亦可能同試行 XP 重複。現時只准預覽；需先完成原始 XP／週榜快照及切換時間驗證。')
+            await inter.followup.send('請用 baseline 混合搬遷流程：完整公開榜優先，其餘按最高等級角色起點；會先備份及封存試行重疊分數。舊 CSV 路徑唔直接提交。')
             return
         if file.size>1_000_000 or not file.filename.lower().endswith('.csv'):
             await inter.followup.send('請提供不超過 1MB 嘅 CSV。'); return
@@ -742,6 +744,57 @@ class CommunityLevels(commands.Cog):
             f'範圍：<t:{int(result["start"])}:F> 至 <t:{int(result["cutoff"])}:F>\n{counts}\n'
             f'遊戲內60秒重複：{result["cooldown"]}；已見試行得分：{result["preview"]}\n{users}\n'
             '以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。')[:1950],allowed_mentions=discord.AllowedMentions.none())
+
+    @staticmethod
+    def baseline_roster(guild):
+        return [dict(id=m.id,roles=sorted(r.id for r in m.roles),
+            aliases=sorted({a for a in (m.name,m.global_name,m.nick,m.display_name) if a})) for m in guild.members if not m.bot]
+
+    @levels.command(name='baseline',description='公開榜XP優先，其餘按最高等級角色起點；預覽／備份後搬遷')
+    @app_commands.default_permissions(manage_guild=True)
+    async def baseline_command(self,inter:discord.Interaction,data:str|None=None,commit:bool=False,plan:str|None=None):
+        if not await self.guard(inter):return
+        try:
+            if self.cfg['mode']=='active':raise ValueError('請先暫停正式派角色模式。')
+            guild=inter.guild
+            if guild.member_count and len(guild.members)<guild.member_count:
+                await guild.chunk(cache=True)
+            if guild.member_count and len(guild.members)<guild.member_count:raise ValueError('成員清單未齊，唔會建立搬遷。')
+            members=self.baseline_roster(guild)
+            roles=[dict(id=r.id,name=r.name) for r in guild.roles]
+            if commit:
+                if not plan or data is not None:raise ValueError('提交只需已核對嘅 plan ID。')
+                backup=DATA_DIR/'level_backups'/f'hybrid-{plan}.sqlite3'
+                async with self.role_lock:
+                    async with self.lock:
+                        self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,mode='off')
+                        result=await asyncio.to_thread(apply_plan,self.ledger,guild=inter.guild_id,actor=inter.user.id,
+                            plan=plan,members=self.baseline_roster(guild),roles=[dict(id=r.id,name=r.name) for r in guild.roles],backup_path=backup,now=time.time())
+                        self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
+                self.voice_clock.clear()
+                await inter.followup.send(f'基線已搬入（或同批次已完成）：{result["count"]} 人。已備份；原有試行重疊記錄已封存。現時 OFF，冇派角色／發公告；舊 Amari 週榜未搬遷，歷史補分未套用。')
+                return
+            if data is None:raise ValueError('請提供完整公開榜分頁資料，或用 plan＋commit 提交已核對預覽。')
+            async with self.lock:
+                capture=await asyncio.to_thread(stage_public,self.ledger,inter.guild_id,data,time.time())
+                if not capture['complete']:
+                    await inter.followup.send(f'已接收公開榜 {capture["received"]}/{capture["parts"]} 部分；未改積分。');return
+                manifest=build_manifest(inter.guild_id,inter.user.id,members,roles,capture['rows'],capture['observed_at'],capture['batch'])
+                for row in manifest['rows']:
+                    row['old_preview_total']=(await asyncio.to_thread(self.ledger.profile,inter.guild_id,row['user_id']))['total']
+                token=await asyncio.to_thread(save_plan,self.ledger,manifest)
+            exact=sum(r['kind']=='public_board' for r in manifest['rows'])
+            floor=sum(r['kind']=='role_floor' for r in manifest['rows'])
+            top=sorted(manifest['rows'],key=lambda r:-r['baseline'])[:12]
+            detail='\n'.join(f'<@{r["user_id"]}>：{r["baseline"]:,} XP（{r["kind"]}）' for r in top)
+            text=(f'基線預覽 {token}\n公開榜 {len(capture["rows"])} 行；榜單對應 {exact} 人；角色起點 {floor} 人。'
+                f'\nUnknown已離開 {manifest["unknown_departed"]}；未能唯一對應榜單 {len(manifest["unresolved_ranks"])}；'
+                f'衝突暫緩 {len(manifest["conflicts"])}；無基線證據 {len(manifest["skipped"])}。\n{detail}'
+                '\n未改積分。提交會替換基線，封存舊試行總分，保留榜單觀察時間後嘅新版事件；歷史補分另計，舊週XP未知。')
+            await inter.followup.send(text[:1950],allowed_mentions=discord.AllowedMentions.none(),
+                file=discord.File(io.BytesIO(json.dumps(manifest,ensure_ascii=False,indent=2).encode()),filename='baseline_preview_private.json'))
+        except (ValueError,discord.HTTPException) as exc:
+            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '未能讀取成員／角色；未提交基線。')
 
     @levels.command(name='inspect',description='只讀檢查指定討論串戰鬥卡可否識別，不加分')
     @app_commands.default_permissions(manage_guild=True)

@@ -75,6 +75,9 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS notice_state(guild INTEGER,user INTEGER,level INTEGER,
               PRIMARY KEY(guild,user));
             CREATE TABLE IF NOT EXISTS imports(guild INTEGER PRIMARY KEY,digest TEXT,stamp REAL);
+            CREATE TABLE IF NOT EXISTS hybrid_public(guild INTEGER,batch TEXT,part INTEGER,parts INTEGER,stamp REAL,rows TEXT,PRIMARY KEY(guild,batch,part));
+            CREATE TABLE IF NOT EXISTS hybrid_plans(guild INTEGER,plan TEXT PRIMARY KEY,actor INTEGER,stamp REAL,manifest TEXT,digest TEXT,state TEXT,backup_path TEXT,backup_sha TEXT);
+            CREATE TABLE IF NOT EXISTS hybrid_shadow(guild INTEGER,plan TEXT,user INTEGER,profile TEXT,events TEXT,periods TEXT,PRIMARY KEY(guild,plan,user));
             ''')
 
     def settings(self, guild):
