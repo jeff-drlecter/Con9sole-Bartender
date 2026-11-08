@@ -225,3 +225,22 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await cog.reconcile()
         self.assertNotEqual(cog.state['sessions']['20']['id'],'old')
         self.assertNotIn('message',cog.state['sessions']['20'])
+
+
+    async def test_ended_state_is_durable_before_failed_render_and_restart(self):
+        import json
+        cog=self.cog();cog.state['settings']={'routes':{'40':30}}
+        channel=types.SimpleNamespace(id=20,category_id=40,members=[])
+        guild=types.SimpleNamespace(id=1,voice_channels=[channel],afk_channel=None)
+        cog.bot.get_guild.return_value=guild
+        cog.state['sessions']['20']=dict(id='old',destination=30,message=500,started=100,participants={})
+        snapshots=[]
+        cog.save.side_effect=lambda:snapshots.append(json.loads(json.dumps(cog.state)))
+        cog.render=AsyncMock(side_effect=RuntimeError('failed edit'))
+        with self.assertLogs('cogs.squad_cards',level='ERROR'):await cog.reconcile()
+        self.assertIn('ended',snapshots[-1]['sessions']['20'])
+        restarted=self.cog();restarted.bot=cog.bot;restarted.state=snapshots[-1];restarted.render=AsyncMock()
+        channel.members=[types.SimpleNamespace(id=10,display_name='A',bot=False)]
+        await restarted.reconcile()
+        self.assertTrue(restarted.render.call_args.kwargs['ended'])
+        self.assertNotIn('20',restarted.state['sessions'])
