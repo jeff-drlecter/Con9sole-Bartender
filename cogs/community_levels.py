@@ -19,6 +19,7 @@ from discord.ext import commands, tasks
 import config
 from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
 from features.level_history import HistoryAudit
+from features.level_activation import readiness as activation_readiness,commit as activation_commit,role_plan as activation_role_plan,pending_count as activation_pending
 from features.level_role_drill import restore as restore_role_drill
 from features.level_migration import create_backup
 from features.level_bonus import prepare as prepare_bonus,apply as apply_bonus
@@ -30,7 +31,7 @@ from core.sqlite_storage import connect_sqlite
 log = logging.getLogger(__name__)
 GUILD = discord.Object(id=config.GUILD_ID)
 # Release gate: turn on only after the evidence checklist in LEVEL_AUDIT.md passes.
-REPLACEMENT_READY = False
+REPLACEMENT_READY = True
 # Owner-authorized historical compensation uses the existing ordinary 1-XP rate.
 HISTORICAL_BASE_POLICY_ACCEPTED = True
 
@@ -176,7 +177,10 @@ class CommunityLevels(commands.Cog):
         e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
         e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開清分 {cfg['clear_on_leave']}；每週一香港時間自動開始新榜",inline=False)
-        e.set_footer(text='Auditor：正式接管鎖定。基線已按核對方案搬遷；仍需角色、實際計分及回滾驗證。')
+        if cfg['mode']=='active':
+            pending=await asyncio.to_thread(activation_pending,self.ledger,config.GUILD_ID)
+            e.add_field(name='角色核對',value='已完成' if not pending else f'剩餘 {pending} 人，會自動續行。',inline=False)
+        e.set_footer(text='已正式接管等級、角色及公告。' if cfg['mode']=='active' else ('已完成實測；接管前需停用 Amari 派角色及公告。' if REPLACEMENT_READY else '試行驗收中；基線已搬遷，正式角色及公告尚未開啟。'))
         return e
 
     async def credit(self,member,channel,source,event,now=None):
@@ -379,7 +383,7 @@ class CommunityLevels(commands.Cog):
             return
         guild=self.bot.get_guild(config.GUILD_ID)
         if not guild: return
-        pending=await asyncio.to_thread(self.ledger.pending_roles,config.GUILD_ID)
+        pending=await asyncio.to_thread(self.ledger.pending_roles,config.GUILD_ID,20)
         for uid,total,old in pending:
             member=guild.get_member(uid)
             if member is None:
@@ -694,9 +698,23 @@ class CommunityLevels(commands.Cog):
                 self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,**changes)
         await inter.followup.send('已更新公告設定。支援 {user}、{user.ping}、{level}。')
 
+    @levels.command(name='activation_preview',description='只讀預覽全員等級角色新增／移除／保留／暫緩；不改角色')
+    @app_commands.default_permissions(manage_guild=True)
+    async def activation_preview_command(self,inter:discord.Interaction):
+        if not await self.guard(inter):return
+        try:
+            if inter.guild.member_count and len(inter.guild.members)<inter.guild.member_count:raise ValueError('成員清單未齊。')
+            replacement_preflight(inter.guild,self.cfg['rewards'])
+            managed=set(self.cfg['rewards'].values())
+            members=[dict(user=m.id,roles=sorted(r.id for r in m.roles if r.id in managed)) for m in inter.guild.members if not m.bot]
+            plan=await asyncio.to_thread(activation_role_plan,self.ledger,inter.guild_id,self.cfg['rewards'],members)
+            counts=plan['counts']
+            await inter.followup.send(f'角色接管預覽：變更 {counts["change"]}｜保留 {counts["keep"]}｜未有profile保持不動 {counts["untouched"]}｜暫緩 {counts["hold"]}。\n摘要：{plan["digest"]}\n有暫緩項目唔會啟動；缺少積分唔會當0XP清除角色。',file=discord.File(io.BytesIO(json.dumps(plan,ensure_ascii=False,indent=2).encode()),filename='activation_roles_private.json'),allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
+        except ValueError as exc:await inter.followup.send(str(exc),ephemeral=True)
+
     @levels.command(name='activate',description='完成舊等級核對及停用 Amari 派角色後正式接管')
     @app_commands.default_permissions(manage_guild=True)
-    async def activate(self,inter:discord.Interaction,amari_rewards_disabled:bool,baseline_verified:bool,announcement:discord.TextChannel,ping:bool=False):
+    async def activate(self,inter:discord.Interaction,amari_rewards_disabled:bool,baseline_verified:bool,announcement:discord.TextChannel,ping:bool=False,preview_digest:str|None=None):
         if not await self.guard(inter): return
         if not REPLACEMENT_READY:
             await inter.followup.send('正式派角色／公告尚未通過驗收：基線搬遷、實際計分對照及還原演練需完成驗收。簡化角色基線可用 baseline 指令另行處理。')
@@ -706,9 +724,27 @@ class CommunityLevels(commands.Cog):
         try:
             async with self.role_lock:
                 async with self.lock:
+                    if self.cfg['mode']=='active':
+                        await inter.followup.send('已正式接管，唔會重複建立切換。');return
                     replacement_preflight(inter.guild,self.cfg['rewards'],announcement)
-                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,mode='active',announcement_channel=announcement.id,announcement_ping=ping)
-        except ValueError as exc:
+                    if not self.gateway_confirmed or not self.bot.is_ready():raise ValueError('Gateway 未準備好，暫時唔接管。')
+                    if inter.guild.member_count and len(inter.guild.members)<inter.guild.member_count:raise ValueError('成員清單未齊，暫時唔接管。')
+                    now=time.time()
+                    evidence=await asyncio.to_thread(activation_readiness,self.ledger,inter.guild_id,self.cfg,now)
+                    managed=set(self.cfg['rewards'].values())
+                    members=[dict(user=m.id,roles=sorted(r.id for r in m.roles if r.id in managed)) for m in inter.guild.members if not m.bot]
+                    members.sort(key=lambda row:row['user'])
+                    backup=DATA_DIR/'level_backups'/f'active-{uuid.uuid4().hex[:16]}.sqlite3'
+                    intent=dict(actor=inter.user.id,stamp=now,members=members,mapping=self.cfg['rewards'],prior_mode=self.cfg['mode'],backup_path=str(backup))
+                    self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,activation_intent=intent)
+                    sha=await asyncio.to_thread(create_backup,self.ledger,backup)
+                    changes=dict(announcement_channel=announcement.id,announcement_ping=ping,backup_path=str(backup),backup_sha=sha)
+                    replacement_preflight(inter.guild,self.cfg['rewards'],announcement)
+                    current=[dict(user=m.id,roles=sorted(r.id for r in m.roles if r.id in managed)) for m in inter.guild.members if not m.bot]
+                    current.sort(key=lambda row:row['user'])
+                    if current!=members:raise ValueError('成員角色喺備份期間改變，請重新核對。')
+                    self.cfg=await asyncio.to_thread(activation_commit,self.ledger,inter.guild_id,changes,members,evidence,now,preview_digest)
+        except (ValueError,sqlite3.Error) as exc:
             await inter.followup.send(str(exc));return
         self.voice_clock.clear()
         await inter.followup.send('已正式接管；保留試行 XP。原有 Amari 資料不會被修改。')

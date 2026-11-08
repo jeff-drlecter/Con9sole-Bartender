@@ -257,9 +257,10 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.cog.guard = AsyncMock(return_value=True)
         self.cog.configure = AsyncMock()
         inter = types.SimpleNamespace(followup=types.SimpleNamespace(send=AsyncMock()))
-        await self.cog.activate.callback(self.cog, inter,
-            amari_rewards_disabled=True, baseline_verified=True,
-            announcement=types.SimpleNamespace(id=999), ping=True)
+        with patch.object(levels,'REPLACEMENT_READY',False):
+            await self.cog.activate.callback(self.cog, inter,
+                amari_rewards_disabled=True, baseline_verified=True,
+                announcement=types.SimpleNamespace(id=999), ping=True)
         self.cog.configure.assert_not_awaited()
         self.assertEqual(self.cog.cfg['mode'], 'preview')
         self.assertIn('未通過驗收', inter.followup.send.call_args.args[0])
