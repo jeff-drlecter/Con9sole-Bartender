@@ -1,3 +1,25 @@
+# Follow-up ranking review — 2026-11-08
+
+Bar integration prepared locally: rank now renders a member card with level progress, collection count and private total/week/collection navigation. The quick/home rank labels are now My Member Card. Successful recorded drinks await the same durable activity award and show only its confirmed active-mode XP delta, including level-up text when applicable. The direct path does not also dispatch an award event; unavailable integration retains the existing listener fallback. Gifts award the actor, while collection progress continues to belong to the recipient. No daily-task bonuses or extra XP paths were added. Full suite after integration: 338 tests pass, including shared text cooldown, duplicate drink receipt, preview suppression and single-path delivery feedback. Not yet deployed or verified live.
+
+Menu change prepared locally: direct quick-bar member rank, plus home-menu total and current-week leaderboard buttons. Existing home rank and admin entries were already registered; the previous chat statement that their integration was unconfirmed was incomplete. These read-only buttons bypass the activity menu cooldown and preserve private rank/leaderboard replies. Existing posted menus need regeneration after deployment to show added buttons. Full suite: 334 tests pass. This entry does not assert deployment or live button acceptance.
+
+Open findings (not repaired by this menu change):
+
+| Priority | Finding | Evidence / improvement |
+| --- | --- | --- |
+| P1 | Membership lifecycle is not fenced | Independent audit reproduced an old departure clearing newly earned rejoin XP. Isolated root reproduction also cleared a departed profile, then a stale activity callback recreated 1 XP while the member was absent. Fence departure and credit by membership generation/current membership. |
+| P1 | Returning-member Lv5 policy is missing | Owner requires leaving to reset old XP and returning to start at Lv5 (355 XP). No level join handler seeds this baseline. Apply once per verified return, without adding weekly activity or replaying prior XP. |
+| P2 | Interest actions have a lifetime receipt key | Two successful joins with different interaction IDs emitted the same game/user event ID; only the first earned XP despite 120 seconds between events. Use an action-specific receipt, retaining the shared engagement cooldown. |
+| P2 | Exclusion changes race queued awards | Isolated reproduction applied a channel exclusion first, then a queued text credit still awarded 1 XP. Recheck eligibility inside the ledger lock. |
+| P2 | Retained engagement inventory includes cleared XP | Independent audit found retained XP events still counted as retained after leave reset. Preserve audit history but classify it by reset/membership generation. |
+| P2 | Exact snapshot importer can overwrite a hybrid baseline | Independent audit imported over hybrid plus historical compensation while leaving old configuration markers. Reject incompatible import state unless an explicit reviewed rebase is performed. |
+| P2 | Weekly publication cancellation leaves a permanent claim | Independent audit cancelled after claiming but before send; retry remained blocked. Introduce recoverable pending/sent publication state; Discord send and DB acknowledgement cannot be globally atomic. |
+
+The race reproductions used temporary SQLite databases and fake Discord objects. No production XP or settings were changed, and these findings do not establish that live member scores were affected. Source allowlist updates should also reconcile thread membership immediately rather than waiting for reconnect; role-repair REST work should have a bounded budget so voice accounting is not delayed indefinitely.
+
+---
+
 # Owner-approved hybrid baseline update — 2026-11-07
 
 The owner explicitly accepts public-leaderboard XP with unique current account-alias reconciliation and highest role-floor fallback, instead of waiting for an official lossless export. This supersedes the earlier requirement for an ID-bearing API export as a prerequisite for **this approximate baseline operation**. Ambiguous alias matches/duplicate public owners use role floors; public scores below a known role are held; unknown/departed rows are excluded, and members without evidence are not assigned invented zero baselines.

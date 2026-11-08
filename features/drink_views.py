@@ -341,6 +341,7 @@ class DrinkResultView(SafeView):
             ("睇收藏", "🍾", "Drink", "collection_entry"),
             ("請人飲", "🥂", "Drink", "gift_drink_entry"),
             ("吧枱", "🍸", "Menu", "open_main_menu"),
+            ("會員卡", "🎖️", "CommunityLevels", "menu_entry"),
         ):
             self.add_item(
                 FeatureButton(
@@ -352,3 +353,15 @@ class DrinkResultView(SafeView):
                     custom_id=f"bartender:result:{method}",
                 )
             )
+
+
+class MemberCardView(SafeView):
+    def __init__(self) -> None:
+        super().__init__(timeout=180)
+        for label,emoji,cog,method in (
+            ("等級總榜","🏆","CommunityLevels","leaderboard_entry"),
+            ("本週排名","📅","CommunityLevels","weekly_entry"),
+            ("我的收藏","🍾","Drink","collection_entry"),
+            ("吧枱","🍸","Menu","open_main_menu"),
+        ):
+            self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=0))

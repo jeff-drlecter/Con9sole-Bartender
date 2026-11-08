@@ -49,6 +49,16 @@ class DrinkDeliveryTests(unittest.IsolatedAsyncioTestCase):
         for patcher in reversed(self.patches):
             patcher.stop()
 
+    async def test_drink_shows_confirmed_xp_without_dispatching_twice(self):
+        levels = MagicMock(drink_credit=AsyncMock(return_value='會員 XP +1'))
+        self.cog.bot.get_cog.return_value = levels
+        i = interaction()
+        self.assertTrue(await self.cog.do_drink(i))
+        levels.drink_credit.assert_awaited_once_with(i)
+        self.cog.bot.dispatch.assert_not_called()
+        embeds = [call.kwargs['embed'] for call in i.edit_original_response.call_args_list if 'embed' in call.kwargs]
+        self.assertTrue(any(field.value == '會員 XP +1' for embed in embeds for field in embed.fields))
+
     async def test_delivered_result_commits_cooldown_history_and_event(self):
         i = interaction()
         self.assertTrue(await self.cog.do_drink(i))

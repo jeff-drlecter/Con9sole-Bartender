@@ -10,7 +10,7 @@ from features.menu_views import HomeMenuView, LegacyMenuView, QuickBarView
 
 
 class MenuTests(unittest.IsolatedAsyncioTestCase):
-    async def test_quick_bar_is_five_stable_actions(self):
+    async def test_quick_bar_includes_direct_rank_entry(self):
         view = QuickBarView(MagicMock())
         self.assertEqual(
             [(b.label, b.row) for b in view.children],
@@ -20,6 +20,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
                 ("搵人玩", 1),
                 ("小隊 call", 1),
                 ("更多", 2),
+                ("我的會員卡", 2),
             ],
         )
         self.assertTrue(view.is_persistent())
@@ -31,6 +32,8 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("bartender:home:admin_tool", ids)
         self.assertIn("bartender:home:drink_collection", ids)
         self.assertIn("bartender:home:public_explore", ids)
+        self.assertIn("bartender:home:community_leaderboard", ids)
+        self.assertIn("bartender:home:community_weekly", ids)
         self.assertIn(
             "bartender:home:admin_tool",
             {
@@ -78,4 +81,23 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         button = next(button for button in view.children if button.item.id == "team")
         await view.handle_item(i, button.item)
         team.menu_entry.assert_awaited_once_with(i)
+        menu.enforce_menu_button_cooldown.assert_not_awaited()
+
+    async def test_ranking_buttons_route_without_activity_cooldown(self):
+        from unittest.mock import AsyncMock
+        from quick_bar_fakes import interaction
+        menu = MagicMock()
+        menu.enforce_menu_button_cooldown = AsyncMock(return_value=False)
+        levels = MagicMock(menu_entry=AsyncMock(), leaderboard_entry=AsyncMock(), weekly_entry=AsyncMock())
+        for view, item_id, method in (
+            (QuickBarView(menu), "community_rank", "menu_entry"),
+            (HomeMenuView(menu), "community_leaderboard", "leaderboard_entry"),
+            (HomeMenuView(menu), "community_weekly", "weekly_entry"),
+        ):
+            i = interaction()
+            i.client.get_cog.return_value = levels
+            button = next(b for b in view.children if b.item.id == item_id)
+            await view.handle_item(i, button.item)
+            getattr(levels, method).assert_awaited_once_with(i)
+            i.client.get_cog.assert_called_with("CommunityLevels")
         menu.enforce_menu_button_cooldown.assert_not_awaited()
