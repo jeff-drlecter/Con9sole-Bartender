@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 ButtonStyleName = Literal["primary", "secondary", "success", "danger", "link"]
-MenuLayer = Literal["quick", "home", "admin"]
+MenuLayer = Literal["quick", "home", "admin", "records", "rankings", "social", "info"]
 
 
 @dataclass(frozen=True)
@@ -312,11 +312,12 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
     MenuItem("team", "搵人玩", "👥", "primary", "quick", 1, "Teams"),
     MenuItem("tempvc", "小隊 call", "🎧", "primary", "quick", 1, "TempVC"),
-    MenuItem("home_menu", "更多", "🍸", "secondary", "quick", 2, "Menu", "open_home_menu_from_button"),
+    MenuItem("home_menu", "更多玩法", "🍸", "secondary", "quick", 3, "Menu", "open_home_menu_from_button"),
+    MenuItem("daily_bar", "今日小任務", "📅", "secondary", "quick", 2, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 2, "CommunityLevels"),
 ]
 
-HOME_MENU_ITEMS: list[MenuItem] = [
+PREVIOUS_HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem("quick_bar", "返回吧枱", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
     MenuItem("drink_collection", "我的收藏", "🍾", "primary", "home", 0, "Drink", "collection_entry"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "home", 0, "DailyBar"),
@@ -332,6 +333,49 @@ HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem("admin_tool", "管理工具", "🛠️", "danger", "home", 4, "Menu", "open_admin_tool_from_button", admin_only=True),
 ]
 
+# Keep every previously posted home button routable after reorganising the menu.
+LEGACY_HOME_MENU_ITEMS += PREVIOUS_HOME_MENU_ITEMS
+
+HOME_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("records", "我的紀錄", "🎖️", "primary", "home", 0, "Menu", "open_records_menu"),
+    MenuItem("rankings", "社群排行", "🏆", "secondary", "home", 0, "Menu", "open_rankings_menu"),
+    MenuItem("social", "社群互動", "🙌", "secondary", "home", 1, "Menu", "open_social_menu"),
+    MenuItem("info", "資訊與設定", "ℹ️", "secondary", "home", 1, "Menu", "open_info_menu"),
+    MenuItem("quick_bar", "返回吧枱", "🍸", "secondary", "home", 2, "Menu", "open_main_menu"),
+    MenuItem("admin_tool", "管理工具", "🛠️", "secondary", "home", 2, "Menu", "open_admin_tool_from_button", admin_only=True),
+]
+
+SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
+    "records": [
+        MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "records", 0, "CommunityLevels"),
+        MenuItem("drink_collection", "我的收藏", "🍾", "primary", "records", 0, "Drink", "collection_entry"),
+        MenuItem("drink_stats", "酒吧紀錄", "📊", "secondary", "records", 1, "Drink", "stats_entry"),
+        MenuItem("titles", "我的稱號", "🏅", "secondary", "records", 1, "TitleRoles"),
+    ],
+    "rankings": [
+        MenuItem("community_leaderboard", "等級總榜", "🏆", "secondary", "rankings", 0, "CommunityLevels", "leaderboard_entry"),
+        MenuItem("community_weekly", "本週排名", "📅", "secondary", "rankings", 0, "CommunityLevels", "weekly_entry"),
+        MenuItem("drink_leaderboard", "酒吧排行榜", "🍸", "secondary", "rankings", 1, "Drink", "leaderboard_entry"),
+    ],
+    "social": [
+        MenuItem("cheers", "打氣", "🎉", "success", "social", 0, "Cheers"),
+        MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
+    ],
+    "info": [
+        MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
+        MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),
+        MenuItem("instagram", "IG", "📸", "secondary", "info", 1, "Menu", "open_instagram_from_button"),
+        MenuItem("threads", "Threads", "🧵", "secondary", "info", 1, "Menu", "open_threads_from_button"),
+        MenuItem("help", "使用說明", "ℹ️", "secondary", "info", 2, "Menu", "open_help_from_button"),
+    ],
+}
+for section, items in SECTION_MENU_ITEMS.items():
+    items.extend([
+        MenuItem("home_menu", "返回上一頁", "⬅️", "secondary", section, 4, "Menu", "open_home_menu_from_button"),
+        MenuItem("quick_bar", "返回吧枱", "🍸", "secondary", section, 4, "Menu", "open_main_menu"),
+    ])
+
+
 
 ADMIN_MENU_ITEMS: list[MenuItem] = [
     MenuItem("title_roles_admin", "稱號管理", "🏅", "secondary", "admin", 2, "TitleRoles", "admin_entry", admin_only=True),
@@ -339,7 +383,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     MenuItem("community_levels_admin", "等級管理", "🎖️", "secondary", "admin", 2, "CommunityLevels", "admin_entry", admin_only=True),
     MenuItem(
         id="home_menu",
-        label="Menu",
+        label="返回上一頁",
         emoji="⬅️",
         style="secondary",
         layer="admin",
@@ -439,6 +483,7 @@ MENU_ITEMS_BY_LAYER: dict[MenuLayer, list[MenuItem]] = {
     "quick": QUICK_MENU_ITEMS,
     "home": HOME_MENU_ITEMS,
     "admin": ADMIN_MENU_ITEMS,
+    **SECTION_MENU_ITEMS,
 }
 
 

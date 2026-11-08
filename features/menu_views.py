@@ -97,10 +97,11 @@ NO_COOLDOWN_ITEM_IDS = {
     "drink_collection",
     "drink_leaderboard",
     "daily_bar",
+    "records", "rankings", "social", "info", "customize", "titles",
 }
 
 LABEL_OVERRIDES: dict[str, str] = {
-    "invite": "邀請",
+    "invite": "邀請朋友",
 }
 
 
@@ -365,7 +366,8 @@ class RegistryMenuView(BaseMenuView):
         if target is None:
             await send_or_followup(
                 interaction,
-                content=f"❌ `{item.cog}` 功能未載入。",
+                content="呢個功能暫時未準備好，請稍後再試。",
+                view=QuickBarView(self.cog),
                 ephemeral=True,
             )
             return
@@ -374,7 +376,8 @@ class RegistryMenuView(BaseMenuView):
         if method is None:
             await send_or_followup(
                 interaction,
-                content=f"❌ `{item.cog}` 未提供 `{item.method}` 入口。",
+                content="呢個功能暫時未準備好，請稍後再試。",
+                view=QuickBarView(self.cog),
                 ephemeral=True,
             )
             return
@@ -413,29 +416,17 @@ class HomeMenuView(RegistryMenuView):
             for item in list(self.children):
                 if isinstance(item, RegistryButton) and item.item.admin_only:
                     self.remove_item(item)
-        self.add_item(PublicExploreButton())
 
-        if include_external_links and RULES_URL:
-            self.add_item(
-                discord.ui.Button(
-                    label="Rules",
-                    emoji="📜",
-                    style=discord.ButtonStyle.link,
-                    url=RULES_URL,
-                    row=4,
-                )
-            )
 
-        if include_external_links and HELP_URL:
-            self.add_item(
-                discord.ui.Button(
-                    label="Help Channel",
-                    emoji="❓",
-                    style=discord.ButtonStyle.link,
-                    url=HELP_URL,
-                    row=4,
-                )
-            )
+class SectionMenuView(RegistryMenuView):
+    def __init__(self, cog: object, section: str) -> None:
+        super().__init__(cog, section)
+        if section == "social":
+            self.add_item(PublicExploreButton())
+        if section == "info":
+            for label, emoji, url in (("伺服器規則", "📜", RULES_URL), ("支援頻道", "❓", HELP_URL)):
+                if url:
+                    self.add_item(discord.ui.Button(label=label, emoji=emoji, url=url, row=3))
 
 
 class LegacyMenuView(RegistryMenuView):
@@ -445,9 +436,17 @@ class LegacyMenuView(RegistryMenuView):
         self.clear_items()
         current_ids = {item.id for item in get_menu_items(layer)}
         old_items = LEGACY_QUICK_MENU_ITEMS if layer == "quick" else LEGACY_HOME_MENU_ITEMS
+        if layer == "home":
+            public = PublicExploreButton()
+            public.row = 4
+            self.add_item(public)
+        seen = set()
         for item in old_items:
-            if item.id not in current_ids:
-                self.add_item(RegistryButton(item))
+            if item.id not in current_ids and item.id not in seen:
+                button = RegistryButton(item)
+                button.row = len(seen) // 5
+                self.add_item(button)
+                seen.add(item.id)
 
 
 class AdminToolView(RegistryMenuView):
