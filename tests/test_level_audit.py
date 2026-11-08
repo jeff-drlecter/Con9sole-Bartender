@@ -257,6 +257,28 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent['content'],self.member.mention)
         self.assertEqual(sent['allowed_mentions'].to_dict(),{'users':[10],'parse':[]})
 
+    async def test_ordinary_level_up_is_boxed_but_never_tags(self):
+        channel=self.announcement_channel()
+        self.cog.cfg.update(level_templates={},announcement_template='恭喜 {user.ping} Lv.{level}',announcement_ping=True)
+        self.total(threshold(16))
+        self.cog.ledger.mark_notice(1,10,15)
+        await self.cog.apply_rewards(self.member,(threshold(15),threshold(16)))
+        sent=channel.send.call_args.kwargs
+        self.assertIsNone(sent['content'])
+        self.assertNotIn('<@10>',sent['embed'].description)
+        self.assertEqual(sent['allowed_mentions'].to_dict(),{'parse':[]})
+        self.assertIn('Lv.16',sent['embed'].description)
+
+    async def test_major_milestone_tags_once_even_with_name_only_template(self):
+        channel=self.announcement_channel()
+        self.cog.cfg.update(level_templates={'15':'{user} 成為活躍會員'},announcement_ping=True)
+        self.total(threshold(15))
+        await self.cog.apply_rewards(self.member,(threshold(14),threshold(15)))
+        await self.cog.apply_rewards(self.member,(threshold(14),threshold(15)))
+        self.assertEqual(channel.send.await_count,1)
+        self.assertEqual(channel.send.call_args.kwargs['content'],self.member.mention)
+        self.assertEqual(channel.send.call_args.kwargs['allowed_mentions'].to_dict(),{'users':[10],'parse':[]})
+
     async def test_failed_notice_is_retried_on_later_reconciliation(self):
         channel = self.announcement_channel()
         channel.send.side_effect = [
