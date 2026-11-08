@@ -730,9 +730,10 @@ class SquadCards(commands.Cog):
                     latest=await run_stats(squad_interest.latest_card_post,session['id'])
                     if latest and latest['state']=='sent' and latest['message_id']:
                         session['message']=latest['message_id']
-                if not members:
+                if not members or (session and session.get('ended') is not None):
                     if session:
                         session.setdefault("ended", now)
+                        self.save()  # Persist terminal state before any awaited finalization.
                         await run_stats(squad_interest.end_session,session['id'])
                         if session.get("message"):
                             await self.render(channel, session, ended=True)
