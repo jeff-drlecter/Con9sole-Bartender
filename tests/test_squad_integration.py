@@ -203,3 +203,25 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await pending
         self.assertEqual(store.preferences(self.scope),{})
         view.stop()
+
+
+    async def test_failed_footprint_finalization_does_not_revive_ended_session(self):
+        cog=self.cog();cog.state['settings']={'routes':{'40':30}}
+        member=types.SimpleNamespace(id=10,display_name='A',bot=False)
+        channel=types.SimpleNamespace(id=20,category_id=40,members=[])
+        guild=types.SimpleNamespace(id=1,voice_channels=[channel],afk_channel=None)
+        cog.bot.get_guild.return_value=guild
+        old=dict(id='old',destination=30,message=500,started=100,participants={'10':'A'})
+        cog.state['sessions']['20']=old
+        cog.render=AsyncMock(side_effect=RuntimeError('temporary footprint failure'))
+        with self.assertLogs('cogs.squad_cards',level='ERROR'):
+            await cog.reconcile()
+        self.assertIn('ended',old)
+        channel.members=[member]
+        cog.render=AsyncMock()
+        await cog.reconcile()
+        self.assertTrue(cog.render.call_args.kwargs['ended'])
+        self.assertNotIn('20',cog.state['sessions'])
+        await cog.reconcile()
+        self.assertNotEqual(cog.state['sessions']['20']['id'],'old')
+        self.assertNotIn('message',cog.state['sessions']['20'])
