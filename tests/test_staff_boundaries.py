@@ -90,3 +90,25 @@ class StaffBoundaries(unittest.IsolatedAsyncioTestCase):
             m=member(**{p:True})
             for key in ('admin_reload','admin_game_tools','admin_update_publisher','admin_roles','admin_vc_teardown'):
                 self.assertTrue(can_use_staff_tool(m,key))
+
+
+class HealthNavigation(unittest.IsolatedAsyncioTestCase):
+    async def test_helper_health_has_return_but_no_notification_mutation(self):
+        from cogs.bot_health import HealthView
+        helper = member(helper=True)
+        view = HealthView(helper)
+        self.assertEqual({b.label for b in view.children}, {'返回管理工具'})
+        inter = types.SimpleNamespace(user=helper, guild_id=1,
+            guild=types.SimpleNamespace(get_member=lambda uid: helper),
+            response=types.SimpleNamespace(send_message=AsyncMock()))
+        with patch('config.GUILD_ID', 1):
+            self.assertTrue(await view.interaction_check(inter))
+            helper.roles = []
+            self.assertFalse(await view.interaction_check(inter))
+        view.stop()
+
+    async def test_admin_health_retains_notification_resolution(self):
+        from cogs.bot_health import HealthView
+        view = HealthView(member(administrator=True))
+        self.assertIn('處理待查通知', {b.label for b in view.children})
+        view.stop()
