@@ -36,6 +36,17 @@ class TeamFlowTests(unittest.IsolatedAsyncioTestCase):
             message_id=500,
         )
 
+    async def test_task_hook_only_follows_successfully_saved_recruitment(self):
+        with patch('features.member_activity.complete_task',new=AsyncMock()) as complete:
+            self.assertTrue(await self.cog.create_team(interaction(),1,'GTA'))
+            complete.assert_awaited_once()
+        self.cog.states.clear()
+        with patch('features.member_activity.complete_task',new=AsyncMock()) as complete:
+            with patch.object(team_storage,'save_team',side_effect=OSError('disk full')):
+                with self.assertLogs('con9sole-bartender.teams',level='ERROR'):
+                    self.assertFalse(await self.cog.create_team(interaction(),1,'GTA'))
+            complete.assert_not_awaited()
+
     async def test_game_forum_thread_infers_game(self):
         parent = MagicMock(spec=discord.ForumChannel)
         parent.name = "gta-vi-專區"

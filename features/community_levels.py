@@ -66,6 +66,7 @@ class Ledger:
               PRIMARY KEY(guild,bot,namehash));
             CREATE TABLE IF NOT EXISTS xp_events(guild INTEGER,event TEXT,user INTEGER,source TEXT,amount INTEGER,stamp REAL,
               PRIMARY KEY(guild,event));
+            CREATE INDEX IF NOT EXISTS xp_task_progress ON xp_events(guild,user,source,stamp);
             CREATE TABLE IF NOT EXISTS role_jobs(guild INTEGER,user INTEGER,total INTEGER,old_total INTEGER,
               PRIMARY KEY(guild,user));
             CREATE TABLE IF NOT EXISTS departed_users(id INTEGER PRIMARY KEY,guild INTEGER,user INTEGER,stamp REAL,snapshot TEXT);
@@ -170,6 +171,17 @@ class Ledger:
             db.execute('INSERT INTO periods VALUES(?,?,?,?) ON CONFLICT(guild,user,week) DO UPDATE SET points=points+excluded.points',
                        (guild,user,week,amount))
         return old, old+amount
+
+    def daily_task_count(self, guild, user, source, now, *, joined=0):
+        """Count committed source events, not multiplied XP or imported history."""
+        if source not in ('text', 'voice'):
+            return 0
+        current = datetime.fromtimestamp(now, TZ)
+        start = current.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        with connect_sqlite(self.path) as db:
+            return db.execute(
+                'SELECT COUNT(*) FROM xp_events WHERE guild=? AND user=? AND source=? AND stamp>=? AND stamp<=?',
+                (guild, user, source, max(start, joined), now)).fetchone()[0]
 
     def daily_bonus(self,guild,user,day,now):
         """One +5 task reward per Hong Kong day; no engagement cooldown changes."""

@@ -23,6 +23,7 @@ TASK_ACTIONS: dict[str, tuple[str, str]] = {
     "cheers": ("Cheers", "menu_entry"),
     "cheers_target": ("Cheers", "cheer_for_member_entry"),
     "drink_collection": ("Drink", "collection_entry"),
+    "team": ("Teams", "menu_entry"),
 }
 
 
@@ -38,6 +39,13 @@ class DailyBarActionButton(discord.ui.Button):
         self.task_key = task_key
 
     async def callback(self, interaction: discord.Interaction) -> None:
+        if get_daily_bar_task(interaction.guild_id).key != self.task_key:
+            await interaction.response.send_message("任務已刷新，請重新開啟今日小任務。", ephemeral=True)
+            return
+        if self.task_key in ('text', 'voice'):
+            task = get_daily_bar_task(interaction.guild_id)
+            await interaction.response.send_message(task.method + "\n完成後可返回今日小任務查看進度。", ephemeral=True)
+            return
         if self.task_key not in TASK_ACTIONS:
             await interaction.response.send_message("❌ 此每日任務暫時未設定動作。", ephemeral=True)
             return
@@ -57,10 +65,14 @@ class DailyBarActionButton(discord.ui.Button):
 
 
 class DailyBarView(discord.ui.View):
-    def __init__(self, *, guild_id: int | None, user_id: int) -> None:
+    def __init__(self, *, guild_id: int | None, user_id: int, completed: bool | None = None, now=None) -> None:
         super().__init__(timeout=180)
-        task = get_daily_bar_task(guild_id)
-        completed = get_daily_bar_completion(guild_id, user_id) is not None
+        self.owner_id = user_id
+        from features.daily_bar import _current_date
+        self.day = _current_date(now=now)
+        task = get_daily_bar_task(guild_id, now=now)
+        if completed is None:
+            completed = get_daily_bar_completion(guild_id, user_id) is not None
         self.add_item(DailyBarActionButton(task_key=task.key, emoji=task.emoji, completed=completed))
         from features.drink_views import FeatureButton
         for index,(label,emoji,cog,method) in enumerate((
@@ -70,6 +82,14 @@ class DailyBarView(discord.ui.View):
             ('返回吧枱','🍸','Menu','open_main_menu'),
         )):
             self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=1+index//2))
+
+
+    async def interaction_check(self, interaction):
+        from features.daily_bar import _current_date
+        if interaction.user.id != self.owner_id or self.day != _current_date():
+            await interaction.response.send_message("面板已過期或唔屬於你，請重新開啟今日小任務。", ephemeral=True)
+            return False
+        return True
 
 
 class DailyBar(commands.Cog):
@@ -89,10 +109,21 @@ class DailyBar(commands.Cog):
         await self._record_usage(interaction)
         from features.member_activity import reward_task
         reward = await reward_task(self.bot, interaction)
-        embed = build_daily_bar_embed(interaction.guild_id, user=interaction.user)
+        import inspect
+        status_method = getattr(self.bot.get_cog('CommunityLevels'), 'daily_task_status', None)
+        status = {}
+        if inspect.iscoroutinefunction(status_method):
+            try:
+                status = await status_method(interaction)
+            except Exception:
+                log.exception('Daily task status unavailable: user=%s', interaction.user.id)
+                status = dict(reward_state='暫時未能核對入帳狀態，請稍後重新整理；唔使重複做任務。')
+        embed = build_daily_bar_embed(interaction.guild_id, user=interaction.user, **status)
         if reward:
             embed.add_field(name='會員獎勵', value=reward, inline=False)
-        view = DailyBarView(guild_id=interaction.guild_id, user_id=interaction.user.id)
+        view = DailyBarView(guild_id=interaction.guild_id, user_id=interaction.user.id,
+            completed=(status["progress"] >= get_daily_bar_task(interaction.guild_id, now=status.get("now")).target) if "progress" in status else None,
+            now=status.get("now"))
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:
