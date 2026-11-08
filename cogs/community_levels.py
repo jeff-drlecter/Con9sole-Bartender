@@ -352,9 +352,13 @@ class CommunityLevels(commands.Cog):
                             log.warning('Level announcement needs View, Send and Embed Links permissions')
                             return False
                     embed=build_level_notice_embed(self.cfg,member,new,max(crossed))
-                    # Embed mentions alone do not notify. Preserve the existing
-                    # opt-in and template mention requirement, scoped to this member.
-                    ping=bool(self.cfg['announcement_ping'] and re.search(r'<@!?'+str(member.id)+r'>',embed.description))
+                    # Ordinary level-ups stay visible but never tag. Major role
+                    # milestones may notify only this member, unless pings are off.
+                    major=any(notified < level <= new for level in REWARD_NAMES)
+                    if not major:
+                        name=discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))
+                        embed.description=re.sub(r'<@!?'+str(member.id)+r'>',lambda _:name,embed.description)
+                    ping=bool(self.cfg['announcement_ping'] and major)
                     await channel.send(content=member.mention if ping else None,embed=embed,
                         allowed_mentions=discord.AllowedMentions(users=[member] if ping else False,roles=False,everyone=False,replied_user=False))
                     await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)
