@@ -6,7 +6,7 @@ from quick_bar_fakes import member
 from data.menu_registry import LEGACY_HOME_MENU_ITEMS, LEGACY_QUICK_MENU_ITEMS
 from features.drink_views import DrinkCollectionView, DrinkResultView
 from features.menu_embeds import build_quick_bar_embed
-from features.menu_views import HomeMenuView, LegacyMenuView, QuickBarView
+from features.menu_views import HomeMenuView, LegacyMenuView, QuickBarView, SectionMenuView
 
 
 class MenuTests(unittest.IsolatedAsyncioTestCase):
@@ -19,7 +19,8 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
                 ("請人飲", 0),
                 ("搵人玩", 1),
                 ("小隊 call", 1),
-                ("更多", 2),
+                ("更多玩法", 3),
+                ("今日小任務", 2),
                 ("我的會員卡", 2),
             ],
         )
@@ -30,10 +31,10 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         view = HomeMenuView(MagicMock())
         ids = {b.custom_id for b in view.children}
         self.assertNotIn("bartender:home:admin_tool", ids)
-        self.assertIn("bartender:home:drink_collection", ids)
-        self.assertIn("bartender:home:public_explore", ids)
-        self.assertIn("bartender:home:community_leaderboard", ids)
-        self.assertIn("bartender:home:community_weekly", ids)
+        self.assertIn("bartender:home:records", ids)
+        self.assertIn("bartender:home:social", ids)
+        self.assertIn("bartender:home:rankings", ids)
+        self.assertIn("bartender:home:info", ids)
         self.assertIn(
             "bartender:home:admin_tool",
             {
@@ -91,8 +92,8 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         levels = MagicMock(menu_entry=AsyncMock(), leaderboard_entry=AsyncMock(), weekly_entry=AsyncMock())
         for view, item_id, method in (
             (QuickBarView(menu), "community_rank", "menu_entry"),
-            (HomeMenuView(menu), "community_leaderboard", "leaderboard_entry"),
-            (HomeMenuView(menu), "community_weekly", "weekly_entry"),
+            (SectionMenuView(menu, "rankings"), "community_leaderboard", "leaderboard_entry"),
+            (SectionMenuView(menu, "rankings"), "community_weekly", "weekly_entry"),
         ):
             i = interaction()
             i.client.get_cog.return_value = levels
