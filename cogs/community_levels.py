@@ -199,7 +199,26 @@ class CommunityLevels(commands.Cog):
         return result
 
     async def drink_credit(self,interaction):
-        result=await self.credit(interaction.user,interaction.channel,'activity',f'i:drink:{interaction.id}')
+        return await self.action_credit(interaction,f'drink:{interaction.id}')
+
+    async def task_credit(self,interaction):
+        from features.daily_bar import get_daily_bar_completion
+        from datetime import datetime, timezone
+        now=time.time()
+        member=interaction.user
+        if not member or not interaction.guild_id or member.guild.id!=config.GUILD_ID:return None
+        async with self.lock:
+            if self.cfg['mode']!='active' or not eligible(member,interaction.channel,self.cfg):return None
+            completed=await asyncio.to_thread(get_daily_bar_completion,interaction.guild_id,member.id,now=datetime.fromtimestamp(now,timezone.utc))
+            if completed is None:return None
+            result=await asyncio.to_thread(self.ledger.daily_bonus,interaction.guild_id,member.id,calendar(now)[0],now)
+        if result:
+            await self.apply_rewards(member,result)
+            return '📅 每日任務獎勵 +5 XP！'
+        return None
+
+    async def action_credit(self,interaction,event):
+        result=await self.credit(interaction.user,interaction.channel,'activity',f'i:{event}')
         if not result or self.cfg['mode']!='active':
             return None
         before,after=result

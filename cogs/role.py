@@ -12,6 +12,45 @@ from core.permissions import is_admin_or_helper, is_helper
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 MOD_ROLE_ID = config.MOD_ROLE_ID
 
+PRIVILEGED_ROLE_PERMISSIONS = (
+    'administrator', 'manage_guild', 'manage_roles', 'kick_members', 'ban_members',
+    'moderate_members', 'manage_channels', 'manage_webhooks', 'manage_messages',
+    'manage_threads', 'mention_everyone', 'manage_events', 'manage_expressions',
+    'manage_emojis_and_stickers', 'manage_nicknames', 'mute_members',
+    'deafen_members', 'move_members',
+)
+
+
+def actor_can_edit_member(actor: discord.Member, guild: discord.Guild, member: discord.Member) -> bool:
+    if member == guild.owner:
+        return False
+    return actor == guild.owner or actor.id == member.id or actor.top_role > member.top_role
+
+
+def role_change_denial(bot, guild, actor, role, target_member) -> str | None:
+    """Shared authorization for slash commands, menu actions and bulk operations."""
+    if not isinstance(actor, discord.Member) or not is_admin_or_helper(actor):
+        return '❌ 需要 Admin / Helper 權限先可以修改角色。'
+    levels = bot.get_cog('CommunityLevels')
+    managed = {int(rid) for rid in getattr(levels, 'cfg', {}).get('rewards', {}).values()}
+    if role.id in managed:
+        return '❌ 等級角色由會員等級系統管理；請使用等級 XP 調整及核對功能。'
+    if role.managed or role.is_default():
+        return '❌ 不可手動修改系統管理角色或 everyone。'
+    administrator = actor.guild_permissions.administrator
+    helper = is_helper(actor)
+    self_mod = helper and role.id == MOD_ROLE_ID and target_member is not None and target_member.id == actor.id
+    if helper and not (administrator or actor.guild_permissions.manage_guild) and role.id == MOD_ROLE_ID and not self_mod:
+        return '⛔ Helper 只可為自己處理 @Mod 角色。'
+    if not administrator and any(getattr(role.permissions, permission, False) for permission in PRIVILEGED_ROLE_PERMISSIONS):
+        return '❌ 只有 Administrator 可以處理帶管理或審核權限的角色。'
+    # Preserve only the explicitly delegated, non-privileged self-Mod exception.
+    if actor != guild.owner and not self_mod and role >= actor.top_role:
+        return '❌ 不可修改與自己最高角色同級或更高的角色。'
+    if target_member is not None and not actor_can_edit_member(actor, guild, target_member):
+        return '❌ 不可修改伺服器擁有者或同級／更高成員的角色。'
+    return None
+
 
 def _bot_member(guild: discord.Guild, bot: commands.Bot) -> Optional[discord.Member]:
     me = guild.me
@@ -28,7 +67,7 @@ def bot_can_manage_role(bot: commands.Bot, guild: discord.Guild, role: discord.R
     me = _bot_member(guild, bot)
     if me is None or not me.guild_permissions.manage_roles:
         return False
-    if role.is_default() or role >= me.top_role:
+    if role.is_default() or role.managed or role >= me.top_role:
         return False
     return True
 
@@ -181,15 +220,10 @@ class RoleManager(commands.Cog):
             await send_or_followup(inter, content="❌ 找不到指定角色，請重新選擇。", ephemeral=True)
             return
 
-        if isinstance(inter.user, discord.Member):
-            is_admin = inter.user.guild_permissions.administrator or inter.user.guild_permissions.manage_guild
-            if not is_admin and is_helper(inter.user) and role.id == MOD_ROLE_ID:
-                if target_member is None or target_member != inter.user:
-                    await send_or_followup(inter, content=
-                        "⛔ Helper 只可為自己處理 @Mod 角色。",
-                        ephemeral=True,
-                    )
-                    return
+        denial = role_change_denial(self.bot, guild, inter.user, role, target_member)
+        if denial:
+            await send_or_followup(inter, content=denial, ephemeral=True)
+            return
 
         if not bot_can_manage_role(self.bot, guild, role):
             await send_or_followup(inter, content=
@@ -252,7 +286,7 @@ class RoleManager(commands.Cog):
         failed = 0
 
         for index, member in enumerate(members, start=1):
-            if not bot_can_edit_member(self.bot, guild, member):
+            if not actor_can_edit_member(inter.user, guild, member) or not bot_can_edit_member(self.bot, guild, member):
                 skipped_cant += 1
                 continue
 

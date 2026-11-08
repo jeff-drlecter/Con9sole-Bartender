@@ -79,7 +79,11 @@ class DailyBar(commands.Cog):
     async def _send_daily_bar(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True, ephemeral=True)
         await self._record_usage(interaction)
+        from features.member_activity import reward_task
+        reward = await reward_task(self.bot, interaction)
         embed = build_daily_bar_embed(interaction.guild_id, user=interaction.user)
+        if reward:
+            embed.add_field(name='會員獎勵', value=reward, inline=False)
         view = DailyBarView(guild_id=interaction.guild_id, user_id=interaction.user.id)
         await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 

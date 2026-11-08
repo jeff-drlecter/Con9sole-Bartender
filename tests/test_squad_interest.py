@@ -95,6 +95,20 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('取消',i.followup.send.call_args.args[0])
         view.stop()
 
+    async def test_separate_successful_subscriptions_emit_separate_receipts(self):
+        view = FootprintView(None, self.topic)
+        view.refresh = AsyncMock()
+        events = []
+        for event_id in (101, 102, 103):
+            i = interaction(); i.id = event_id
+            await view.toggle(i)
+            events.extend(call.args[3] for call in i.client.dispatch.call_args_list)
+        self.assertEqual(len(events), 2)
+        self.assertNotEqual(events[0], events[1])
+        self.assertTrue(events[0].endswith(':101'))
+        self.assertTrue(events[1].endswith(':103'))
+        view.stop()
+
     def roster_interaction(self, ids=(10, 11)):
         people = {uid: types.SimpleNamespace(id=uid, bot=False, display_name=f'Player {uid}') for uid in ids}
         guild = types.SimpleNamespace(id=1, get_member=people.get)

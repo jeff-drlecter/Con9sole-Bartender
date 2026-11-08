@@ -367,7 +367,7 @@ class FootprintView(SafeView):
                 log.exception("Card roster refresh failed: message=%s", interaction.message.id)
         if joined:
             interaction.client.dispatch("community_activity", interaction.user, interaction.channel,
-                                        f"interest:{self.topic['id']}:{interaction.user.id}")
+                             f"interest:{self.topic['id']}:{interaction.user.id}:{interaction.id}")
         label = discord.utils.escape_mentions(discord.utils.escape_markdown(self.topic['label']))
         if not joined:
             text = f"已取消 **{label}** 開局通知。"

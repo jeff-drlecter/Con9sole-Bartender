@@ -788,7 +788,7 @@ class TempVC(commands.Cog):
             await interaction.response.send_message(
                 "❌ 呢個功能只限 **Lv 15 或以上會員** 使用。\n\n"
                 "你目前未擁有 Lv 15+ 會員身份。\n"
-                "可以繼續參與聊天提升 Amaribot 等級，升到 Lv 15 後再使用呢個功能。",
+                "可以參與聊天、語音及 Bot 活動提升會員等級；用「我的會員卡」查看進度，升到 Lv 15 後再使用呢個功能。",
                 ephemeral=True,
             )
             return
