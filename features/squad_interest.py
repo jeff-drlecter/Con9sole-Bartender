@@ -50,6 +50,12 @@ def initialize():
         conn.execute('''CREATE TABLE IF NOT EXISTS squad_interest_cards (
             message_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL,
             scope TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '')''')
+        conn.execute('CREATE TABLE IF NOT EXISTS squad_interest_cancellations(scope TEXT,user_id INTEGER,stamp REAL,PRIMARY KEY(scope,user_id))')
+        conn.execute('CREATE TABLE IF NOT EXISTS squad_ended_sessions(session_id TEXT PRIMARY KEY,stamp REAL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS squad_closed_notices(session_id TEXT,scope TEXT,batch INTEGER,message_id INTEGER,PRIMARY KEY(session_id,scope,batch,message_id))')
+        conn.execute('CREATE TABLE IF NOT EXISTS squad_close_retries(session_id TEXT,scope TEXT,batch INTEGER,retry_at REAL,PRIMARY KEY(session_id,scope,batch))')
+        conn.execute('CREATE TABLE IF NOT EXISTS squad_card_posts(attempt TEXT PRIMARY KEY,session_id TEXT,destination INTEGER,voice INTEGER,stamp REAL,state TEXT,message_id INTEGER)')
+        conn.execute('CREATE INDEX IF NOT EXISTS squad_card_post_session ON squad_card_posts(session_id,stamp)')
         # Previous subscriptions were recurring and mode-scoped. Preserve that
         # consent while merging modes into games; retain aliases for old buttons.
         for old, guild_id, label in list(conn.execute('SELECT scope,guild_id,label FROM squad_interest_topics')):
@@ -105,6 +111,7 @@ def toggle(scope, guild_id, user_id, kind='once', excluded_session=''):
                                 (scope, user_id)).fetchone()
         if previous and previous[0] == kind:
             conn.execute('DELETE FROM squad_interest_members WHERE scope=? AND user_id=?', (scope, user_id))
+            _cancel_receipt(conn, scope, user_id)
             return False
         conn.execute('''INSERT INTO squad_interest_members(scope,user_id,kind,excluded_session)
             VALUES (?,?,?,?) ON CONFLICT(scope,user_id) DO UPDATE
@@ -161,6 +168,8 @@ def reserve(session_id, scope, eligible, *, now=None):
     with connect_sqlite(STATS_DB) as conn:
         conn.execute('BEGIN IMMEDIATE')
         scope = _scope(conn, scope)
+        if conn.execute('SELECT 1 FROM squad_ended_sessions WHERE session_id=?', (session_id,)).fetchone():
+            return []
         if not conn.execute('INSERT OR IGNORE INTO squad_interest_attempts VALUES (?,?,?)',
                             (session_id, scope, current)).rowcount:
             return []
@@ -186,7 +195,7 @@ def pending_deliveries(session_id,scope,now=None):
     with connect_sqlite(STATS_DB) as conn:
         scope=_scope(conn,scope)
         return [(batch,json.loads(users)) for batch,users in conn.execute(
-            "SELECT batch,users FROM squad_interest_delivery WHERE session_id=? AND scope=? AND state='pending' AND retry_at<=? ORDER BY batch",
+            "SELECT batch,users FROM squad_interest_delivery WHERE session_id=? AND scope=? AND state='pending' AND retry_at<=? AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=squad_interest_delivery.session_id) ORDER BY batch",
             (session_id,scope,time.time() if now is None else now))]
 
 
@@ -203,7 +212,7 @@ def claim_delivery(session_id,scope,batch):
     with connect_sqlite(STATS_DB) as conn:
         scope=_scope(conn,scope)
         revision=uuid.uuid4().hex
-        changed=conn.execute("UPDATE squad_interest_delivery SET state='uncertain',revision=? WHERE session_id=? AND scope=? AND batch=? AND state='pending'",
+        changed=conn.execute("UPDATE squad_interest_delivery SET state='uncertain',revision=? WHERE session_id=? AND scope=? AND batch=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=squad_interest_delivery.session_id)",
                               (revision,session_id,scope,batch)).rowcount
         return revision if changed else None
 
@@ -213,4 +222,109 @@ def finish_delivery(session_id,scope,batch,*,message_id=None,retry=False,now=Non
     with connect_sqlite(STATS_DB) as conn:
         scope=_scope(conn,scope)
         conn.execute("UPDATE squad_interest_delivery SET state=?,message_id=?,retry_at=? WHERE session_id=? AND scope=? AND batch=? AND state='uncertain' AND (? IS NULL OR revision=?)",
-                     ('pending' if retry else 'sent',message_id,(time.time() if now is None else now)+60 if retry else 0,session_id,scope,batch,expected_revision,expected_revision))
+                     (('cancelled' if retry and conn.execute('SELECT 1 FROM squad_ended_sessions WHERE session_id=?',(session_id,)).fetchone() else 'pending') if retry else 'sent',message_id,(time.time() if now is None else now)+60 if retry else 0,session_id,scope,batch,expected_revision,expected_revision))
+
+
+def _cancel_receipt(conn, scope, user_id):
+    conn.execute('INSERT INTO squad_interest_cancellations VALUES(?,?,?) ON CONFLICT(scope,user_id) DO UPDATE SET stamp=excluded.stamp',
+                 (scope,user_id,time.time()))
+
+
+def cancel(scope, guild_id, user_id):
+    """Idempotent withdrawal includes already reserved, not-yet-sent one shots."""
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        scope = _scope(conn, scope)
+        if not conn.execute('SELECT 1 FROM squad_interest_topics WHERE scope=? AND guild_id=?',(scope,guild_id)).fetchone():
+            raise ValueError('Unknown interest topic')
+        conn.execute('DELETE FROM squad_interest_members WHERE scope=? AND user_id=?',(scope,user_id))
+        _cancel_receipt(conn,scope,user_id)
+
+
+def delivery_users(session_id, scope, batch, revision):
+    """Fence the claimed revision and recheck withdrawals immediately before send."""
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        scope = _scope(conn,scope)
+        row = conn.execute("SELECT d.users,a.attempted_at FROM squad_interest_delivery d JOIN squad_interest_attempts a ON a.session_id=d.session_id AND a.scope=d.scope WHERE d.session_id=? AND d.scope=? AND d.batch=? AND d.revision=? AND d.state='uncertain' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)",
+                           (session_id,scope,batch,revision)).fetchone()
+        if not row:return []
+        return [uid for uid in json.loads(row[0]) if not conn.execute(
+            'SELECT 1 FROM squad_interest_cancellations WHERE scope=? AND user_id=? AND stamp>=?',(scope,uid,row[1])).fetchone()]
+
+
+def own_preferences(guild_id, user_id):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        rows = {scope:dict(id=scope,label=label,kind=kind) for scope,label,kind in conn.execute(
+            'SELECT t.scope,t.label,m.kind FROM squad_interest_topics t JOIN squad_interest_members m ON m.scope=t.scope WHERE t.guild_id=? AND m.user_id=?',(guild_id,user_id))}
+        # reserve consumes a once preference before POST; keep queued receipts visible.
+        for scope,label,users,attempted in conn.execute("SELECT d.scope,t.label,d.users,a.attempted_at FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_interest_attempts a ON a.scope=d.scope AND a.session_id=d.session_id WHERE t.guild_id=? AND d.state='pending' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)",(guild_id,)):
+            if user_id in json.loads(users) and not conn.execute('SELECT 1 FROM squad_interest_cancellations WHERE scope=? AND user_id=? AND stamp>=?',(scope,user_id,attempted)).fetchone():
+                rows.setdefault(scope,dict(id=scope,label=label,kind='pending'))
+        return sorted(rows.values(),key=lambda x:x['label'].casefold())
+
+
+def end_session(session_id):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        conn.execute('INSERT OR IGNORE INTO squad_ended_sessions VALUES(?,?)',(session_id,time.time()))
+        # Known unsent work is terminal; uncertain evidence remains for manual review.
+        conn.execute("UPDATE squad_interest_delivery SET state='cancelled',revision=? WHERE session_id=? AND state='pending'",(uuid.uuid4().hex,session_id))
+
+
+def closing_notices(limit=20):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        return [dict(session=s,scope=t,batch=b,message_id=m,context=json.loads(c),guild_id=g,label=l)
+            for s,t,b,m,c,g,l in conn.execute("SELECT d.session_id,d.scope,d.batch,d.message_id,d.context,t.guild_id,t.label FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_ended_sessions e ON e.session_id=d.session_id WHERE d.state='sent' AND d.message_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM squad_closed_notices n WHERE n.session_id=d.session_id AND n.scope=d.scope AND n.batch=d.batch AND n.message_id=d.message_id) AND NOT EXISTS(SELECT 1 FROM squad_close_retries r WHERE r.session_id=d.session_id AND r.scope=d.scope AND r.batch=d.batch AND r.retry_at>?) ORDER BY e.stamp LIMIT ?",(time.time(),limit))]
+
+
+def notice_closed(row):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        conn.execute('INSERT OR IGNORE INTO squad_closed_notices VALUES(?,?,?,?)',(row['session'],row['scope'],row['batch'],row['message_id']))
+
+
+def begin_card_post(session_id, destination, voice):
+    initialize()
+    attempt=uuid.uuid4().hex
+    with connect_sqlite(STATS_DB) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        if conn.execute("SELECT 1 FROM squad_card_posts WHERE session_id=? AND state='uncertain'",(session_id,)).fetchone():
+            raise RuntimeError('Squad card send uncertain; inspect existing message before recovery')
+        conn.execute('INSERT INTO squad_card_posts VALUES(?,?,?,?,?,?,NULL)',(attempt,session_id,destination,voice,time.time(),'uncertain'))
+    return attempt
+
+
+def finish_card_post(attempt, *, message_id=None, rejected=False):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        conn.execute("UPDATE squad_card_posts SET state=?,message_id=? WHERE attempt=? AND state='uncertain'",('rejected' if rejected else 'sent',message_id,attempt))
+
+
+def uncertain_card(session_id):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        row=conn.execute("SELECT attempt,destination,voice,stamp FROM squad_card_posts WHERE session_id=? AND state='uncertain' ORDER BY stamp DESC LIMIT 1",(session_id,)).fetchone()
+        return dict(zip(('attempt','destination','voice','stamp'),row)) if row else None
+
+
+def latest_card_post(session_id):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        row=conn.execute('SELECT state,message_id FROM squad_card_posts WHERE session_id=? ORDER BY stamp DESC,rowid DESC LIMIT 1',(session_id,)).fetchone()
+        return dict(state=row[0],message_id=row[1]) if row else None
+
+
+def canonical_scope(scope):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:return _scope(conn,scope)
+
+
+def notice_close_failed(row):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        conn.execute('INSERT INTO squad_close_retries VALUES(?,?,?,?) ON CONFLICT(session_id,scope,batch) DO UPDATE SET retry_at=excluded.retry_at',
+            (row['session'],row['scope'],row['batch'],time.time()+60))

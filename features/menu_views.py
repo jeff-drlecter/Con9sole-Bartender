@@ -97,7 +97,7 @@ NO_COOLDOWN_ITEM_IDS = {
     "drink_collection",
     "drink_leaderboard",
     "daily_bar",
-    "records", "rankings", "social", "info", "customize", "titles",
+    "records", "rankings", "social", "info", "customize", "titles", "squad_subscriptions",
 }
 
 LABEL_OVERRIDES: dict[str, str] = {

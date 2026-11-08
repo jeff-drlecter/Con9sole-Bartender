@@ -12,6 +12,7 @@ tree = ast.parse(source.read_text())
 method = next(n for c in tree.body if isinstance(c, ast.ClassDef) and c.name == 'SquadCards'
               for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'reconcile')
 namespace = dict(config=types.SimpleNamespace(GUILD_ID=1), uuid=uuid,
+                 run_stats=AsyncMock(return_value=None), squad_interest=types.SimpleNamespace(end_session=object(),latest_card_post=object()),
                  humans=lambda c: [m for m in c.members if not m.bot])
 exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), namespace)
 

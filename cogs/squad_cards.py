@@ -198,6 +198,8 @@ def interest_topic(channel, session):
     # their old button IDs while new sessions always use game-only topics.
     if session.get("interest_topic"):
         return session["interest_topic"]
+    if channel is None and session.get('last_interest_topic'):
+        return session['last_interest_topic']
     profile = game_profile(channel, session)
     game = session.get("game") or GAME_LABELS.get(profile, "")
     if not game:
@@ -358,8 +360,10 @@ class FootprintView(SafeView):
         await interaction.response.defer(ephemeral=True, thinking=roster_pages is None)
         source_message = source_message if source_message is not None else interaction.message
         async with self.lock:
-            joined = await run_stats(squad_interest.toggle, self.topic['id'], interaction.guild_id,
-                                     interaction.user.id, kind, self.source_session(source_message.id))
+            consent_scope=await run_stats(squad_interest.canonical_scope,self.topic['id'])
+            async with shared_async_lock('subscription-consent',interaction.guild_id,consent_scope):
+                joined = await run_stats(squad_interest.toggle, self.topic['id'], interaction.guild_id,
+                                         interaction.user.id, kind, self.source_session(source_message.id))
             refreshed = True
             try:
                 roster = await self.refresh(interaction, source_message=source_message)
@@ -453,6 +457,11 @@ class SquadCards(commands.Cog):
 
     async def render(self, channel, session, ended=False):
         session["dirty"] = True
+        if session.get('id'):
+            latest = await run_stats(squad_interest.latest_card_post,session['id'])
+            if latest and latest['state']=='sent' and latest['message_id'] and session.get('message')!=latest['message_id']:
+                session['message']=latest['message_id']
+                self.save()
         destination = self.bot.get_channel(session["destination"])
         if not destination:
             raise RuntimeError("Squad card destination unavailable")
@@ -460,7 +469,9 @@ class SquadCards(commands.Cog):
         names = session["participants"] if ended else {str(m.id): m.display_name for m in members}
         roster = "、".join(discord.utils.escape_markdown(n) for n in names.values()) or "—"
         profile = game_profile(channel, session)
-        game = discord.utils.escape_markdown(session.get("game") or GAME_LABELS.get(profile, ""))
+        game_label=session.get("game") or GAME_LABELS.get(profile, "") or (session.get('last_game_label','') if channel is None else '')
+        if channel is not None:session['last_game_label']=game_label
+        game = discord.utils.escape_markdown(game_label)
         mode = discord.utils.escape_markdown(session.get("mode", ""))
         missing = session.get("missing")
         if ended:
@@ -484,6 +495,7 @@ class SquadCards(commands.Cog):
         embed = discord.Embed(title=title, description="\n".join(lines), colour=colour)
         value = interest_topic(channel, session)
         if value:
+            session['last_interest_topic']=value
             if ended:
                 session["interest_topic"] = value
             await run_stats(squad_interest.remember, value)
@@ -514,8 +526,21 @@ class SquadCards(commands.Cog):
             kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？可撳「招募設定」，遊戲同缺幾人都可以留空。"
             kwargs["allowed_mentions"] = discord.AllowedMentions(
                 users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
-        message = await destination.send(**kwargs)
+        ready=getattr(self.bot,'is_ready',None)
+        if callable(ready) and not ready():return
+        attempt = await run_stats(squad_interest.begin_card_post,session['id'],destination.id,channel.id) if session.get('id') else None
+        if callable(ready) and not ready():
+            if attempt:await run_stats(squad_interest.finish_card_post,attempt,rejected=True)
+            return
+        try:
+            message = await destination.send(**kwargs)
+        except discord.HTTPException as exc:
+            if attempt and 400<=exc.status<500 and exc.status!=408:
+                await run_stats(squad_interest.finish_card_post,attempt,rejected=True)
+            raise
         session["message"] = message.id
+        if attempt:
+            await run_stats(squad_interest.finish_card_post,attempt,message_id=message.id)
         session["dirty"] = False
         self.save()
         if value:
@@ -523,6 +548,55 @@ class SquadCards(commands.Cog):
                             message.id, '' if ended else session['id'])
         if not ended:
             await self.notify_interested(channel, session)
+
+    async def menu_entry(self, interaction, *, page=0):
+        if interaction.guild_id!=config.GUILD_ID or interaction.user.bot:
+            await interaction.response.send_message('請喺原本伺服器使用。',ephemeral=True)
+            return
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True,thinking=True)
+        from features.squad_subscription_views import SubscriptionView
+        rows=await run_stats(squad_interest.own_preferences,interaction.guild_id,interaction.user.id)
+        view=SubscriptionView(self,interaction.guild_id,interaction.user.id,rows,page)
+        await interaction.followup.send(embed=view.embed(),view=view,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+
+    async def close_finished_notices(self):
+        ready=getattr(self.bot,'is_ready',None)
+        if callable(ready) and not ready():return
+        for row in await run_stats(squad_interest.closing_notices):
+            context=row['context']
+            if row['guild_id']!=config.GUILD_ID or context.get('guild')!=config.GUILD_ID:
+                continue
+            channel=self.bot.get_channel(context.get('channel'))
+            if channel is None:
+                await run_stats(squad_interest.notice_close_failed,row)
+                continue
+            try:
+                message=await channel.fetch_message(row['message_id'])
+                url=f"https://discord.com/channels/{context['guild']}/{context['channel']}/{context['card']}"
+                if message.author.id!=self.bot.user.id or url not in message.content:
+                    log.warning('Refused to close mismatched squad notice: message=%s',row['message_id'])
+                    await run_stats(squad_interest.notice_close_failed,row)
+                    continue
+                value=dict(id=row['scope'],guild_id=row['guild_id'],label=row['label'])
+                if callable(ready) and not ready():return
+                await message.edit(content=f'🏁 呢局已結束。[查看足跡]({url})，可登記下次通知。',
+                    view=FootprintView(self,value),allowed_mentions=discord.AllowedMentions.none())
+                await run_stats(squad_interest.track_card,row['scope'],channel.id,message.id,'')
+                await run_stats(squad_interest.notice_closed,row)
+            except discord.NotFound:
+                await run_stats(squad_interest.notice_closed,row)
+            except discord.HTTPException:
+                log.exception('Could not close ended squad notice: message=%s',row['message_id'])
+                await run_stats(squad_interest.notice_close_failed,row)
+
+    @commands.Cog.listener()
+    async def on_disconnect(self):
+        async with self.lock:
+            for session in self.state['sessions'].values():
+                if not session.get('message'):
+                    session['qualified']=None
+            self.save()
 
     async def refresh_interest_cards(self, value):
         preferences = await run_stats(squad_interest.preferences, value['id'])
@@ -592,41 +666,51 @@ class SquadCards(commands.Cog):
             label = discord.utils.escape_markdown(value['label'])
             url = f"https://discord.com/channels/{guild.id}/{destination.id}/{session['message']}"
             for batch_id, batch in batches:
-                revision=await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id)
-                if not revision:
-                    continue
-                allowed=[]
-                for uid in batch:
-                    member=guild.get_member(uid)
-                    if member and not member.bot and uid not in present:
-                        vp=channel.permissions_for(member)
-                        if vp.view_channel and vp.connect and destination.permissions_for(member).view_channel:
-                            allowed.append(uid)
-                batch=allowed
-                if not batch:
-                    await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,expected_revision=revision)
-                    continue
-                mentions = " ".join(f"<@{uid}>" for uid in batch)
-                view = discord.ui.View()
-                view.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
-                    url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
-                try:
-                    message=await destination.send(
-                        f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
-                        view=view, suppress_embeds=True,
-                        allowed_mentions=discord.AllowedMentions(
-                            users=[discord.Object(id=uid) for uid in batch], roles=False,
-                            everyone=False, replied_user=False))
-                except discord.HTTPException as exc:
-                    if 400<=exc.status<500 and exc.status!=408:
+                async with shared_async_lock('subscription-consent',guild.id,value['id']):
+                    revision=await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id)
+                    if not revision:
+                        continue
+                    batch=await run_stats(squad_interest.delivery_users,session['id'],value['id'],batch_id,revision)
+                    present={m.id for m in humans(channel)}
+                    allowed=[]
+                    for uid in batch:
+                        member=guild.get_member(uid)
+                        if member and not member.bot and uid not in present:
+                            vp=channel.permissions_for(member)
+                            if vp.view_channel and vp.connect and destination.permissions_for(member).view_channel:
+                                allowed.append(uid)
+                    batch=allowed
+                    if not batch:
+                        await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,expected_revision=revision)
+                        continue
+                    mentions = " ".join(f"<@{uid}>" for uid in batch)
+                    view = discord.ui.View()
+                    view.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
+                        url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
+                    ready=getattr(self.bot,'is_ready',None)
+                    if callable(ready) and not ready():
                         await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,retry=True,expected_revision=revision)
-                    raise
-                await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,message_id=message.id,expected_revision=revision)
+                        return
+                    try:
+                        message=await destination.send(
+                            f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
+                            view=view, suppress_embeds=True,
+                            allowed_mentions=discord.AllowedMentions(
+                                users=[discord.Object(id=uid) for uid in batch], roles=False,
+                                everyone=False, replied_user=False))
+                    except discord.HTTPException as exc:
+                        if 400<=exc.status<500 and exc.status!=408:
+                            await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,retry=True,expected_revision=revision)
+                        raise
+                    await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,message_id=message.id,expected_revision=revision)
             await self.refresh_interest_cards(value)
         except Exception:
             log.exception("Next-session notification failed: session=%s", session.get('id'))
 
     async def reconcile(self):
+        ready = getattr(self.bot,'is_ready',None)
+        if callable(ready) and not ready():
+            return
         guild = self.bot.get_guild(config.GUILD_ID)
         settings = self.state["settings"]
         if not guild or not settings:
@@ -642,9 +726,14 @@ class SquadCards(commands.Cog):
                 channel = channels.get(key)
                 members = humans(channel) if channel else []
                 session = self.state["sessions"].get(key)
+                if session and session.get('id'):
+                    latest=await run_stats(squad_interest.latest_card_post,session['id'])
+                    if latest and latest['state']=='sent' and latest['message_id']:
+                        session['message']=latest['message_id']
                 if not members:
                     if session:
                         session.setdefault("ended", now)
+                        await run_stats(squad_interest.end_session,session['id'])
                         if session.get("message"):
                             await self.render(channel, session, ended=True)
                         del self.state["sessions"][key]
@@ -689,6 +778,7 @@ class SquadCards(commands.Cog):
         try:
             async with self.lock:
                 await self.reconcile()
+                await self.close_finished_notices()
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.exception("Failed to reconcile squad cards; retrying next tick")
@@ -728,6 +818,37 @@ class SquadCards(commands.Cog):
         if str(channel.id) in self.state["sessions"]:
             async with self.lock:
                 await self.reconcile()
+
+    @app_commands.command(name='squad_recover', description='核對並連結發送結果不明嘅現有召人卡')
+    @app_commands.guild_only()
+    @app_commands.check(lambda i: is_server_admin(i.user))
+    async def squad_recover(self, interaction: discord.Interaction, channel: discord.VoiceChannel, message_id: str):
+        if interaction.guild_id!=config.GUILD_ID or not is_server_admin(interaction.user) or not message_id.isdigit():
+            await interaction.response.send_message('請喺本伺服器提供現有訊息 ID。',ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True,thinking=True)
+        async with self.lock:
+            session=self.state['sessions'].get(str(channel.id))
+            post=await run_stats(squad_interest.uncertain_card,session['id']) if session else None
+            if not post or not humans(channel):
+                await interaction.followup.send('未有可核對嘅進行中發卡紀錄。',ephemeral=True);return
+            destination=self.bot.get_channel(post['destination'])
+            try:
+                message=await destination.fetch_message(int(message_id))
+            except (discord.HTTPException,AttributeError):
+                await interaction.followup.send('讀取唔到指定訊息，紀錄保持待查。',ephemeral=True);return
+            join_url=f'https://discord.com/channels/{config.GUILD_ID}/{channel.id}'
+            components=[c for row in message.components for c in row.children]
+            links=[getattr(c,'url',None) for c in components]
+            controls=[getattr(c,'custom_id',None) for c in components]
+            if not message.embeds or f"squad:{session['id']}" not in controls or message.author.id!=self.bot.user.id or join_url not in links or message.created_at.timestamp()<post['stamp']-5:
+                await interaction.followup.send('訊息作者、語音連結或時間唔吻合，紀錄保持待查。',ephemeral=True);return
+            await run_stats(squad_interest.finish_card_post,post['attempt'],message_id=message.id)
+            session['message']=message.id
+            self.interest_baseline.add(session['id'])
+            self.save()
+            await self.render(channel,session)
+        await interaction.followup.send('已連結現有召人卡；沒有重發卡片或補 tag。',ephemeral=True)
 
     @app_commands.command(name="squad_setup", description="設定自動組隊卡：一人留滿30秒後發召人卡")
     @app_commands.guild_only()

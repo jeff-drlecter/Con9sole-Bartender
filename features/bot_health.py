@@ -25,5 +25,6 @@ def storage_health(level_path,guild,stats_path=None):
             ('待查週榜',"SELECT count(*) FROM settings s,json_each(s.value,'$.weekly_publications') p WHERE s.guild=? AND json_extract(p.value,'$.state') IN ('pending','uncertain')",(guild,))]),
         '社群紀錄':database_health(stats_path or STATS_DB,[
             ('待發通知',"SELECT count(*) FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope WHERE t.guild_id=? AND d.state='pending'",(guild,)),
+            ('待查召人卡',"SELECT count(*) FROM squad_card_posts WHERE state='uncertain'",()),
             ('待查通知',"SELECT count(*) FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope WHERE t.guild_id=? AND d.state='uncertain'",(guild,))]),
     }

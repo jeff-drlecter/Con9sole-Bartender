@@ -36,6 +36,7 @@ def resolve(ledger,guild,row,action,actor,reason,message_id=None):
         interests.initialize()
         with connect_sqlite(interests.STATS_DB) as db:
             db.execute('BEGIN IMMEDIATE')
+            if action=='retry' and db.execute('SELECT 1 FROM squad_ended_sessions WHERE session_id=?',(row['session'],)).fetchone():return False
             changed=db.execute("UPDATE squad_interest_delivery SET state=?,revision=?,retry_at=0,message_id=? WHERE session_id=? AND scope=? AND batch=? AND state=? AND revision=? AND EXISTS(SELECT 1 FROM squad_interest_topics WHERE scope=? AND guild_id=?)",
                 ({'sent':'sent','retry':'pending','cancel':'cancelled'}[action],uuid.uuid4().hex,message_id,row['session'],row['scope'],row['batch'],row['state'],row['revision'],row['scope'],guild)).rowcount
             if not changed:return False
