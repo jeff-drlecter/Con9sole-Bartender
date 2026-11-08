@@ -504,7 +504,7 @@ class CommunityLevels(commands.Cog):
 
     @levels.command(name='rank',description='查看等級、升級進度及 XP 來源')
     async def rank(self,inter:discord.Interaction,member:discord.Member|None=None):
-        await inter.response.defer(ephemeral=True)
+        await inter.response.defer(ephemeral=True,thinking=True)
         target=member or inter.user
         p=await asyncio.to_thread(self.ledger.profile,inter.guild_id,target.id)
         position=await asyncio.to_thread(self.ledger.rank_position,inter.guild_id,target.id)
@@ -528,7 +528,7 @@ class CommunityLevels(commands.Cog):
 
     @levels.command(name='leaderboard',description='查看總榜或香港時間每週榜')
     async def leaderboard(self,inter:discord.Interaction,weekly:bool=False,page:app_commands.Range[int,1,10000]=1,period:str|None=None):
-        await inter.response.defer(ephemeral=True)
+        await inter.response.defer(ephemeral=True,thinking=True)
         if period and not re.fullmatch(r'(?:[0-9]{4}-W(?:0[1-9]|[1-4][0-9]|5[0-3])|amari-legacy)',period):
             await inter.followup.send('期數請填 YYYY-Www，或 amari-legacy。'); return
         week=period or (calendar(time.time())[1] if weekly else None)

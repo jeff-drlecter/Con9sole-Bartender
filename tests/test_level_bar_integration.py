@@ -10,6 +10,19 @@ from features.drink_views import DrinkResultView, MemberCardView
 
 
 class BarLevelTests(unittest.IsolatedAsyncioTestCase):
+    async def test_component_rank_and_boards_defer_as_private_messages(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cog = CommunityLevels(MagicMock())
+            cog.ledger = Ledger(Path(temp) / 'levels')
+            cog.cfg = {'mode': 'active'}
+            inter = types.SimpleNamespace(guild_id=1, user=types.SimpleNamespace(id=10, mention='<@10>'), response=types.SimpleNamespace(defer=AsyncMock()), followup=types.SimpleNamespace(send=AsyncMock()))
+            with patch('features.collection_milestones.collection_snapshot', return_value={'names': set()}):
+                await cog.menu_entry(inter)
+            inter.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+            inter.response.defer.reset_mock()
+            await cog.weekly_entry(inter)
+            inter.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+
     async def test_drink_uses_shared_cooldown_and_durable_receipt(self):
         with tempfile.TemporaryDirectory() as temp, patch('config.GUILD_ID', 1):
             cog = CommunityLevels(MagicMock())
