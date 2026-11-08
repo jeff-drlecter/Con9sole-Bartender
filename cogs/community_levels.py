@@ -359,7 +359,7 @@ class CommunityLevels(commands.Cog):
                     else:
                         name=discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))
                         text=render_notice(self.cfg,member,new,max(crossed))
-                        payload=dict(content=re.sub(r'<@!?'+str(member.id)+r'>',lambda _:name,text))
+                        payload=dict(content=re.sub(r'<@!?'+str(member.id)+r'>',lambda _:name,text)[:1900])
                     await channel.send(**payload,
                         allowed_mentions=discord.AllowedMentions(users=[member] if ping else False,roles=False,everyone=False,replied_user=False))
                     await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)

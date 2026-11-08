@@ -269,6 +269,16 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent['allowed_mentions'].to_dict(),{'parse':[]})
         self.assertIn('Lv.16',sent['content'])
 
+    async def test_ordinary_notice_caps_final_text_after_name_expansion(self):
+        channel=self.announcement_channel()
+        self.member.display_name='*'*32
+        self.cog.cfg.update(level_templates={},announcement_template='{user.ping} '*120,announcement_ping=True)
+        self.total(threshold(16));self.cog.ledger.mark_notice(1,10,15)
+        await self.cog.apply_rewards(self.member,(threshold(15),threshold(16)))
+        text=channel.send.call_args.kwargs['content']
+        self.assertLessEqual(len(text),1900)
+        self.assertNotIn('<@10>',text)
+
     async def test_ordinary_notice_does_not_require_embed_links(self):
         channel=self.announcement_channel()
         self.guild.me=object()
