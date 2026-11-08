@@ -5,6 +5,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import discord
 
@@ -14,6 +15,13 @@ from core.storage_paths import DATA_DIR, STATS_DB
 log = logging.getLogger("con9sole-bartender.daily-bar")
 
 DAILY_BAR_COLOR = 0xD6A85C
+HK_TZ = ZoneInfo("Asia/Hong_Kong")
+
+def _local_now(now=None):
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(HK_TZ)
 
 @dataclass(frozen=True)
 class DailyBarTask:
@@ -95,7 +103,7 @@ def init_daily_bar_db() -> None:
 
 
 def _current_date(*, now: datetime | None = None) -> str:
-    current = now or datetime.now(timezone.utc)
+    current = _local_now(now)
     return current.date().isoformat()
 
 
@@ -139,7 +147,7 @@ def complete_daily_bar_task(
     feature_key: str,
     now: datetime | None = None,
 ) -> bool:
-    current = now or datetime.now(timezone.utc)
+    current = _local_now(now)
     task = get_daily_bar_task(guild_id, now=current)
     if feature_key != task.key:
         return False
@@ -185,7 +193,7 @@ def build_daily_bar_embed(
     user: discord.abc.User,
     now: datetime | None = None,
 ) -> discord.Embed:
-    current = now or datetime.now(timezone.utc)
+    current = _local_now(now)
     task = get_daily_bar_task(guild_id, now=current)
     status = _completion_text(guild_id, user.id, now=current)
 
@@ -194,7 +202,7 @@ def build_daily_bar_embed(
         description=(
             f"歡迎回來，{user.mention}。\n\n"
             "今日有個細任務畀你。\n"
-            "任務每日刷新，同一日全 server 會見到同一個任務。"
+            "每日香港時間 00:00 刷新；全 server 同一任務。\n完成額外 +5 XP，每人每日一次，亦計入週榜。"
         ),
         color=DAILY_BAR_COLOR,
         timestamp=discord.utils.utcnow(),
@@ -219,5 +227,5 @@ def build_daily_bar_embed(
         value=task.note,
         inline=False,
     )
-    embed.set_footer(text=f"Con9sole Bartender｜Daily Bar｜{current.date().isoformat()} UTC")
+    embed.set_footer(text=f"Con9sole Bartender｜Daily Bar｜{current.date().isoformat()} 香港時間")
     return embed

@@ -334,6 +334,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
 
 
 ADMIN_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("bot_health", "系統狀態", "🩺", "secondary", "admin", 2, "BotHealth", admin_only=True),
     MenuItem("community_levels_admin", "等級管理", "🎖️", "secondary", "admin", 2, "CommunityLevels", "admin_entry", admin_only=True),
     MenuItem(
         id="home_menu",

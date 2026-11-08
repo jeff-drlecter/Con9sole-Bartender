@@ -362,6 +362,7 @@ class MemberCardView(SafeView):
             ("等級總榜","🏆","CommunityLevels","leaderboard_entry"),
             ("本週排名","📅","CommunityLevels","weekly_entry"),
             ("我的收藏","🍾","Drink","collection_entry"),
+            ("今日小任務","📅","DailyBar","menu_entry"),
             ("吧枱","🍸","Menu","open_main_menu"),
         ):
             self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=0))

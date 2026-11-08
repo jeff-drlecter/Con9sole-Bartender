@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import inspect
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
@@ -11,6 +10,7 @@ from discord.ext import commands
 
 from config import GUILD_ID
 from features.menu_stats import run_stats
+from features.member_activity import credit_success
 from core.action_guard import claim_action
 from core.discord_interactions import require_public_send
 from core.safe_send import send_or_followup
@@ -96,25 +96,8 @@ class Drink(commands.Cog):
     async def _complete_daily_bar(
         self, interaction: discord.Interaction, feature: str
     ) -> None:
-        completed = complete_daily_bar_task(
-            guild_id=interaction.guild_id,
-            user_id=interaction.user.id,
-            feature_key=feature,
-        )
-        if not completed:
-            return
-
-        try:
-            await interaction.followup.send(
-                "📅 每日任務已完成！多謝你參與。",
-                ephemeral=True,
-            )
-        except Exception:
-            log.exception(
-                "Failed to send daily-bar completion notice: user=%s feature=%s",
-                interaction.user.id,
-                feature,
-            )
+        from features.member_activity import complete_task
+        await complete_task(self.bot, interaction, feature)
 
     async def _check_drink_cooldown(self, interaction: discord.Interaction) -> bool:
         retry_after = get_drink_retry_after(interaction.user.id)
@@ -246,16 +229,7 @@ class Drink(commands.Cog):
                 )
             xp_hint = None
             if recorded:
-                levels = self.bot.get_cog("CommunityLevels")
-                credit = getattr(levels, "drink_credit", None)
-                if inspect.iscoroutinefunction(credit):
-                    try:
-                        xp_hint = await credit(interaction)
-                    except Exception:
-                        log.exception("Drink XP feedback failed: interaction=%s", interaction.id)
-                else:
-                    self.bot.dispatch("community_activity", interaction.user, interaction.channel,
-                                      f"drink:{interaction.id}")
+                xp_hint = await credit_success(self.bot, interaction, 'drink')
             if xp_hint:
                 result_embed.add_field(name="🎖️ 會員進度", value=xp_hint, inline=False)
             if recorded and progress.get("is_new"):

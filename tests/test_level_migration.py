@@ -12,6 +12,23 @@ from features.level_migration import (strict_json,validate_snapshot,apply_snapsh
 
 
 class MigrationTests(unittest.TestCase):
+    def test_existing_activation_or_bonus_blocks_raw_snapshot(self):
+        for key in ('historical_bonus','activation','activation_intent'):
+            self.ledger.configure(1,**{key:{'state':'applied'}})
+            with self.assertRaisesRegex(ValueError,'reviewed rebase'):
+                apply_snapshot(self.ledger,self.snapshot,**self.args)
+            self.ledger.configure(1,**{key:None})
+
+    def test_import_guard_is_rechecked_after_backup(self):
+        def changed_during_backup(ledger,path):
+            digest=create_backup(ledger,path)
+            ledger.configure(1,activation={'state':'active'})
+            return digest
+        with patch('features.level_migration.create_backup',side_effect=changed_during_backup):
+            with self.assertRaisesRegex(ValueError,'reviewed rebase'):
+                apply_snapshot(self.ledger,self.snapshot,**self.args,commit=True)
+        self.assertEqual(self.ledger.profile(1,10)['total'],0)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
         self.ledger=Ledger(self.root/'live.sqlite3');self.ledger.configure(1,mode='off')

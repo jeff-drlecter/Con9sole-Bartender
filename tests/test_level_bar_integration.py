@@ -51,7 +51,7 @@ class BarLevelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_card_navigation_fits_and_result_links_to_card(self):
         view = MemberCardView()
-        self.assertEqual({b.method for b in view.children}, {'leaderboard_entry', 'weekly_entry', 'collection_entry', 'open_main_menu'})
+        self.assertEqual({(b.cog_name,b.method) for b in view.children}, {('CommunityLevels','leaderboard_entry'), ('CommunityLevels','weekly_entry'), ('Drink','collection_entry'), ('DailyBar','menu_entry'), ('Menu','open_main_menu')})
         self.assertLessEqual(len(view.children), 5)
         result = DrinkResultView()
         self.assertTrue(result.is_persistent())

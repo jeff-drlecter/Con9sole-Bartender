@@ -17,6 +17,7 @@ class ReviewRegressions(unittest.IsolatedAsyncioTestCase):
             state={"settings": {"routes": {"20": 30}}, "sessions": {"10": session}},
             bot=types.SimpleNamespace(get_guild=lambda _: guild),
             render=AsyncMock(side_effect=RuntimeError("temporary failure")),
+            notify_interested=AsyncMock(),
             save=lambda: None,
         )
         with self.assertLogs("cogs.squad_cards", level="ERROR"):

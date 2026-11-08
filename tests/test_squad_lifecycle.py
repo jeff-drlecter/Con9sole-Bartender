@@ -5,6 +5,7 @@ import pathlib
 import types
 import unittest
 import uuid
+from unittest.mock import AsyncMock
 
 source = pathlib.Path(__file__).resolve().parents[1] / 'cogs' / 'squad_cards.py'
 tree = ast.parse(source.read_text())
@@ -28,7 +29,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             session['message'] = 99
         cog = types.SimpleNamespace(
             state={'settings': {'category': 20, 'destination': 30}, 'sessions': {}},
-            bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render)
+            bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render, notify_interested=AsyncMock())
         async def tick():
             await namespace['reconcile'](cog)
         await tick()
@@ -71,7 +72,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             session['message'] = channel.id
         cog = types.SimpleNamespace(
             state={'settings': {'routes': {'20': 30, '21': 31, '22': 32}}, 'sessions': {}},
-            bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render)
+            bot=types.SimpleNamespace(get_guild=lambda _: guild), save=lambda: None, render=render, notify_interested=AsyncMock())
         await namespace['reconcile'](cog)
         now[0] += 30
         await namespace['reconcile'](cog)

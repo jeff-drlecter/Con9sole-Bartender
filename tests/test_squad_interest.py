@@ -12,6 +12,20 @@ from quick_bar_fakes import interaction
 
 
 class InterestTests(unittest.IsolatedAsyncioTestCase):
+    def test_delivery_retry_is_durable_and_uncertain_send_is_not_replayed(self):
+        storage.toggle(self.topic['id'],1,10)
+        storage.reserve('session',self.topic['id'],[10],now=100)
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=100),[(0,[10])])
+        self.assertTrue(storage.claim_delivery('session',self.topic['id'],0))
+        self.assertFalse(storage.claim_delivery('session',self.topic['id'],0))
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=200),[])
+        storage.finish_delivery('session',self.topic['id'],0,retry=True,now=200)
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=259),[])
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=260),[(0,[10])])
+        self.assertTrue(storage.claim_delivery('session',self.topic['id'],0))
+        storage.finish_delivery('session',self.topic['id'],0,message_id=333)
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=300),[])
+
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.patch = patch.object(storage, 'STATS_DB', Path(self.folder.name)/'interest.sqlite3')
@@ -93,6 +107,20 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(storage.members(self.topic['id']),[i.user.id])
         await view.toggle(interaction());self.assertEqual(storage.members(self.topic['id']),[])
         self.assertIn('取消',i.followup.send.call_args.args[0])
+        view.stop()
+
+    async def test_separate_successful_subscriptions_emit_separate_receipts(self):
+        view = FootprintView(None, self.topic)
+        view.refresh = AsyncMock()
+        events = []
+        for event_id in (101, 102, 103):
+            i = interaction(); i.id = event_id
+            await view.toggle(i)
+            events.extend(call.args[3] for call in i.client.dispatch.call_args_list)
+        self.assertEqual(len(events), 2)
+        self.assertNotEqual(events[0], events[1])
+        self.assertTrue(events[0].endswith(':101'))
+        self.assertTrue(events[1].endswith(':103'))
         view.stop()
 
     def roster_interaction(self, ids=(10, 11)):

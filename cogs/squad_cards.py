@@ -367,7 +367,7 @@ class FootprintView(SafeView):
                 log.exception("Card roster refresh failed: message=%s", interaction.message.id)
         if joined:
             interaction.client.dispatch("community_activity", interaction.user, interaction.channel,
-                                        f"interest:{self.topic['id']}:{interaction.user.id}")
+                             f"interest:{self.topic['id']}:{interaction.user.id}:{interaction.id}")
         label = discord.utils.escape_mentions(discord.utils.escape_markdown(self.topic['label']))
         if not joined:
             text = f"已取消 **{label}** 開局通知。"
@@ -573,23 +573,42 @@ class SquadCards(commands.Cog):
                 if voice_perms.view_channel and voice_perms.connect and text_perms.view_channel:
                     eligible.append(uid)
             await run_stats(squad_interest.remember, value)
-            selected = await run_stats(squad_interest.reserve, session['id'], value['id'], eligible)
-            if not selected:
+            await run_stats(squad_interest.reserve, session['id'], value['id'], eligible)
+            batches = await run_stats(squad_interest.pending_deliveries, session['id'], value['id'])
+            if not batches:
                 return
             label = discord.utils.escape_markdown(value['label'])
             url = f"https://discord.com/channels/{guild.id}/{destination.id}/{session['message']}"
-            for index in range(0, len(selected), 20):
-                batch = selected[index:index + 20]
+            for batch_id, batch in batches:
+                if not await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id):
+                    continue
+                allowed=[]
+                for uid in batch:
+                    member=guild.get_member(uid)
+                    if member and not member.bot and uid not in present:
+                        vp=channel.permissions_for(member)
+                        if vp.view_channel and vp.connect and destination.permissions_for(member).view_channel:
+                            allowed.append(uid)
+                batch=allowed
+                if not batch:
+                    await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id)
+                    continue
                 mentions = " ".join(f"<@{uid}>" for uid in batch)
                 view = discord.ui.View()
                 view.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
                     url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
-                await destination.send(
-                    f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
-                    view=view, suppress_embeds=True,
-                    allowed_mentions=discord.AllowedMentions(
-                        users=[discord.Object(id=uid) for uid in batch], roles=False,
-                        everyone=False, replied_user=False))
+                try:
+                    message=await destination.send(
+                        f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
+                        view=view, suppress_embeds=True,
+                        allowed_mentions=discord.AllowedMentions(
+                            users=[discord.Object(id=uid) for uid in batch], roles=False,
+                            everyone=False, replied_user=False))
+                except discord.HTTPException as exc:
+                    if 400<=exc.status<500 and exc.status!=408:
+                        await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,retry=True)
+                    raise
+                await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,message_id=message.id)
             await self.refresh_interest_cards(value)
         except Exception:
             log.exception("Next-session notification failed: session=%s", session.get('id'))
@@ -640,6 +659,8 @@ class SquadCards(commands.Cog):
                         await self.render(channel, session)
                 elif changed:
                     await self.render(channel, session)
+                if session.get('message'):
+                    await self.notify_interested(channel,session)
                 # Commit the roster only after rendering succeeds so a failed edit
                 # remains pending and is retried by the next reconciliation.
                 session["roster"] = roster

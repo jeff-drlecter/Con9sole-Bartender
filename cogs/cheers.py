@@ -22,6 +22,7 @@ from data.cheers_quotes import (
 from features.daily_bar import complete_daily_bar_task
 from features.drink_views import DrinkResultView
 from features.member_picker import open_member_picker, resolve_member
+from features.member_activity import credit_success
 
 log = logging.getLogger("con9sole-bartender.cheers")
 
@@ -70,25 +71,8 @@ class Cheers(commands.Cog):
     async def _complete_daily_bar(
         self, interaction: discord.Interaction, feature: str
     ) -> None:
-        completed = complete_daily_bar_task(
-            guild_id=interaction.guild_id,
-            user_id=interaction.user.id,
-            feature_key=feature,
-        )
-        if not completed:
-            return
-
-        try:
-            await interaction.followup.send(
-                "📅 每日任務已完成！多謝你參與。",
-                ephemeral=True,
-            )
-        except Exception:
-            log.exception(
-                "Failed to send daily-bar completion notice: user=%s feature=%s",
-                interaction.user.id,
-                feature,
-            )
+        from features.member_activity import complete_task
+        await complete_task(self.bot, interaction, feature)
 
     async def _check_cheers_cooldown(self, interaction: discord.Interaction) -> bool:
         if is_admin_or_helper(interaction.user):
@@ -171,6 +155,13 @@ class Cheers(commands.Cog):
                     pass
                 return False
             touch_cheers_cooldown(interaction.user.id)
+            xp_hint = await credit_success(self.bot, interaction, 'cheers')
+            if xp_hint:
+                embed.add_field(name='🎖️ 會員進度', value=xp_hint, inline=False)
+                try:
+                    await interaction.edit_original_response(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                except discord.HTTPException:
+                    log.warning('Saved cheers XP but could not update feedback: interaction=%s', interaction.id)
             feature = (
                 "cheers_target" if to and to.id != interaction.user.id else "cheers"
             )

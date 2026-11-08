@@ -106,11 +106,20 @@ def create_backup(ledger: Ledger, destination: Path):
         raise
 
 
+def _require_unmigrated(db,guild):
+    row=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+    cfg=json.loads(row[0]) if row else {}
+    if any(cfg.get(key) for key in ('historical_bonus','activation','activation_intent')) or db.execute(
+        "SELECT 1 FROM hybrid_plans WHERE guild=? AND state='applied'",(guild,)).fetchone():
+        raise ValueError('Existing hybrid/bonus/activation state requires a reviewed rebase or restore')
+
+
 def apply_snapshot(ledger, snapshot, *, guild, roster_ids, expected_count, backup_path, commit=False):
     plan=validate_snapshot(snapshot,guild=guild,roster_ids=roster_ids,expected_count=expected_count)
     cfg=ledger.settings(guild)
     if cfg['mode']!='off': raise ValueError('Pause all ledger writers before migration')
     with connect_sqlite(ledger.path) as db:
+        _require_unmigrated(db,guild)
         if db.execute('SELECT 1 FROM migration_manifests WHERE guild=?',(guild,)).fetchone():
             raise ValueError('Snapshot already applied; use a reviewed restore instead')
         if db.execute('SELECT 1 FROM adjustments WHERE guild=? AND stamp>=? LIMIT 1',(guild,plan['cutover'])).fetchone():
@@ -124,6 +133,7 @@ def apply_snapshot(ledger, snapshot, *, guild, roster_ids, expected_count, backu
     backup_sha=create_backup(ledger,Path(backup_path))
     with connect_sqlite(ledger.path) as db:
         db.execute('BEGIN IMMEDIATE')
+        _require_unmigrated(db,guild)
         current=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
         if current and json.loads(current[0]).get('mode','off')!='off': raise ValueError('Ledger is no longer paused')
         if db.execute('SELECT 1 FROM migration_manifests WHERE guild=?',(guild,)).fetchone(): raise ValueError('Migration raced another writer')

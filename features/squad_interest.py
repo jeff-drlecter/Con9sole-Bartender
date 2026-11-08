@@ -30,6 +30,10 @@ def initialize():
         conn.execute('''CREATE TABLE IF NOT EXISTS squad_interest_attempts (
             session_id TEXT NOT NULL, scope TEXT NOT NULL,
             attempted_at REAL NOT NULL, PRIMARY KEY(session_id, scope))''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS squad_interest_delivery (
+            session_id TEXT, scope TEXT, batch INTEGER, users TEXT NOT NULL,
+            state TEXT NOT NULL, retry_at REAL NOT NULL DEFAULT 0, message_id INTEGER,
+            PRIMARY KEY(session_id,scope,batch))''')
         columns = {r[1] for r in conn.execute('PRAGMA table_info(squad_interest_members)')}
         for name, definition in [('kind', "TEXT NOT NULL DEFAULT 'always'"),
                                  ('excluded_session', "TEXT NOT NULL DEFAULT ''")]:
@@ -165,4 +169,32 @@ def reserve(session_id, scope, eligible, *, now=None):
             else:
                 conn.execute('UPDATE squad_interest_members SET last_notified=? WHERE scope=? AND user_id=?',
                              (current, scope, user_id))
+        for index in range(0,len(selected),20):
+            conn.execute('INSERT OR IGNORE INTO squad_interest_delivery(session_id,scope,batch,users,state) VALUES(?,?,?,?,?)',
+                         (session_id,scope,index//20,json.dumps(selected[index:index+20]),'pending'))
     return selected
+
+
+def pending_deliveries(session_id,scope,now=None):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        scope=_scope(conn,scope)
+        return [(batch,json.loads(users)) for batch,users in conn.execute(
+            "SELECT batch,users FROM squad_interest_delivery WHERE session_id=? AND scope=? AND state='pending' AND retry_at<=? ORDER BY batch",
+            (session_id,scope,time.time() if now is None else now))]
+
+
+def claim_delivery(session_id,scope,batch):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        scope=_scope(conn,scope)
+        return bool(conn.execute("UPDATE squad_interest_delivery SET state='uncertain' WHERE session_id=? AND scope=? AND batch=? AND state='pending'",
+                                 (session_id,scope,batch)).rowcount)
+
+
+def finish_delivery(session_id,scope,batch,*,message_id=None,retry=False,now=None):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        scope=_scope(conn,scope)
+        conn.execute("UPDATE squad_interest_delivery SET state=?,message_id=?,retry_at=? WHERE session_id=? AND scope=? AND batch=? AND state='uncertain'",
+                     ('pending' if retry else 'sent',message_id,(time.time() if now is None else now)+60 if retry else 0,session_id,scope,batch))
