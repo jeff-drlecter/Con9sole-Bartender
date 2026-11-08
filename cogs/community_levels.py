@@ -602,7 +602,10 @@ class CommunityLevels(commands.Cog):
         week=period or (calendar(time.time())[1] if weekly else None)
         rows=await asyncio.to_thread(self.ledger.leaderboard,inter.guild_id,week,page)
         text='\n'.join(f'{i}. <@{uid}> · {points:,} XP' for i,(uid,points) in enumerate(rows,(page-1)*10+1)) or '暫時未有紀錄。'
-        await inter.followup.send(embed=discord.Embed(title='🏆 '+(f'期數 {week}' if week else '會員總榜'),description=text),allowed_mentions=discord.AllowedMentions.none())
+        from features.drink_views import LevelBoardView
+        embed=discord.Embed(title='🏆 '+(f'期數 {week}' if week else '等級總榜'),description=text)
+        embed.set_footer(text=f'第 {page} 頁｜會員經驗排名')
+        await inter.followup.send(embed=embed,view=LevelBoardView(self,week,page,len(rows)==10),allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='admin',description='管理等級設定及試行狀態')
     @app_commands.default_permissions(manage_guild=True)

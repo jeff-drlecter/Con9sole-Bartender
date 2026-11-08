@@ -411,7 +411,7 @@ class TempVCControlView(SafeView):
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.cog.delete_temp_vc_from_control(interaction, self.channel_id)
 
-    @discord.ui.button(label="吧枱", emoji="🍸", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="返回吧枱", emoji="🍸", style=discord.ButtonStyle.secondary, row=2)
     async def menu_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         menu_cog = interaction.client.get_cog("Menu")
         if menu_cog and hasattr(menu_cog, "open_home_menu_from_button"):

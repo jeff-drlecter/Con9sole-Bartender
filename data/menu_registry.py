@@ -206,14 +206,14 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="drink_stats",
-        label="酒保紀錄",
+        label="酒吧紀錄",
         emoji="📊",
         style="secondary",
         layer="home",
         row=2,
         cog="Drink",
         method="stats_entry",
-        description="查看自己的酒保紀錄",
+        description="查看自己的酒吧紀錄",
     ),
     MenuItem(
         id="drink_collection",
@@ -235,7 +235,7 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
         row=2,
         cog="Drink",
         method="leaderboard_entry",
-        description="查看酒保排行榜",
+        description="查看酒吧排行榜",
     ),
     MenuItem(
         id="daily_bar",
@@ -317,7 +317,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 ]
 
 HOME_MENU_ITEMS: list[MenuItem] = [
-    MenuItem("quick_bar", "吧枱", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
+    MenuItem("quick_bar", "返回吧枱", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
     MenuItem("drink_collection", "我的收藏", "🍾", "primary", "home", 0, "Drink", "collection_entry"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "home", 0, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "home", 0, "CommunityLevels"),

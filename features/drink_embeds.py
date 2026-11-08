@@ -71,7 +71,7 @@ def build_drink_stats_embed(
         )
 
     embed = discord.Embed(
-        title=f"🥂 {user.display_name} 的酒保紀錄",
+        title=f"🥂 {user.display_name} 的酒吧紀錄",
         description=(
             f"🍹 **自己叫酒：** `{self_count}` 杯\n"
             f"🥂 **賜酒畀人：** `{given_count}` 杯\n"
@@ -100,7 +100,7 @@ def build_drink_stats_embed(
         ),
         inline=False,
     )
-    embed.set_footer(text="Con9sole Bartender｜酒保紀錄 v1")
+    embed.set_footer(text="Con9sole Bartender｜酒吧紀錄 v1")
     return embed
 
 

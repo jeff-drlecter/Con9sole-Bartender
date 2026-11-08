@@ -54,11 +54,12 @@ class DrinkCollectionView(SafeView):
 
         self.add_item(DrinkMilestonesButton(row=2))
         self.add_item(DrinkThemesButton(row=2))
+        self.add_item(FeatureButton(label='我的會員卡',emoji='🎖️',cog='CommunityLevels',method='menu_entry',row=2))
         self.add_item(DrinkCollectionRecentButton(row=1))
         self.add_item(DrinkCollectionSummaryButton(row=1))
         self.add_item(
             FeatureButton(
-                label="排行榜",
+                label="酒吧排行榜",
                 emoji="🏆",
                 cog="Drink",
                 method="leaderboard_entry",
@@ -67,7 +68,7 @@ class DrinkCollectionView(SafeView):
         )
         self.add_item(
             FeatureButton(
-                label="酒保紀錄", emoji="📊", cog="Drink", method="stats_entry", row=1
+                label="酒吧紀錄", emoji="📊", cog="Drink", method="stats_entry", row=4
             )
         )
         self.add_item(
@@ -76,12 +77,12 @@ class DrinkCollectionView(SafeView):
                 emoji="📅",
                 cog="DailyBar",
                 method="menu_entry",
-                row=1,
+                row=4,
             )
         )
         self.add_item(
             FeatureButton(
-                label="吧枱", emoji="🍸", cog="Menu", method="open_main_menu", row=2
+                label="返回吧枱", emoji="🍸", cog="Menu", method="open_main_menu", row=4
             )
         )
 
@@ -337,32 +338,47 @@ class FeatureButton(discord.ui.Button):
 class DrinkResultView(SafeView):
     def __init__(self) -> None:
         super().__init__(timeout=None)
-        for label, emoji, cog, method in (
-            ("睇收藏", "🍾", "Drink", "collection_entry"),
+        for index, (label, emoji, cog, method) in enumerate((
+            ("我的收藏", "🍾", "Drink", "collection_entry"),
             ("請人飲", "🥂", "Drink", "gift_drink_entry"),
-            ("吧枱", "🍸", "Menu", "open_main_menu"),
-            ("會員卡", "🎖️", "CommunityLevels", "menu_entry"),
-        ):
+            ("我的會員卡", "🎖️", "CommunityLevels", "menu_entry"),
+            ("返回吧枱", "🍸", "Menu", "open_main_menu"),
+        )):
             self.add_item(
                 FeatureButton(
                     label=label,
                     emoji=emoji,
                     cog=cog,
                     method=method,
-                    row=0,
+                    row=index//2,
                     custom_id=f"bartender:result:{method}",
                 )
             )
 
 
-class MemberCardView(SafeView):
-    def __init__(self) -> None:
+class MemberNavigationView(SafeView):
+    def __init__(self,current=None) -> None:
         super().__init__(timeout=180)
-        for label,emoji,cog,method in (
-            ("等級總榜","🏆","CommunityLevels","leaderboard_entry"),
-            ("本週排名","📅","CommunityLevels","weekly_entry"),
-            ("我的收藏","🍾","Drink","collection_entry"),
-            ("今日小任務","📅","DailyBar","menu_entry"),
-            ("吧枱","🍸","Menu","open_main_menu"),
+        for key,label,emoji,cog,method,row in (
+            ('card',"我的會員卡","🎖️","CommunityLevels","menu_entry",0),
+            ('collection',"我的收藏","🍾","Drink","collection_entry",0),
+            ('task',"今日小任務","📅","DailyBar","menu_entry",1),
+            ('total',"等級總榜","🏆","CommunityLevels","leaderboard_entry",1),
+            ('weekly',"本週排名","📅","CommunityLevels","weekly_entry",1),
+            ('bar',"返回吧枱","🍸","Menu","open_main_menu",2),
         ):
-            self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=0))
+            if key!=current:self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=row))
+
+
+class MemberCardView(MemberNavigationView):
+    def __init__(self):super().__init__(current='card')
+
+
+class LevelBoardView(MemberNavigationView):
+    def __init__(self,cog,week,page,has_next):
+        super().__init__(current='weekly' if week else 'total')
+        for label,delta,disabled in (('上一頁',-1,page<=1),('下一頁',1,not has_next or page>=10000)):
+            button=discord.ui.Button(label=label,row=3,disabled=disabled)
+            async def move(inter,delta=delta):
+                await cog.leaderboard.callback(cog,inter,weekly=bool(week),page=page+delta,period=week)
+            button.callback=move;self.add_item(button)

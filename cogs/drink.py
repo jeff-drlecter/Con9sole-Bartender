@@ -299,7 +299,8 @@ class Drink(commands.Cog):
     async def stats_entry(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True, ephemeral=True)
         embed = await run_stats(build_drink_stats_embed,interaction.guild, interaction.user)
-        await send_or_followup(interaction, embed=embed, ephemeral=True)
+        from features.drink_views import MemberNavigationView
+        await send_or_followup(interaction, embed=embed, view=MemberNavigationView(), ephemeral=True)
 
     async def collection_entry(self, interaction: discord.Interaction) -> None:
         if not interaction.response.is_done():
@@ -349,7 +350,8 @@ class Drink(commands.Cog):
         await interaction.response.defer(thinking=True, ephemeral=True)
         target = user or interaction.user
         embed = await run_stats(build_drink_stats_embed,interaction.guild, target)
-        await send_or_followup(interaction, embed=embed, ephemeral=True)
+        from features.drink_views import MemberNavigationView
+        await send_or_followup(interaction, embed=embed, view=MemberNavigationView(), ephemeral=True)
 
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     @app_commands.command(

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 
 from core.sqlite_storage import connect_sqlite, initialize_once
 from core.storage_paths import STATS_DB
@@ -34,6 +35,11 @@ def initialize():
             session_id TEXT, scope TEXT, batch INTEGER, users TEXT NOT NULL,
             state TEXT NOT NULL, retry_at REAL NOT NULL DEFAULT 0, message_id INTEGER,
             PRIMARY KEY(session_id,scope,batch))''')
+        delivery_columns={r[1] for r in conn.execute('PRAGMA table_info(squad_interest_delivery)')}
+        if 'revision' not in delivery_columns:
+            conn.execute("ALTER TABLE squad_interest_delivery ADD COLUMN revision TEXT NOT NULL DEFAULT ''")
+        if 'context' not in delivery_columns:
+            conn.execute("ALTER TABLE squad_interest_delivery ADD COLUMN context TEXT NOT NULL DEFAULT '{}'")
         columns = {r[1] for r in conn.execute('PRAGMA table_info(squad_interest_members)')}
         for name, definition in [('kind', "TEXT NOT NULL DEFAULT 'always'"),
                                  ('excluded_session', "TEXT NOT NULL DEFAULT ''")]:
@@ -184,17 +190,27 @@ def pending_deliveries(session_id,scope,now=None):
             (session_id,scope,time.time() if now is None else now))]
 
 
+def delivery_context(session_id,scope,context):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        scope=_scope(conn,scope)
+        conn.execute("UPDATE squad_interest_delivery SET context=? WHERE session_id=? AND scope=? AND context='{}'",
+                     (json.dumps(context),session_id,scope))
+
+
 def claim_delivery(session_id,scope,batch):
     initialize()
     with connect_sqlite(STATS_DB) as conn:
         scope=_scope(conn,scope)
-        return bool(conn.execute("UPDATE squad_interest_delivery SET state='uncertain' WHERE session_id=? AND scope=? AND batch=? AND state='pending'",
-                                 (session_id,scope,batch)).rowcount)
+        revision=uuid.uuid4().hex
+        changed=conn.execute("UPDATE squad_interest_delivery SET state='uncertain',revision=? WHERE session_id=? AND scope=? AND batch=? AND state='pending'",
+                              (revision,session_id,scope,batch)).rowcount
+        return revision if changed else None
 
 
-def finish_delivery(session_id,scope,batch,*,message_id=None,retry=False,now=None):
+def finish_delivery(session_id,scope,batch,*,message_id=None,retry=False,now=None,expected_revision=None):
     initialize()
     with connect_sqlite(STATS_DB) as conn:
         scope=_scope(conn,scope)
-        conn.execute("UPDATE squad_interest_delivery SET state=?,message_id=?,retry_at=? WHERE session_id=? AND scope=? AND batch=? AND state='uncertain'",
-                     ('pending' if retry else 'sent',message_id,(time.time() if now is None else now)+60 if retry else 0,session_id,scope,batch))
+        conn.execute("UPDATE squad_interest_delivery SET state=?,message_id=?,retry_at=? WHERE session_id=? AND scope=? AND batch=? AND state='uncertain' AND (? IS NULL OR revision=?)",
+                     ('pending' if retry else 'sent',message_id,(time.time() if now is None else now)+60 if retry else 0,session_id,scope,batch,expected_revision,expected_revision))
