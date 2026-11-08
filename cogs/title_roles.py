@@ -201,6 +201,9 @@ class TitleRoles(commands.Cog):
         current=next((a['label'] for a in snap['awards'] if a['milestone_id']==snap['selected']),'不展示稱號')
         state=await self.status(inter.guild,inter.user.id,snap)
         embed=discord.Embed(title='🏅 管理稱號',description=f'目前展示：**{discord.utils.escape_markdown(current)}**\n{state}\n已解鎖 {len(snap["awards"])} 個稱號｜第 {page+1} 頁\n只可展示一個；更換時會移除舊稱號 Role。')
+        unlocked={a['milestone_id'] for a in snap['awards']}
+        next_goals=[m for m in milestones() if m.key.startswith('count:') and m.key not in unlocked][:3]
+        if next_goals:embed.add_field(name='🔒 下一批稱號',value='\n'.join(f'{m.label}：收藏 {m.target} 款不同酒' for m in next_goals)+f'\n目前已收藏 {len(snap["names"])} 款；主題稱號條件可到「主題酒單」查看。',inline=False)
         await inter.followup.send(embed=embed,view=Titles(self,inter.user.id,snap,page),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
     async def menu_entry(self,inter):await self.show_titles(inter)
 
