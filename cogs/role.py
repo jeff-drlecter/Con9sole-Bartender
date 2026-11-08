@@ -7,7 +7,7 @@ from discord.ext import commands
 
 import config
 from core.safe_send import send_or_followup
-from core.permissions import is_admin_or_helper, is_helper
+from core.permissions import is_admin_or_helper, is_helper, is_server_admin
 
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 MOD_ROLE_ID = config.MOD_ROLE_ID
@@ -221,6 +221,10 @@ class RoleManager(commands.Cog):
                 "❌ 請只填其中一個：target_member 或 target_role（不可同時填）。",
                 ephemeral=True,
             )
+            return
+
+        if target_role is not None and not is_server_admin(inter.user):
+            await send_or_followup(inter, content="❌ 批量角色操作只限管理員。", ephemeral=True)
             return
 
         guild = inter.guild

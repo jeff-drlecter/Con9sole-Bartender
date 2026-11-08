@@ -85,7 +85,7 @@ async def open_admin_tool_menu(cog: object, interaction: discord.Interaction) ->
     await send_or_followup(
         interaction,
         embed=build_admin_tool_embed(interaction.user),
-        view=AdminToolView(cog),
+        view=AdminToolView(cog, member=interaction.user),
         ephemeral=True,
     )
 

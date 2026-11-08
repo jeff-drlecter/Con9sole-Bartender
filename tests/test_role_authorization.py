@@ -101,6 +101,7 @@ class RoleAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.target.remove_roles.assert_not_awaited()
 
     async def test_bulk_skips_higher_members_and_processes_lower_members(self):
+        self.actor.guild_permissions = discord.Permissions(administrator=True)
         group = Role(70, 1)
         high = member(12, 40)
         high.roles.append(group)
@@ -110,6 +111,12 @@ class RoleAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             await self.apply(bulk=group)
         high.add_roles.assert_not_awaited()
         self.target.add_roles.assert_awaited_once()
+
+    async def test_helper_cannot_bulk_change_even_safe_roles(self):
+        group = Role(70, 1)
+        self.target.roles.append(group)
+        await self.apply(bulk=group)
+        self.target.add_roles.assert_not_awaited()
 
     async def test_bulk_privileged_role_is_rejected_before_first_member(self):
         group = Role(70, 1)

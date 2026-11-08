@@ -22,7 +22,7 @@ from discord import app_commands
 
 import config
 from core.json_storage import atomic_write_json, load_json_object
-from core.permissions import is_admin_or_helper
+from core.permissions import is_server_admin
 
 log = logging.getLogger("con9sole-bartender.activity-reminder")
 
@@ -36,8 +36,8 @@ except Exception:
     TZ = None
 
 
-def user_is_admin_or_helper(inter: discord.Interaction) -> bool:
-    return is_admin_or_helper(inter.user)
+def user_is_server_admin(inter: discord.Interaction) -> bool:
+    return is_server_admin(inter.user)
 
 
 @dataclass
@@ -364,7 +364,7 @@ class ActivityReminder(commands.Cog):
         return items[:25]
 
     @app_commands.guild_only()
-    @app_commands.check(lambda i: user_is_admin_or_helper(i))
+    @app_commands.check(lambda i: user_is_server_admin(i))
     @app_commands.command(name="activity_add", description="新增活動（可包含首個時段）")
     @app_commands.describe(
         name="活動名稱",
@@ -413,7 +413,7 @@ class ActivityReminder(commands.Cog):
         )
 
     @app_commands.guild_only()
-    @app_commands.check(lambda i: user_is_admin_or_helper(i))
+    @app_commands.check(lambda i: user_is_server_admin(i))
     @app_commands.command(name="activity_add_time", description="為現有活動新增一個時段")
     @app_commands.describe(
         activity_id="活動（可用自動完成）",
@@ -453,7 +453,7 @@ class ActivityReminder(commands.Cog):
         )
 
     @app_commands.guild_only()
-    @app_commands.check(lambda i: user_is_admin_or_helper(i))
+    @app_commands.check(lambda i: user_is_server_admin(i))
     @app_commands.command(name="activity_set", description="修改活動的頻道或 tag 角色")
     @app_commands.describe(
         activity_id="活動（可用自動完成）",
@@ -499,7 +499,7 @@ class ActivityReminder(commands.Cog):
         )
 
     @app_commands.guild_only()
-    @app_commands.check(lambda i: user_is_admin_or_helper(i))
+    @app_commands.check(lambda i: user_is_server_admin(i))
     @app_commands.command(name="activity_remove_time", description="刪除活動某個時段（用 index）")
     @app_commands.describe(
         activity_id="活動（可用自動完成）",
@@ -530,7 +530,7 @@ class ActivityReminder(commands.Cog):
         )
 
     @app_commands.guild_only()
-    @app_commands.check(lambda i: user_is_admin_or_helper(i))
+    @app_commands.check(lambda i: user_is_server_admin(i))
     @app_commands.command(name="activity_delete", description="刪除整個活動")
     @app_commands.describe(activity_id="活動（可用自動完成）")
     @app_commands.autocomplete(activity_id=activity_autocomplete)
@@ -547,7 +547,7 @@ class ActivityReminder(commands.Cog):
         await inter.response.send_message(f"✅ 已刪除活動：**{act.name}**", ephemeral=True)
 
     @app_commands.guild_only()
-    @app_commands.check(lambda i: user_is_admin_or_helper(i))
+    @app_commands.check(lambda i: user_is_server_admin(i))
     @app_commands.command(name="activity_list", description="列出所有活動及時段")
     async def activity_list(self, inter: discord.Interaction):
         if not self.activities:

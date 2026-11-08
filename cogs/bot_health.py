@@ -3,16 +3,37 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import config
-from core.permissions import is_admin_or_helper
+from core.permissions import can_use_staff_tool, is_server_admin
+from core.ui import SafeView
 from features.bot_health import storage_health
+
+
+class HealthView(SafeView):
+    def __init__(self, member):
+        super().__init__(timeout=180)
+        self.owner = member.id
+        if is_server_admin(member):
+            from features.notification_review_views import open_reviews
+            review = discord.ui.Button(label='處理待查通知', emoji='📬')
+            review.callback = open_reviews
+            self.add_item(review)
+        from features.drink_views import FeatureButton
+        self.add_item(FeatureButton(label='返回管理工具', emoji='🛠️', cog='Menu', method='open_admin_tool_from_button', row=0))
+
+    async def interaction_check(self, interaction):
+        current = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        if interaction.guild_id == config.GUILD_ID and interaction.user.id == self.owner and can_use_staff_tool(current, 'bot_health'):
+            return True
+        await interaction.response.send_message('權限已改變或面板唔屬於你，請重新開啟。', ephemeral=True)
+        return False
 
 
 class BotHealth(commands.Cog):
     def __init__(self,bot):self.bot=bot
 
     async def menu_entry(self,interaction):
-        if interaction.guild_id!=config.GUILD_ID or not is_admin_or_helper(interaction.user):
-            await interaction.response.send_message('只限本伺服器管理員／Helper 使用。',ephemeral=True)
+        if interaction.guild_id!=config.GUILD_ID or not can_use_staff_tool(interaction.user, "bot_health"):
+            await interaction.response.send_message('只限本伺服器管理員／Mod／Helper 使用。',ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True,thinking=True)
         embed=discord.Embed(title='🩺 Bot 系統狀態',description='唯讀檢查；唔會修改 XP、角色或重發通知。')
@@ -42,12 +63,7 @@ class BotHealth(commands.Cog):
             health=await asyncio.to_thread(storage_health,levels.ledger.path,interaction.guild_id)
             for name,values in health.items():
                 embed.add_field(name=name,value='｜'.join(f'{key}：{value}' for key,value in values.items()),inline=False)
-        from features.notification_review_views import OwnedReview,open_reviews
-        view=OwnedReview(interaction.user.id)
-        review=discord.ui.Button(label='處理待查通知',emoji='📬')
-        review.callback=open_reviews;view.add_item(review)
-        from features.drink_views import FeatureButton
-        view.add_item(FeatureButton(label='返回管理工具',emoji='🛠️',cog='Menu',method='open_admin_tool_from_button',row=0))
+        view=HealthView(interaction.user)
         await interaction.followup.send(embed=embed,view=view,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))

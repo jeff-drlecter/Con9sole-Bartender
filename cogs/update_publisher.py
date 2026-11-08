@@ -9,7 +9,7 @@ import discord
 from discord.ext import commands
 
 import config
-from core.permissions import is_admin_or_helper
+from core.permissions import is_server_admin
 from core.safe_send import send_or_followup
 from features.update_publisher import (
     AnnouncementDraft,
@@ -34,7 +34,7 @@ MAX_GAMES_PER_DRAFT = 5
 
 
 def _publisher_access_allowed(interaction: discord.Interaction) -> bool:
-    return interaction.guild is not None and is_admin_or_helper(interaction.user)
+    return interaction.guild is not None and is_server_admin(interaction.user)
 
 
 def _publisher_intro() -> discord.Embed:
@@ -63,7 +63,7 @@ class PublisherStartView(discord.ui.View):
             await interaction.response.send_message("呢份草稿工具只限開啟者使用。", ephemeral=True)
             return False
         if not _publisher_access_allowed(interaction):
-            await interaction.response.send_message("❌ 需要 Admin、Manage Server 或 Helper 權限。", ephemeral=True)
+            await interaction.response.send_message("❌ 需要 Administrator 或 Manage Server 權限。", ephemeral=True)
             return False
         return True
 
@@ -380,7 +380,7 @@ class AnnouncementDetailsModal(discord.ui.Modal, title="更新公告資料"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not _publisher_access_allowed(interaction):
-            await interaction.response.send_message("❌ 需要 Admin、Manage Server 或 Helper 權限。", ephemeral=True)
+            await interaction.response.send_message("❌ 需要 Administrator 或 Manage Server 權限。", ephemeral=True)
             return
         if parse_announcement_version(self.version) is None:
             await interaction.response.send_message("版本請填 v大.小.修訂，例如 v3.9.0（亦接受 v3.9）。", ephemeral=True)
@@ -491,7 +491,7 @@ class DraftReviewView(discord.ui.View):
             await interaction.response.send_message("呢份草稿只限建立者使用。", ephemeral=True)
             return False
         if not _publisher_access_allowed(interaction):
-            await interaction.response.send_message("❌ 需要 Admin、Manage Server 或 Helper 權限。", ephemeral=True)
+            await interaction.response.send_message("❌ 需要 Administrator 或 Manage Server 權限。", ephemeral=True)
             return False
         return True
 
@@ -643,7 +643,7 @@ class UpdatePublisher(commands.Cog):
         if not _publisher_access_allowed(interaction):
             await send_or_followup(
                 interaction,
-                content="❌ 需要 Admin、Manage Server 或 Helper 權限。",
+                content="❌ 需要 Administrator 或 Manage Server 權限。",
                 ephemeral=True,
             )
             return

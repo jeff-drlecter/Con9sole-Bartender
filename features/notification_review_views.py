@@ -3,7 +3,7 @@ import re
 import discord
 import config
 from core.action_guard import shared_async_lock
-from core.permissions import is_admin_or_helper
+from core.permissions import is_server_admin
 from core.ui import SafeView,SafeModal
 from features import notification_review as store
 
@@ -12,7 +12,7 @@ STATE={'pending':'待發送','uncertain':'待核對','failed':'明確未送出'}
 
 async def permitted(inter,owner):
     current=inter.guild.get_member(inter.user.id) if inter.guild else None
-    return inter.guild_id==config.GUILD_ID and inter.user.id==owner and current is not None and is_admin_or_helper(current)
+    return inter.guild_id==config.GUILD_ID and inter.user.id==owner and current is not None and is_server_admin(current)
 
 
 class OwnedReview(SafeView):
@@ -25,7 +25,7 @@ class OwnedReview(SafeView):
 
 async def open_reviews(inter):
     if not await permitted(inter,inter.user.id):
-        await inter.response.send_message('只限本伺服器管理員／Helper。',ephemeral=True);return
+        await inter.response.send_message('只限本伺服器管理員。',ephemeral=True);return
     await inter.response.defer(ephemeral=True,thinking=True)
     levels=inter.client.get_cog('CommunityLevels')
     rows=await asyncio.to_thread(store.subscription_rows,inter.guild_id)

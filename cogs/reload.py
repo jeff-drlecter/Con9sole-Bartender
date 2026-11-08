@@ -8,13 +8,13 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from core.permissions import is_admin_or_helper
+from core.permissions import is_server_admin
 
 COGS_DIR = Path(__file__).resolve().parent
 
 
 def can_use_reload(member: discord.Member | discord.User) -> bool:
-    return is_admin_or_helper(member)
+    return is_server_admin(member)
 
 
 def _list_cogs_package() -> list[str]:
@@ -100,13 +100,13 @@ class Reload(commands.Cog):
             parts.append("❌ 失敗：\n- " + "\n- ".join(fail_list))
         return "\n".join(parts) if parts else "⚠️ 無可重載的 cogs。"
 
-    @app_commands.command(name="reload", description="重載所有或指定 Bot 模組（Admin / Helper）")
+    @app_commands.command(name="reload", description="重載所有或指定 Bot 模組（Admin）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.describe(cog="可選：指定 cog 名稱，例如 menu / drink / cheers；留空＝全部")
     async def reload_cmd(self, inter: discord.Interaction, cog: Optional[str] = None):
         if not can_use_reload(inter.user):
             await inter.response.send_message(
-                "❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 `/reload`。",
+                "❌ 你需要 `Administrator` 或 `Manage Server` 權限 先可以使用 `/reload`。",
                 ephemeral=True,
             )
             return

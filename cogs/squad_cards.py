@@ -13,7 +13,7 @@ from discord.ext import commands, tasks
 
 import config
 from core.json_storage import atomic_write_json, load_json_object
-from core.permissions import is_admin_or_helper
+from core.permissions import is_admin_or_helper, is_server_admin
 from core.action_guard import shared_async_lock
 from core.storage_paths import DATA_DIR
 from core.ui import SafeView
@@ -731,7 +731,7 @@ class SquadCards(commands.Cog):
 
     @app_commands.command(name="squad_setup", description="設定自動組隊卡：一人留滿30秒後發召人卡")
     @app_commands.guild_only()
-    @app_commands.check(lambda i: is_admin_or_helper(i.user))
+    @app_commands.check(lambda i: is_server_admin(i.user))
     async def squad_setup(self, interaction: discord.Interaction,
                           category: discord.CategoryChannel, destination: discord.TextChannel):
         permissions = destination.permissions_for(interaction.guild.me)
