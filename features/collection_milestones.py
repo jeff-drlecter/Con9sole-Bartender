@@ -162,6 +162,8 @@ def select_title(guild_id: int | None, user_id: int, milestone_id: str) -> bool:
                 "DELETE FROM drink_collection_titles WHERE guild_key=? AND user_id=?",
                 (guild_key(guild_id), user_id),
             )
+            from features.title_roles import enqueue_in
+            enqueue_in(conn,guild_id,user_id)
             return True
         owned = conn.execute(
             "SELECT 1 FROM drink_milestones WHERE guild_key=? AND user_id=? AND milestone_id=?",
@@ -177,4 +179,6 @@ def select_title(guild_id: int | None, user_id: int, milestone_id: str) -> bool:
             "INSERT INTO drink_collection_titles VALUES (?, ?, ?) ON CONFLICT(guild_key,user_id) DO UPDATE SET milestone_id=excluded.milestone_id",
             (guild_key(guild_id), user_id, milestone_id),
         )
+        from features.title_roles import enqueue_in
+        enqueue_in(conn,guild_id,user_id)
         return True

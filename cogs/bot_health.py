@@ -28,6 +28,15 @@ class BotHealth(commands.Cog):
             if name=='SquadCards' and cog and getattr(cog,'last_error',None):text+='｜有待查錯誤'
             if name=='SquadCards' and cog:text+=f"｜更新循環 {'運行中' if cog.tick.is_running() else '已停止'}"
             embed.add_field(name=label,value=text,inline=False)
+        titles=self.bot.get_cog('TitleRoles')
+        title_status='未載入'
+        if titles:
+            from features.title_roles import queue_status,settings,safe_role
+            count=len(await asyncio.to_thread(queue_status,interaction.guild_id))
+            cfg=await asyncio.to_thread(settings,interaction.guild_id)
+            unsafe=sum(not safe_role(interaction.guild,interaction.guild.get_role(rid),titles.levels()) for rid in cfg['mapping'].values())
+            title_status=f"已載入｜同步循環 {'運行中' if titles.tick.is_running() else '已停止'}｜待同步 {count} 人｜待修正 Role {unsafe} 個"
+        embed.add_field(name='展示稱號',value=title_status,inline=False)
         levels=self.bot.get_cog('CommunityLevels')
         if levels:
             health=await asyncio.to_thread(storage_health,levels.ledger.path,interaction.guild_id)

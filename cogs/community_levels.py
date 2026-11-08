@@ -589,6 +589,11 @@ class CommunityLevels(commands.Cog):
         try:
             collection=await asyncio.to_thread(collection_snapshot,inter.guild_id,target.id)
             e.add_field(name='🍾 酒吧收藏',value=f'已收藏 {len(collection["names"]):,} 款酒',inline=False)
+            title=next((a['label'] for a in collection['awards'] if a['milestone_id']==collection['selected']),None)
+            if title:
+                titles=self.bot.get_cog('TitleRoles')
+                status=await titles.status(inter.guild,target.id,collection) if titles else 'Role 同步功能未載入'
+                e.add_field(name='🏅 展示稱號',value=discord.utils.escape_markdown(title)+'\n'+status,inline=False)
         except Exception:
             log.exception('Could not load member card collection')
             e.add_field(name='🍾 酒吧收藏',value='暫時讀取唔到，請稍後再試。',inline=False)
