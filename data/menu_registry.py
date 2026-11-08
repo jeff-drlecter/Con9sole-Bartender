@@ -358,6 +358,7 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("drink_leaderboard", "酒吧排行榜", "🍸", "secondary", "rankings", 1, "Drink", "leaderboard_entry"),
     ],
     "social": [
+        MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "social", 1, "SquadCards"),
         MenuItem("cheers", "打氣", "🎉", "success", "social", 0, "Cheers"),
         MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
     ],
