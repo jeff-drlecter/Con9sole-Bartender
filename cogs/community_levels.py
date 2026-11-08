@@ -17,7 +17,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
-from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
+from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice, build_level_notice_embed
 from features.level_history import HistoryAudit
 from features.level_activation import readiness as activation_readiness,commit as activation_commit,role_plan as activation_role_plan,pending_count as activation_pending
 from features.level_role_drill import restore as restore_role_drill
@@ -57,7 +57,7 @@ def replacement_preflight(guild,rewards,announcement=None):
         if role is None or not reward_role_safe(role,me):raise ValueError('等級角色失效、權限不安全或高於 Bot。')
     if announcement is not None:
         perms=announcement.permissions_for(me)
-        if not (perms.view_channel and perms.send_messages):raise ValueError('Bot 未能查看／發送升級公告。')
+        if not (perms.view_channel and perms.send_messages and perms.embed_links):raise ValueError('Bot 需要查看、發送訊息及嵌入連結權限先可發升級公告。')
     return actual
 
 
@@ -345,8 +345,18 @@ class CommunityLevels(commands.Cog):
             if crossed and isinstance(channel,discord.TextChannel):
                 name=REWARD_NAMES.get(max(crossed),'會員')
                 try:
-                    await channel.send(render_notice(self.cfg,member,new,max(crossed)),
-                        allowed_mentions=discord.AllowedMentions(users=self.cfg['announcement_ping'],roles=False,everyone=False))
+                    me=getattr(member.guild,'me',None)
+                    if me is not None:
+                        perms=channel.permissions_for(me)
+                        if not (perms.view_channel and perms.send_messages and perms.embed_links):
+                            log.warning('Level announcement needs View, Send and Embed Links permissions')
+                            return False
+                    embed=build_level_notice_embed(self.cfg,member,new,max(crossed))
+                    # Embed mentions alone do not notify. Preserve the existing
+                    # opt-in and template mention requirement, scoped to this member.
+                    ping=bool(self.cfg['announcement_ping'] and re.search(r'<@!?'+str(member.id)+r'>',embed.description))
+                    await channel.send(content=member.mention if ping else None,embed=embed,
+                        allowed_mentions=discord.AllowedMentions(users=[member] if ping else False,roles=False,everyone=False,replied_user=False))
                     await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)
                 except discord.HTTPException:
                     log.warning('Level announcement failed')
