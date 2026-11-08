@@ -236,6 +236,27 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('等級15',sent['embed'].description)
         self.assertEqual(sent['allowed_mentions'].to_dict(),{'parse':[]})
 
+    async def test_missing_embed_permission_leaves_notice_pending(self):
+        channel=self.announcement_channel()
+        self.guild.me=object()
+        channel.permissions_for.return_value=discord.Permissions(view_channel=True,send_messages=True,embed_links=False)
+        self.total(threshold(15))
+        await self.cog.apply_rewards(self.member,(threshold(14),threshold(15)))
+        channel.send.assert_not_awaited()
+        self.assertEqual(self.cog.ledger.notice_level(1,10,0),14)
+        channel.permissions_for.return_value=discord.Permissions(view_channel=True,send_messages=True,embed_links=True)
+        await self.cog.apply_rewards(self.member,(threshold(15),threshold(15)))
+        channel.send.assert_awaited_once()
+
+    async def test_nickname_mention_template_keeps_only_target_notification(self):
+        channel=self.announcement_channel()
+        self.cog.cfg.update(level_templates={},announcement_template='恭喜 <@!10>！Lv.{level}',announcement_ping=True)
+        self.total(threshold(15))
+        await self.cog.apply_rewards(self.member,(threshold(14),threshold(15)))
+        sent=channel.send.call_args.kwargs
+        self.assertEqual(sent['content'],self.member.mention)
+        self.assertEqual(sent['allowed_mentions'].to_dict(),{'users':[10],'parse':[]})
+
     async def test_failed_notice_is_retried_on_later_reconciliation(self):
         channel = self.announcement_channel()
         channel.send.side_effect = [
