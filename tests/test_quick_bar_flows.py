@@ -59,6 +59,12 @@ class DrinkDeliveryTests(unittest.IsolatedAsyncioTestCase):
         embeds = [call.kwargs['embed'] for call in i.edit_original_response.call_args_list if 'embed' in call.kwargs]
         self.assertTrue(any(field.value == '會員 XP +1' for embed in embeds for field in embed.fields))
 
+    async def test_unpersisted_drink_does_not_complete_daily_task(self):
+        self.record.side_effect = None
+        self.record.return_value = False
+        await self.cog.do_drink(interaction())
+        self.cog._complete_daily_bar.assert_not_awaited()
+
     async def test_delivered_result_commits_cooldown_history_and_event(self):
         i = interaction()
         self.assertTrue(await self.cog.do_drink(i))

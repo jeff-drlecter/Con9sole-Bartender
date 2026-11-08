@@ -272,7 +272,8 @@ class Drink(commands.Cog):
                         "Theme notice remains pending: interaction=%s", interaction.id
                     )
             await self._record_usage(interaction, feature=usage_feature)
-            await self._complete_daily_bar(interaction, usage_feature)
+            if recorded:
+                await self._complete_daily_bar(interaction, usage_feature)
             return True
 
     async def menu_entry(self, interaction: discord.Interaction) -> None:

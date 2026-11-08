@@ -18,9 +18,16 @@ async def reward_task(bot, interaction):
 async def complete_task(bot, interaction, feature):
     from features.daily_bar import complete_daily_bar_task
     from features.menu_stats import run_stats
-    completed = await run_stats(complete_daily_bar_task, guild_id=interaction.guild_id,
-                                user_id=interaction.user.id, feature_key=feature)
-    reward = await reward_task(bot, interaction)
+    from datetime import datetime
+    joined = getattr(interaction.user, 'joined_at', None)
+    joined_since = joined.timestamp() if isinstance(joined, datetime) else 0
+    try:
+        completed = await run_stats(complete_daily_bar_task, guild_id=interaction.guild_id,
+            user_id=interaction.user.id, feature_key=feature, joined_since=joined_since)
+        reward = await reward_task(bot, interaction)
+    except Exception:
+        log.exception('Task bookkeeping failed after successful action: interaction=%s', interaction.id)
+        return
     if completed or reward:
         try:
             await interaction.followup.send(reward or '📅 每日任務已完成！獎勵會喺等級系統可用時核對。', ephemeral=True)

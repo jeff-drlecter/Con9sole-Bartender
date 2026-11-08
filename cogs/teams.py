@@ -236,6 +236,8 @@ class Teams(commands.Cog):
             self.states[message.id] = state
             self.views[message.id] = view
             await record_usage("team", interaction.user.id, interaction.guild_id)
+            from features.member_activity import complete_task
+            await complete_task(self.bot, interaction, "team")
             return True
 
     def build_message(self, state: TeamState) -> str:

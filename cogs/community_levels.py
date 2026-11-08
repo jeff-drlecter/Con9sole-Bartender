@@ -188,6 +188,7 @@ class CommunityLevels(commands.Cog):
         if not member or member.guild.id!=config.GUILD_ID or self.cfg['mode']=='off' or not eligible(member,channel,self.cfg):
             return
         multiplier=self.cfg['booster_multiplier'] if member.premium_since else 1
+        stamp = time.time() if now is None else now
         async with self.lock:
             if self.cfg['mode']=='off' or not eligible(member,channel,self.cfg):return
             if not await self.ensure_current_membership(member,time.time()):return
@@ -198,8 +199,16 @@ class CommunityLevels(commands.Cog):
                 if not self.gateway_confirmed or not self.bot.is_ready() or len(cohort)<2 or member.id not in {m.id for m in cohort}:
                     return
             result=await asyncio.to_thread(self.ledger.award,config.GUILD_ID,member.id,source,event,
-                                          time.time() if now is None else now,multiplier=multiplier)
+                                          stamp,multiplier=multiplier)
         if result and self.cfg['mode']=='active':
+            from features.daily_bar import get_daily_bar_task
+            if source in ('text', 'voice') and get_daily_bar_task(member.guild.id,
+                    now=datetime.fromtimestamp(stamp, timezone.utc)).key == source:
+                from types import SimpleNamespace
+                try:
+                    await self.task_credit(SimpleNamespace(user=member, guild_id=member.guild.id, channel=channel), now=stamp)
+                except Exception:
+                    log.exception('Daily task reward remains retryable: user=%s', member.id)
             await self.apply_rewards(member,result)
         return result
 
@@ -223,20 +232,58 @@ class CommunityLevels(commands.Cog):
     async def drink_credit(self,interaction):
         return await self.action_credit(interaction,f'drink:{interaction.id}')
 
-    async def task_credit(self,interaction):
-        from features.daily_bar import get_daily_bar_completion
+    async def daily_task_status(self, interaction, *, now=None):
+        from features.daily_bar import get_daily_bar_task, get_daily_bar_completion
         from datetime import datetime, timezone
-        now=time.time()
-        member=interaction.user
-        if not member or not interaction.guild_id or member.guild.id!=config.GUILD_ID:return None
+        stamp = time.time() if now is None else now
+        current = datetime.fromtimestamp(stamp, timezone.utc)
+        task = get_daily_bar_task(interaction.guild_id, now=current)
+        completion = await asyncio.to_thread(get_daily_bar_completion, interaction.guild_id, interaction.user.id, now=current)
+        joined = self.member_joined(interaction.user) or 0
+        valid_completion = completion is not None and completion['task_key'] == task.key and datetime.fromisoformat(completion['completed_at']).timestamp() >= joined
+        progress = task.target if valid_completion else 0
+        if task.key in ('text', 'voice'):
+            progress = min(task.target, await asyncio.to_thread(self.ledger.daily_task_count,
+                interaction.guild_id, interaction.user.id, task.key, stamp, joined=joined))
+        proof = await asyncio.to_thread(self.ledger.event_proof, interaction.guild_id,
+            f'daily-task:{calendar(stamp)[0]}:{interaction.user.id}')
+        if proof:
+            reward = '✅ 已入帳 +5 XP（計入本週排名）'
+        elif valid_completion or progress >= task.target:
+            reward = '⏳ 已完成，獎勵待核對；符合計分資格後重新整理即可重試。'
+        else:
+            reward = '🎁 完成額外 +5 XP；每人每日一次。'
+        if self.cfg.get('mode') != 'active' and not proof:
+            reward += '\n等級系統暫未正式計分，現時不會發放 XP。'
+        return dict(progress=progress, reward_state=reward, now=current)
+
+    async def task_credit(self, interaction, *, now=None):
+        from features.daily_bar import get_daily_bar_task, get_daily_bar_completion, complete_daily_bar_task
+        from datetime import datetime, timezone
+        now = time.time() if now is None else now
+        member = interaction.user
+        if not member or not interaction.guild_id or member.guild.id != config.GUILD_ID:
+            return None
+        current = datetime.fromtimestamp(now, timezone.utc)
         async with self.lock:
-            if self.cfg['mode']!='active' or not eligible(member,interaction.channel,self.cfg):return None
-            if not await self.ensure_current_membership(member,now):return None
-            completed=await asyncio.to_thread(get_daily_bar_completion,interaction.guild_id,member.id,now=datetime.fromtimestamp(now,timezone.utc))
-            if completed is None:return None
-            result=await asyncio.to_thread(self.ledger.daily_bonus,interaction.guild_id,member.id,calendar(now)[0],now)
+            if self.cfg['mode'] != 'active' or not eligible(member, interaction.channel, self.cfg):
+                return None
+            if not await self.ensure_current_membership(member, now):
+                return None
+            joined = self.member_joined(member) or 0
+            task = get_daily_bar_task(interaction.guild_id, now=current)
+            if task.key in ('text', 'voice'):
+                progress = await asyncio.to_thread(self.ledger.daily_task_count, interaction.guild_id,
+                    member.id, task.key, now, joined=joined)
+                if progress >= task.target:
+                    await asyncio.to_thread(complete_daily_bar_task, guild_id=interaction.guild_id,
+                        user_id=member.id, feature_key=task.key, joined_since=joined, now=current)
+            completed = await asyncio.to_thread(get_daily_bar_completion, interaction.guild_id, member.id, now=current)
+            if completed is None or completed['task_key'] != task.key or datetime.fromisoformat(completed['completed_at']).timestamp() < joined:
+                return None
+            result = await asyncio.to_thread(self.ledger.daily_bonus, interaction.guild_id, member.id, calendar(now)[0], now)
         if result:
-            await self.apply_rewards(member,result)
+            await self.apply_rewards(member, result)
             return '📅 每日任務獎勵 +5 XP！'
         return None
 

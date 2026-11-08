@@ -31,6 +31,7 @@ class DailyBarTask:
     description: str
     method: str
     note: str
+    target: int = 1
 
 
 DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
@@ -39,7 +40,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🍹",
         title="叫一杯酒",
         description="今日搵酒保幫你調一杯特選飲品。",
-        method="用 `/drink`，或者喺 Quick Bar 撳 🍹。",
+        method="用 `/drink`，或者喺吧枱撳「飲一杯」。",
         note="完成後再打開今日任務，就會見到完成狀態。",
     ),
     DailyBarTask(
@@ -47,7 +48,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🥂",
         title="請一位成員飲一杯酒",
         description="揀一位成員，請佢飲一杯酒保特選。",
-        method="用 `/drink to:@成員`，或者喺 Quick Bar 撳「請人飲」揀對方。",
+        method="用 `/drink to:@成員`，或者喺吧枱撳「請人飲」揀對方。",
         note="賜酒 cooldown 會照常運作。",
     ),
     DailyBarTask(
@@ -55,7 +56,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🎉",
         title="打一次氣",
         description="喺吧枱送出一句打氣說話。",
-        method="喺「更多」撳「打氣」，或者用打氣功能。",
+        method="喺「更多玩法 → 社群互動」撳「打氣」，或者用打氣功能。",
         note="每日一句，輕輕鬆鬆暖下場。",
     ),
     DailyBarTask(
@@ -63,7 +64,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🙌",
         title="幫一位成員打氣",
         description="揀一位成員，送一句打氣畀對方。",
-        method="喺「更多」撳「幫人打氣」，再揀一位成員。",
+        method="喺「更多玩法 → 社群互動」撳「幫人打氣」，再揀一位成員。",
         note="見到邊個需要加油，就順手撐一撐佢。",
     ),
     DailyBarTask(
@@ -71,9 +72,24 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🍾",
         title="打開酒單收藏",
         description="睇下你最近解鎖咗咩酒款。",
-        method="用 `/drink_collection`，或者喺「更多」撳「我的收藏」。",
+        method="用 `/drink_collection`，或者喺「更多玩法 → 我的紀錄」撳「我的收藏」。",
         note="收藏榜同酒保紀錄會隨住叫酒慢慢豐富。",
     ),
+)
+
+
+# Freeze the deployed task schedule through today's HK midnight.
+COMMUNITY_TASKS_START = "2026-11-09"
+COMMUNITY_TASKS = DAILY_BAR_TASKS[:4] + (
+    DailyBarTask("text", "💬", "參與三次有效文字交流", "累積三次通過原有計分規則嘅文字參與。",
+                 "去你已加入嘅文字頻道傾偈；每次須通過原有文字／互動共用 CD。",
+                 "只計成功入帳次數；連續刷訊息、查看面板及匯入紀錄唔計。", 3),
+    DailyBarTask("voice", "🎧", "同隊友完成一段有效語音", "完成一次有效語音計分。",
+                 "與至少一位有效真人留喺可計分語音房，完成原有語音計分週期。",
+                 "沿用現有語音 CD；AFK、耳聾、舞台聽眾等排除規則不變。"),
+    DailyBarTask("team", "👥", "開一個組隊招募", "成功建立並保存一張組隊招募卡。",
+                 "喺吧枱撳「搵人玩」，填好招募內容並成功發出。",
+                 "只開啟表格、取消或發送失敗都唔計；每人每日獎勵仍然只得一次。"),
 )
 
 
@@ -114,8 +130,9 @@ def _today_key(guild_id: int | None, *, now: datetime | None = None) -> str:
 def get_daily_bar_task(guild_id: int | None, *, now: datetime | None = None) -> DailyBarTask:
     key = _today_key(guild_id, now=now)
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    index = int(digest[:8], 16) % len(DAILY_BAR_TASKS)
-    return DAILY_BAR_TASKS[index]
+    tasks = COMMUNITY_TASKS if _current_date(now=now) >= COMMUNITY_TASKS_START else DAILY_BAR_TASKS
+    index = int(digest[:8], 16) % len(tasks)
+    return tasks[index]
 
 
 def get_daily_bar_completion(
@@ -145,6 +162,7 @@ def complete_daily_bar_task(
     guild_id: int | None,
     user_id: int,
     feature_key: str,
+    joined_since: float = 0,
     now: datetime | None = None,
 ) -> bool:
     current = _local_now(now)
@@ -156,6 +174,9 @@ def complete_daily_bar_task(
     day = current.date().isoformat()
     try:
         with connect_sqlite(STATS_DB) as conn:
+            if joined_since:
+                conn.execute("DELETE FROM daily_bar_completions WHERE guild_id IS ? AND user_id=? AND day=? AND julianday(completed_at)<julianday(?)",
+                    (guild_id, user_id, day, datetime.fromtimestamp(joined_since, HK_TZ).isoformat()))
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO daily_bar_completions (
@@ -192,13 +213,17 @@ def build_daily_bar_embed(
     *,
     user: discord.abc.User,
     now: datetime | None = None,
+    progress: int | None = None,
+    reward_state: str | None = None,
 ) -> discord.Embed:
     current = _local_now(now)
     task = get_daily_bar_task(guild_id, now=current)
     status = _completion_text(guild_id, user.id, now=current)
+    if progress is not None:
+        status = f"{min(progress, task.target)}／{task.target}" + (" · 已完成 ✅" if progress >= task.target else " · 未完成")
 
     embed = discord.Embed(
-        title="📅 今日吧枱任務",
+        title="📅 今日小任務",
         description=(
             f"歡迎回來，{user.mention}。\n\n"
             "今日有個細任務畀你。\n"
@@ -222,6 +247,7 @@ def build_daily_bar_embed(
         value=status,
         inline=False,
     )
+    embed.add_field(name="額外獎勵", value=reward_state or "完成後自動核對 +5 XP；每人每日一次。", inline=False)
     embed.add_field(
         name="備註",
         value=task.note,
