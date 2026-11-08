@@ -4,21 +4,22 @@ The owner explicitly accepts public-leaderboard XP with unique current account-a
 
 The full observed120 ranks must be present, captured recently, and all ten actual level-role IDs verified. The source capture time is preserved, never refreshed by re-submitting old data. Plans capture per-member source kind, roster hash and role mapping. Commit uses role/ledger locks, rechecks current identities/roles, creates a verified backup, replaces the baseline transactionally and archives the pre-capture shadow ledger. Post-capture accepted events are replayed; cooldowns are retained. Retrying the same plan is idempotent. Old Amari weekly balances remain unknown; historical bonus remains separate. Formal role/announcement activation remains gated independently.
 
-# Current replacement status — 2026-11-07 (Hong Kong)
+# Current deployed status — 2026-11-08 (Hong Kong)
 
-**Preview enabled; formal role/announcement replacement remains gated.** The owner-approved approximate baseline is complete. The historical divider below contains old blockers and must not be read as current migration policy.
+**ACTIVE: Con9sole-Bartender took over at10:28 Hong Kong.** The owner-approved hybrid baseline, ordinary historical compensation, actual voice awards and test-account role recovery are complete. This replaces the earlier NO-GO status for the current accepted scope; dated audit entries below are history.
 
-| Area | Verified current state | Remaining work |
+| Area | Verified result | Practical boundary |
 | --- | --- | --- |
-| Baseline | Full120 public rows captured;87 unique current aliases plus5 role floors committed, with verified backup and archived shadow; live Top10 agrees |19 unmatched public ranks held;101 members without evidence unchanged;12 Unknown treated departed |
-| XP rules | Text/activity share60s,1 baseXP, no extra activity daily cap; Booster×2; voice25XP/300s with2 eligible humans | Live voice/reconnect and role recovery drill |
-| Activity | Actual ordinary/pet application response payloads and single award verified | Historical shared-text cooldown evidence and bonus commit |
-| Historical audit | Full1,898-scope text audit complete; shared-CD net replay and archived/live reconciliation verified | Retained-history ordinary-rate compensation completed for two verified members, with backup; historical Booster/deleted-message data not inferred |
-| Rewards | Missing-role reconciliation fails closed; complete10-role preflight and safe configuration command added | All10 mappings passed live hierarchy/permissions and were configured in preview; all-member reconciliation/restore drill remains |
-| Weekly | New calendar weeks retained; old Amari weekly XP unknown | Never fabricate old weekly balances |
-| Activation | Hard-disabled independently of baseline | Finish live acceptance and recovery evidence; disable Amari rewards before takeover |
+| Baseline | Full120 public rows;87 unique current aliases plus5 role floors committed with backup;12 Unknown treated departed |19 unmatched ranks held; members without evidence were not assigned invented zero profiles |
+| Historical activity | Full1,898-scope retained-text scan; shared60s net replay; two members compensated once with verified backup |Deleted messages and historical Booster bonuses not inferred; old Amari weekly balances unknown |
+| Text/Bot | Shared60s,1 ordinaryXP, no extra activity cap, Booster×2 |Third-party activity requires a supported, allowlisted observable result; private interactions are not globally observable |
+| Voice | Actual four-person call credited25XP each after five minutes; timer and attendance-race defects fixed |AFK/deaf/stage listeners excluded; no invented offline attendance |
+| Roles | All10 safe mappings verified; real test Lv30 role removed/restored; reviewed cutover plan had1upgrade,91keep,101untouched,0held |Missing-profile role holders/conflicts/protected downgrades block takeover |
+| Cutover | Complete managed-role snapshot and verified backup; active settings/jobs/watermarks committed atomically; initial queue drained |No historical upgrade-announcement burst; all accepted scores retained |
+| Old Amari | Everyone blacklisted, voice disabled, announcements off, rewards verified empty |Old XP retained; restore mappings/settings from the captured snapshot if reverse cutover is required |
+| Validation |333 tests pass plus independent audit and live acceptance |This is evidence for the accepted Con9sole scope, not a guarantee of zero future bugs or universal Amari feature parity |
 
-The signed-in Developer Portal limitation no longer blocks the authorized hybrid baseline. No further API export is required for that completed operation. Public exact scores and role-floor approximations retain their separate provenance.
+No manual public announcement or old-XP deletion was performed. The current admin panel reports active and completed role reconciliation. Historical entries below retain prior findings and do not reimpose an official lossless export prerequisite.
 
 ---
 # Historical audit trail (superseded where the current table differs)

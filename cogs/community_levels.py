@@ -172,7 +172,7 @@ class CommunityLevels(commands.Cog):
     async def settings_embed(self):
         cfg=self.cfg
         e=discord.Embed(title='🎖️ Con9sole 等級管理',color=0xe5b65b,
-                       description=f"狀態：**{cfg['mode']}**\n試行會記錄獨立 XP，但唔派角色／發升級公告。")
+                       description=f"狀態：**{cfg['mode']}**\n"+({'active':'已正式計分及維護等級角色；公告按設定發送。','preview':'試行計分中，暫不派角色或發升級公告。','off':'計分已暫停，現有 XP 會保留。'}[cfg['mode']]))
         cap_note=f"Bot 活動每日最多 {cfg['activity_daily_cap']} 次" if cfg['activity_daily_cap'] else 'Bot 活動冇額外每日上限'
         e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
@@ -498,7 +498,7 @@ class CommunityLevels(commands.Cog):
         e=discord.Embed(title='🎖️ 會員等級',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
         e.add_field(name='總榜排名',value=str(position) if position else '未上榜')
         e.add_field(name='XP 來源',value=f"文字 {p['text']:,}｜互動 {p['activity']:,}｜語音 {p['voice']:,}\n匯入基準 {p['imported']:,}",inline=False)
-        e.set_footer(text=f'模式：{self.cfg["mode"]}｜獨立計分，未同步 Amari；管理調整另計')
+        e.set_footer(text=f'模式：{self.cfg["mode"]}｜'+('已正式接管；管理調整另計' if self.cfg['mode']=='active' else '試行／暫停資料；管理調整另計'))
         await inter.followup.send(embed=e,allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='leaderboard',description='查看總榜或香港時間每週榜')
