@@ -79,6 +79,9 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
 }
 
 NO_COOLDOWN_ITEM_IDS = {
+    "community_rank",
+    "community_leaderboard",
+    "community_weekly",
     "team",
     "tempvc",
     "tempvc_control",

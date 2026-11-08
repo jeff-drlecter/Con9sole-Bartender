@@ -196,6 +196,17 @@ class CommunityLevels(commands.Cog):
                                           time.time() if now is None else now,multiplier=multiplier)
         if result and self.cfg['mode']=='active':
             await self.apply_rewards(member,result)
+        return result
+
+    async def drink_credit(self,interaction):
+        result=await self.credit(interaction.user,interaction.channel,'activity',f'i:drink:{interaction.id}')
+        if not result or self.cfg['mode']!='active':
+            return None
+        before,after=result
+        text=f'會員 XP +{after-before}'
+        if level_for(after)>level_for(before):
+            text+=f' · 升至 Lv.{level_for(after)}！'
+        return text
 
     async def apply_rewards(self,member,result):
         async with self.role_lock:
@@ -451,6 +462,12 @@ class CommunityLevels(commands.Cog):
     async def admin_entry(self,inter):
         await self.panel.callback(self,inter)
 
+    async def leaderboard_entry(self,inter):
+        await self.leaderboard.callback(self,inter,weekly=False,page=1,period=None)
+
+    async def weekly_entry(self,inter):
+        await self.leaderboard.callback(self,inter,weekly=True,page=1,period=None)
+
     @levels.command(name='voice_check',description='唯讀核對現有語音出席、排除原因、計時及語音XP')
     @app_commands.default_permissions(manage_guild=True)
     async def voice_check(self,inter:discord.Interaction):
@@ -495,11 +512,19 @@ class CommunityLevels(commands.Cog):
         earned=p['total']-threshold(level)
         required=threshold(level+1)-threshold(level)
         filled=min(10,earned*10//required)
-        e=discord.Embed(title='🎖️ 會員等級',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
+        e=discord.Embed(title='🎖️ 我的會員卡' if target.id==inter.user.id else '🎖️ 會員卡',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
         e.add_field(name='總榜排名',value=str(position) if position else '未上榜')
         e.add_field(name='XP 來源',value=f"文字 {p['text']:,}｜互動 {p['activity']:,}｜語音 {p['voice']:,}\n匯入基準 {p['imported']:,}",inline=False)
         e.set_footer(text=f'模式：{self.cfg["mode"]}｜'+('已正式接管；管理調整另計' if self.cfg['mode']=='active' else '試行／暫停資料；管理調整另計'))
-        await inter.followup.send(embed=e,allowed_mentions=discord.AllowedMentions.none())
+        from features.collection_milestones import collection_snapshot
+        from features.drink_views import MemberCardView
+        try:
+            collection=await asyncio.to_thread(collection_snapshot,inter.guild_id,target.id)
+            e.add_field(name='🍾 酒吧收藏',value=f'已收藏 {len(collection["names"]):,} 款酒',inline=False)
+        except Exception:
+            log.exception('Could not load member card collection')
+            e.add_field(name='🍾 酒吧收藏',value='暫時讀取唔到，請稍後再試。',inline=False)
+        await inter.followup.send(embed=e,view=MemberCardView(),allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='leaderboard',description='查看總榜或香港時間每週榜')
     async def leaderboard(self,inter:discord.Interaction,weekly:bool=False,page:app_commands.Range[int,1,10000]=1,period:str|None=None):

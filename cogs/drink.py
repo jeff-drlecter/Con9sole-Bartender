@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import inspect
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
@@ -243,9 +244,20 @@ class Drink(commands.Cog):
                     "飲品已送出，但收藏紀錄暫時保存唔到；請通知管理員，唔使重複叫酒。",
                     ephemeral=True,
                 )
+            xp_hint = None
             if recorded:
-                self.bot.dispatch("community_activity", interaction.user, interaction.channel,
-                                  f"drink:{interaction.id}")
+                levels = self.bot.get_cog("CommunityLevels")
+                credit = getattr(levels, "drink_credit", None)
+                if inspect.iscoroutinefunction(credit):
+                    try:
+                        xp_hint = await credit(interaction)
+                    except Exception:
+                        log.exception("Drink XP feedback failed: interaction=%s", interaction.id)
+                else:
+                    self.bot.dispatch("community_activity", interaction.user, interaction.channel,
+                                      f"drink:{interaction.id}")
+            if xp_hint:
+                result_embed.add_field(name="🎖️ 會員進度", value=xp_hint, inline=False)
             if recorded and progress.get("is_new"):
                 text = f"酒譜已收藏 {progress['total']} 款。"
                 if progress.get("unlocked"):
@@ -255,6 +267,7 @@ class Drink(commands.Cog):
                         + "！已加入收酒者嘅收藏頁。"
                     )
                 result_embed.add_field(name="✨ 新收藏", value=text, inline=False)
+            if recorded and (progress.get("is_new") or xp_hint):
                 try:
                     await interaction.edit_original_response(
                         embed=result_embed,
