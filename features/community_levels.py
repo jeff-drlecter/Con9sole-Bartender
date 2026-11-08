@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -93,6 +94,42 @@ class Ledger:
             db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(guild,json.dumps(value)))
         return value
 
+    @staticmethod
+    def _clear_membership(db,guild,user,now):
+        row=db.execute('SELECT * FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()
+        periods=db.execute('SELECT * FROM periods WHERE guild=? AND user=?',(guild,user)).fetchall()
+        if row:
+            db.execute('INSERT INTO departed_users(guild,user,stamp,snapshot) VALUES(?,?,?,?)',
+                       (guild,user,now,json.dumps(dict(xp=row,periods=periods))))
+        for table in ('xp','periods','cooldowns','bindings','notice_state','role_jobs','repair_attempts'):
+            db.execute(f'DELETE FROM {table} WHERE guild=? AND user=?',(guild,user))
+
+    def ensure_membership(self,guild,user,joined,now,*,previous_join=None):
+        """Fence a membership generation and seed proven returners once, without weekly XP."""
+        with connect_sqlite(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            raw=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+            cfg={**DEFAULTS,**(json.loads(raw[0]) if raw else {})}
+            records=dict(cfg.get('member_lifecycles',{}));key=str(user);prior=records.get(key)
+            if prior and joined<prior['joined']:return False
+            same=prior and prior['joined']==joined
+            if same and prior.get('departed'):return False
+            if same:return True
+            returning=bool(prior or (previous_join is not None and previous_join!=joined) or
+                db.execute('SELECT 1 FROM departed_users WHERE guild=? AND user=? LIMIT 1',(guild,user)).fetchone())
+            reset=cfg['mode']=='active' and cfg['clear_on_leave'] and returning
+            if reset:
+                self._clear_membership(db,guild,user,now)
+                base=threshold(5)
+                db.execute('INSERT INTO xp(guild,user,total,imported) VALUES(?,?,?,?)',(guild,user,base,base))
+                db.execute('INSERT INTO notice_state VALUES(?,?,?)',(guild,user,5))
+                db.execute('INSERT INTO role_jobs VALUES(?,?,?,?)',(guild,user,base,base))
+            records[key]=dict(joined=joined,departed=False,returning=returning,
+                              reset_at=joined if reset else (prior or {}).get('reset_at'),seeded=reset)
+            cfg['member_lifecycles']=records
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(guild,json.dumps(cfg)))
+        return True
+
     def award(self, guild, user, source, event, now, *, multiplier=1):
         if source not in ('text','activity','voice'):
             raise ValueError('Unknown XP source')
@@ -134,6 +171,23 @@ class Ledger:
                        (guild,user,week,amount))
         return old, old+amount
 
+    def daily_bonus(self,guild,user,day,now):
+        """One +5 task reward per Hong Kong day; no engagement cooldown changes."""
+        if day != calendar(now)[0]:raise ValueError('Invalid task day')
+        with connect_sqlite(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+            if not row or json.loads(row[0]).get('mode')!='active':return None
+            if not db.execute('INSERT OR IGNORE INTO xp_events VALUES(?,?,?,?,?,?)',
+                              (guild,f'daily-task:{day}:{user}',user,'daily_task',5,now)).rowcount:return None
+            db.execute('INSERT OR IGNORE INTO xp(guild,user) VALUES(?,?)',(guild,user))
+            old=db.execute('SELECT total FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()[0]
+            db.execute('UPDATE xp SET total=total+5,activity=activity+5 WHERE guild=? AND user=?',(guild,user))
+            db.execute('INSERT INTO periods VALUES(?,?,?,?) ON CONFLICT(guild,user,week) DO UPDATE SET points=points+excluded.points',
+                       (guild,user,calendar(now)[1],5))
+            db.execute('INSERT INTO role_jobs VALUES(?,?,?,?) ON CONFLICT(guild,user) DO UPDATE SET total=excluded.total',(guild,user,old+5,old))
+        return old,old+5
+
     def profile(self, guild, user):
         with connect_sqlite(self.path) as db:
             row = db.execute('SELECT total,text,activity,voice,imported FROM xp WHERE guild=? AND user=?',
@@ -174,7 +228,10 @@ class Ledger:
         with connect_sqlite(self.path) as db:
             live=db.execute("SELECT event,user,source,amount,stamp FROM xp_events WHERE guild=? AND source IN ('text','activity') AND stamp>=? AND stamp<=?",(guild,start,cutoff)).fetchall()
             archived=db.execute("SELECT s.events FROM hybrid_shadow s JOIN hybrid_plans p ON p.plan=s.plan AND p.guild=s.guild WHERE s.guild=? AND p.state='applied'",(guild,)).fetchall()
-        retained={row[0]:dict(user=row[1],source=row[2],amount=row[3],stamp=row[4]) for row in live}
+        lifecycles=self.settings(guild).get('member_lifecycles',{})
+        retained={row[0]:dict(user=row[1],source=row[2],amount=row[3],stamp=row[4]) for row in live
+                  if not lifecycles.get(str(row[1]),{}).get('departed') and
+                  row[4]>=(lifecycles.get(str(row[1]),{}).get('reset_at') or 0)}
         shadow={}
         for (encoded,) in archived:
             for event,user,source,amount,stamp in json.loads(encoded):
@@ -204,19 +261,55 @@ class Ledger:
             if row is None: return None
             return 1+db.execute('SELECT count(*) FROM xp WHERE guild=? AND (total>? OR (total=? AND user<?))',(guild,row[0],row[0],user)).fetchone()[0]
 
-    def member_left(self,guild,user,now):
+    def member_left(self,guild,user,now,joined=None):
         with connect_sqlite(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
-            row=db.execute('SELECT * FROM xp WHERE guild=? AND user=?',(guild,user)).fetchone()
-            periods=db.execute('SELECT * FROM periods WHERE guild=? AND user=?',(guild,user)).fetchall()
-            if row:
-                db.execute('INSERT INTO departed_users(guild,user,stamp,snapshot) VALUES(?,?,?,?)',(guild,user,now,json.dumps(dict(xp=row,periods=periods))))
-            for table in ('xp','periods','cooldowns','bindings','notice_state','role_jobs','repair_attempts'):
-                db.execute(f'DELETE FROM {table} WHERE guild=? AND user=?',(guild,user))
+            raw=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+            cfg={**DEFAULTS,**(json.loads(raw[0]) if raw else {})}
+            records=dict(cfg.get('member_lifecycles',{}));key=str(user);prior=records.get(key)
+            if joined is not None and prior and prior['joined']!=joined:return False
+            if prior and prior.get('departed'):return False
+            self._clear_membership(db,guild,user,now)
+            records[key]={**(prior or {}),'joined':joined if joined is not None else (prior or {}).get('joined',0),
+                          'departed':True,'reset_at':now}
+            cfg['member_lifecycles']=records
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(guild,json.dumps(cfg)))
+        return True
 
     def claim_weekly_notice(self,guild,period):
         with connect_sqlite(self.path) as db:
             return bool(db.execute('INSERT OR IGNORE INTO weekly_notices VALUES(?,?)',(guild,period)).rowcount)
+
+    def begin_weekly_publication(self,guild,period):
+        with connect_sqlite(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            raw=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+            cfg={**DEFAULTS,**(json.loads(raw[0]) if raw else {})}
+            publications=dict(cfg.get('weekly_publications',{}));old=publications.get(period)
+            if not old and db.execute('SELECT 1 FROM weekly_notices WHERE guild=? AND period=?',(guild,period)).fetchone():
+                old=dict(state='uncertain',attempt='legacy')
+            if old and old['state']!='failed':
+                if old['state']=='pending':old={**old,'state':'uncertain'}
+                publications[period]=old
+                claimed=False
+            else:
+                old=dict(state='pending',attempt=uuid.uuid4().hex)
+                publications[period]=old;claimed=True
+            cfg['weekly_publications']=publications
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(guild,json.dumps(cfg)))
+        return {**old,'claimed':claimed}
+
+    def finish_weekly_publication(self,guild,period,attempt,state,message=None):
+        if state not in ('sent','failed','uncertain'):raise ValueError('Invalid publication state')
+        with connect_sqlite(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            raw=db.execute('SELECT value FROM settings WHERE guild=?',(guild,)).fetchone()
+            cfg=json.loads(raw[0]);publications=dict(cfg.get('weekly_publications',{}))
+            old=publications.get(period)
+            if not old or old['attempt']!=attempt:return
+            publications[period]={**old,'state':state,'message':message}
+            cfg['weekly_publications']=publications
+            db.execute('UPDATE settings SET value=? WHERE guild=?',(json.dumps(cfg),guild))
 
     def release_weekly_notice(self,guild,period):
         with connect_sqlite(self.path) as db:db.execute('DELETE FROM weekly_notices WHERE guild=? AND period=?',(guild,period))

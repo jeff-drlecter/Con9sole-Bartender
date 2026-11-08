@@ -25,18 +25,20 @@ This is a source review with isolated tests, not a claim of exhaustive live acce
 | Subscription actions | Fixed game/user event ID suppressed all later XP | Receipt now includes interaction ID; successful new subscriptions remain subject to shared cooldown |
 | Role tools | Helper could use Bot hierarchy to grant dangerous roles | Central actor authorization, dangerous-permission and target hierarchy checks across slash/menu/bulk; mapped level roles must use level management |
 | UI / help | Old Amari prompt and missing level help / stats labels | Member-level wording and current help/labels aligned |
-| Recruitment notifications | Reservation consumes one-shot subscriptions before Discord send | Still open: distinguish pending/sent/failed without blindly replaying an uncertain send |
-| Returning members | Required Lv5 baseline missing; stale lifecycle events can overwrite/recreate XP | Still open: membership-generation fencing and one return baseline; separate release and race tests required |
-| Exclusions | Queued event can outlive eligibility change | Still open: recheck text/activity eligibility inside ledger lock |
-| Level audit / import | Retained inventory and hybrid overwrite safety gaps | Still open: reset generations and incompatible-import guard |
-| Weekly publisher | Cancellation can leave a claimed but unsent result | Still open: recoverable pending/sent state |
-| Voice / role repair | Slow role REST work shares voice timer work | Review bounded repair budget before claiming fault isolation |
-| Operational health | Several individual state stores and background loops | Still needed: one read-only health dashboard for scoring, storage, voice, notices and pending retries; no silent success when a subsystem fails |
+| Recruitment notifications | Reservation consumes one-shot subscriptions before Discord send | Durable per-batch pending/sent/uncertain delivery, 60-second retry for explicit 4xx rejection; uncertain sends require inspection and are not replayed. Current channel permissions are rechecked. |
+| Returning members | Required Lv5 baseline missing; stale lifecycle events can overwrite/recreate XP | Durable joined-at generation and departure markers; known returning members seed 355 once; old actions/departures cannot overwrite a new membership. No weekly credit for the baseline. |
+| Exclusions | Queued event can outlive eligibility change | Eligibility rechecked inside ledger lock, including task rewards |
+| Level audit / import | Retained inventory and hybrid overwrite safety gaps | Inventory respects membership reset/departure; raw importer rejects hybrid, historical-bonus and activation state, including changes during backup |
+| Weekly publisher | Cancellation can leave a claimed but unsent result | Durable pending/sent/failed/uncertain states. Explicit rejection can retry; uncertain cancellation or transport outcome is reported for review rather than called already sent. |
+| Voice / role repair | Slow role REST work shares voice timer work | Role-repair work has a five-second per-tick budget; durable jobs remain retryable. Source whitelist updates reconcile thread membership immediately. |
+| Operational health | Several individual state stores and background loops | Admin System Status / bot_health checks subsystem loading, voice/card loops, SQLite health, role queue and uncertain notices. Checks are read-only and never create missing databases. |
 
 Independent reviewer reproduced the role escalation using fake Discord members only.
 No evidence of live exploitation or historical score corruption was established.
 No public announcement, production score edit or subscription replay is part of this review.
 
-Validation for this local integration round: 356 tests pass, including 10 role authorization
-regressions, subscription receipt separation, shared action single-path handling and daily
+Validation before final release: 375 tests pass after the follow-up changes, including 10 role authorization
+regressions, lifecycle races, import races, health read-only checks, notification receipts, shared action handling and daily
 bonus cooldown/receipt/midnight tests. Live acceptance and deployment are separate states.
+
+Remaining operational boundaries: Discord sends and SQLite acknowledgements cannot be globally atomic. Unknown send outcomes are held for administrator inspection. No deleted historical activity is reconstructed; existing unknown pre-deployment membership history is not invented. These changes do not claim universal third-party private interaction observability or perfect feature parity with every Amari feature.

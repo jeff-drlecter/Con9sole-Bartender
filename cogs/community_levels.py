@@ -138,6 +138,7 @@ class CommunityLevels(commands.Cog):
         self.history_channels={}
         self.history_discovery=set()
         self.role_restore_after=0
+        self.departing_members={}
 
     async def cog_load(self):
         self.ledger=await asyncio.to_thread(Ledger)
@@ -188,6 +189,10 @@ class CommunityLevels(commands.Cog):
             return
         multiplier=self.cfg['booster_multiplier'] if member.premium_since else 1
         async with self.lock:
+            if self.cfg['mode']=='off' or not eligible(member,channel,self.cfg):return
+            if not await self.ensure_current_membership(member,time.time()):return
+            joined=self.member_joined(member)
+            if joined is not None and now is not None and now<joined:return
             if source=='voice':
                 cohort=voice_members(channel,self.cfg) if channel.id!=afk_id(channel.guild) else []
                 if not self.gateway_confirmed or not self.bot.is_ready() or len(cohort)<2 or member.id not in {m.id for m in cohort}:
@@ -197,6 +202,23 @@ class CommunityLevels(commands.Cog):
         if result and self.cfg['mode']=='active':
             await self.apply_rewards(member,result)
         return result
+
+    @staticmethod
+    def member_joined(member):
+        joined=getattr(member,'joined_at',None)
+        return joined.timestamp() if isinstance(joined,datetime) else None
+
+    async def ensure_current_membership(self,member,now):
+        """Caller holds ledger lock; reject queued actions from an older membership."""
+        joined=self.member_joined(member)
+        if joined is None:return not isinstance(member,discord.Member)
+        get_member=getattr(member.guild,'get_member',None)
+        current=get_member(member.id) if callable(get_member) else member
+        if current is None or self.member_joined(current)!=joined:return False
+        if self.cfg['mode']=='active':
+            return await asyncio.to_thread(self.ledger.ensure_membership,member.guild.id,member.id,joined,now,
+                previous_join=self.departing_members.get(member.id))
+        return True
 
     async def drink_credit(self,interaction):
         return await self.action_credit(interaction,f'drink:{interaction.id}')
@@ -209,6 +231,7 @@ class CommunityLevels(commands.Cog):
         if not member or not interaction.guild_id or member.guild.id!=config.GUILD_ID:return None
         async with self.lock:
             if self.cfg['mode']!='active' or not eligible(member,interaction.channel,self.cfg):return None
+            if not await self.ensure_current_membership(member,now):return None
             completed=await asyncio.to_thread(get_daily_bar_completion,interaction.guild_id,member.id,now=datetime.fromtimestamp(now,timezone.utc))
             if completed is None:return None
             result=await asyncio.to_thread(self.ledger.daily_bonus,interaction.guild_id,member.id,calendar(now)[0],now)
@@ -237,6 +260,8 @@ class CommunityLevels(commands.Cog):
                 except discord.HTTPException:
                     log.warning('Could not fetch current level roles; deferred reconciliation')
                     return
+            async with self.lock:
+                if not await self.ensure_current_membership(member,time.time()):return False
             latest=await asyncio.to_thread(self.ledger.profile,member.guild.id,member.id)
             # Supplied award totals may already be superseded by another award or adjustment.
             success=await self._apply_rewards_locked(member,(result[0],latest['total']))
@@ -358,10 +383,29 @@ class CommunityLevels(commands.Cog):
     async def on_member_remove(self,member):
         if member.guild.id!=config.GUILD_ID or self.cfg['mode']!='active' or not self.cfg['clear_on_leave']:
             return
+        joined=self.member_joined(member)
+        self.departing_members[member.id]=joined
         async with self.role_lock:
             async with self.lock:
                 if self.cfg['mode']=='active' and self.cfg['clear_on_leave']:
-                    await asyncio.to_thread(self.ledger.member_left,member.guild.id,member.id,time.time())
+                    current=member.guild.get_member(member.id) if callable(getattr(member.guild,'get_member',None)) else None
+                    if current is not None and self.member_joined(current)!=joined:
+                        await self.ensure_current_membership(current,time.time())
+                    await asyncio.to_thread(self.ledger.member_left,member.guild.id,member.id,time.time(),joined)
+
+    @commands.Cog.listener()
+    async def on_member_join(self,member):
+        if member.bot or member.guild.id!=config.GUILD_ID or self.cfg['mode']!='active':return
+        async with self.lock:
+            await self.ensure_current_membership(member,time.time())
+
+    async def reconcile_memberships(self):
+        if self.cfg.get('mode')!='active':return
+        guild=self.bot.get_guild(config.GUILD_ID)
+        if not guild:return
+        async with self.lock:
+            for member in getattr(guild,'members',[]):
+                if not member.bot:await self.ensure_current_membership(member,time.time())
 
     @commands.Cog.listener()
     async def on_voice_state_update(self,member,before,after):
@@ -390,12 +434,14 @@ class CommunityLevels(commands.Cog):
     async def on_ready(self):
         self.gateway_confirmed=True
         self.voice_clock.clear()
+        await self.reconcile_memberships()
         await self.reconcile_sources()
 
     @commands.Cog.listener()
     async def on_resumed(self):
         self.gateway_confirmed=True
         self.voice_clock.clear()
+        await self.reconcile_memberships()
         await self.reconcile_sources()
 
     async def reconcile_sources(self):
@@ -437,7 +483,10 @@ class CommunityLevels(commands.Cog):
         if self.cfg.get('mode')=='off':
             self.voice_clock.clear()
             return
-        await self.repair_pending()
+        try:
+            async with asyncio.timeout(5):await self.repair_pending()
+        except TimeoutError:
+            log.warning('Role repair timed out; queued jobs retained and voice timer continues')
         now=time.monotonic()
         for channel in guild.voice_channels+guild.stage_channels:
             members=self.reconcile_voice_members(channel,now)
@@ -573,6 +622,7 @@ class CommunityLevels(commands.Cog):
                 sources=[s for s in self.cfg['sources'] if s!=entry]
                 if not remove: sources.append(entry)
                 self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
+        await self.reconcile_sources()
         await inter.followup.send('已更新來源白名單；只會識別支援嘅戰鬥卡格式。')
 
     @levels.command(name='exclude',description='排除或恢復頻道／分類／身份組計分')
@@ -718,12 +768,22 @@ class CommunityLevels(commands.Cog):
         async with self.role_lock:
             if self.cfg['mode']!='active':
                 await inter.followup.send('模式已改變，今次冇發佈。');return
-            if not await asyncio.to_thread(self.ledger.claim_weekly_notice,inter.guild_id,period):
-                await inter.followup.send('呢個期數已發佈過。');return
-            try:await channel.send(embed=embed,allowed_mentions=discord.AllowedMentions.none())
-            except discord.HTTPException:
-                await asyncio.to_thread(self.ledger.release_weekly_notice,inter.guild_id,period)
-                await inter.followup.send('未能發佈，請稍後再試。');return
+            publication=await asyncio.to_thread(self.ledger.begin_weekly_publication,inter.guild_id,period)
+            if not publication['claimed']:
+                await inter.followup.send('呢個期數已發佈過。' if publication['state']=='sent' else
+                    '呢個期數送出結果未能確認；請管理員核對原頻道，暫時唔會自動重發。');return
+            try:
+                message=await channel.send(embed=embed,allowed_mentions=discord.AllowedMentions.none())
+            except (Exception,asyncio.CancelledError) as exc:
+                definite=isinstance(exc,discord.HTTPException) and 400<=exc.status<500 and exc.status!=408
+                await asyncio.shield(asyncio.to_thread(self.ledger.finish_weekly_publication,inter.guild_id,period,
+                    publication['attempt'],'failed' if definite else 'uncertain'))
+                if isinstance(exc,asyncio.CancelledError):raise
+                await inter.followup.send('未能發佈，可以稍後再試。' if definite else
+                    '發佈結果未能確認；請先核對原頻道，暫時唔會自動重發。');return
+            mid=getattr(message,'id',None)
+            await asyncio.to_thread(self.ledger.finish_weekly_publication,inter.guild_id,period,
+                publication['attempt'],'sent',mid if type(mid) is int else None)
         await inter.followup.send('已發佈；歷史週榜保留。')
 
     @levels.command(name='announcements',description='設定升級公告模式及原有各級自訂字句')

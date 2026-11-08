@@ -80,6 +80,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             "**管理工具**\n\n"
             "🎖️ **等級管理** — 計分狀態、角色及等級設定\n"
+            "🩺 **系統狀態** — 查看計分循環、帳本及待發／待查通知\n"
             "📊 **Stats** — Community Bot 使用數據\n"
             "🔄 **Reload** — 重載 Bot cogs\n"
             "🎭 **Role Tools** — 成員角色管理\n"

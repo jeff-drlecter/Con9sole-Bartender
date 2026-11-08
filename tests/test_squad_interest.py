@@ -12,6 +12,20 @@ from quick_bar_fakes import interaction
 
 
 class InterestTests(unittest.IsolatedAsyncioTestCase):
+    def test_delivery_retry_is_durable_and_uncertain_send_is_not_replayed(self):
+        storage.toggle(self.topic['id'],1,10)
+        storage.reserve('session',self.topic['id'],[10],now=100)
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=100),[(0,[10])])
+        self.assertTrue(storage.claim_delivery('session',self.topic['id'],0))
+        self.assertFalse(storage.claim_delivery('session',self.topic['id'],0))
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=200),[])
+        storage.finish_delivery('session',self.topic['id'],0,retry=True,now=200)
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=259),[])
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=260),[(0,[10])])
+        self.assertTrue(storage.claim_delivery('session',self.topic['id'],0))
+        storage.finish_delivery('session',self.topic['id'],0,message_id=333)
+        self.assertEqual(storage.pending_deliveries('session',self.topic['id'],now=300),[])
+
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.patch = patch.object(storage, 'STATS_DB', Path(self.folder.name)/'interest.sqlite3')
