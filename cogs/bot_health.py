@@ -33,7 +33,13 @@ class BotHealth(commands.Cog):
             health=await asyncio.to_thread(storage_health,levels.ledger.path,interaction.guild_id)
             for name,values in health.items():
                 embed.add_field(name=name,value='｜'.join(f'{key}：{value}' for key,value in values.items()),inline=False)
-        await interaction.followup.send(embed=embed,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+        from features.notification_review_views import OwnedReview,open_reviews
+        view=OwnedReview(interaction.user.id)
+        review=discord.ui.Button(label='處理待查通知',emoji='📬')
+        review.callback=open_reviews;view.add_item(review)
+        from features.drink_views import FeatureButton
+        view.add_item(FeatureButton(label='返回管理工具',emoji='🛠️',cog='Menu',method='open_admin_tool_from_button',row=0))
+        await interaction.followup.send(embed=embed,view=view,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)

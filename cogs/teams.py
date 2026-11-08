@@ -368,7 +368,7 @@ class CancelledTeamView(SafeView):
     ) -> None:
         await self.cog.open_team_menu(interaction)
 
-    @discord.ui.button(label="吧枱", emoji="🍸", custom_id="teams:cancelled:menu")
+    @discord.ui.button(label="返回吧枱", emoji="🍸", custom_id="teams:cancelled:menu")
     async def menu_button(
         self, interaction: discord.Interaction, _: discord.ui.Button
     ) -> None:

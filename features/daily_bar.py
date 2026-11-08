@@ -71,7 +71,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🍾",
         title="打開酒單收藏",
         description="睇下你最近解鎖咗咩酒款。",
-        method="用 `/drink_collection`，或者喺主目錄撳「酒單收藏」。",
+        method="用 `/drink_collection`，或者喺「更多」撳「我的收藏」。",
         note="收藏榜同酒保紀錄會隨住叫酒慢慢豐富。",
     ),
 )

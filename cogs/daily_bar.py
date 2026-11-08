@@ -62,6 +62,14 @@ class DailyBarView(discord.ui.View):
         task = get_daily_bar_task(guild_id)
         completed = get_daily_bar_completion(guild_id, user_id) is not None
         self.add_item(DailyBarActionButton(task_key=task.key, emoji=task.emoji, completed=completed))
+        from features.drink_views import FeatureButton
+        for index,(label,emoji,cog,method) in enumerate((
+            ('我的會員卡','🎖️','CommunityLevels','menu_entry'),
+            ('我的收藏','🍾','Drink','collection_entry'),
+            ('重新整理','🔄','DailyBar','menu_entry'),
+            ('返回吧枱','🍸','Menu','open_main_menu'),
+        )):
+            self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=1+index//2))
 
 
 class DailyBar(commands.Cog):

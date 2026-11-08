@@ -163,7 +163,7 @@ def build_drink_leaderboard_embed(
     body = _format_rows(guild, entries, unit=meta["unit"]) or meta["empty"]
 
     embed = discord.Embed(
-        title="🏆 酒保排行榜",
+        title="🏆 酒吧排行榜",
         description=(
             f"{meta['emoji']} **{meta['title']}**\n"
             f"{meta['hint']}\n\n"
@@ -184,6 +184,13 @@ class DrinkLeaderboardView(SafeView):
         super().__init__(timeout=180)
         self.guild = guild
         self.requested_by = requested_by
+        from features.drink_views import FeatureButton
+        for label,emoji,cog,method in (
+            ('我的會員卡','🎖️','CommunityLevels','menu_entry'),
+            ('我的收藏','🍾','Drink','collection_entry'),
+            ('返回吧枱','🍸','Menu','open_main_menu'),
+        ):
+            self.add_item(FeatureButton(label=label,emoji=emoji,cog=cog,method=method,row=1))
 
     async def _show(self, interaction: discord.Interaction, kind: LeaderboardKind) -> None:
         await interaction.response.defer()

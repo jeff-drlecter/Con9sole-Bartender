@@ -14,6 +14,7 @@ from discord.ext import commands, tasks
 import config
 from core.json_storage import atomic_write_json, load_json_object
 from core.permissions import is_admin_or_helper
+from core.action_guard import shared_async_lock
 from core.storage_paths import DATA_DIR
 from core.ui import SafeView
 from features import squad_interest
@@ -554,7 +555,14 @@ class SquadCards(commands.Cog):
 
     async def notify_interested(self, channel, session):
         try:
-            if session['id'] in self.interest_baseline:
+            async with shared_async_lock('subscription-delivery',channel.guild.id if channel else config.GUILD_ID,session['id']):
+                await self._notify_interested_locked(channel,session)
+        except Exception:
+            log.exception('Could not start subscription delivery: session=%s',session.get('id'))
+
+    async def _notify_interested_locked(self, channel, session, retry_batch=None):
+        try:
+            if session['id'] in self.interest_baseline and retry_batch is None:
                 return  # Deployments never tag people for a game already in progress.
             value = interest_topic(channel, session)
             if value is None:
@@ -573,14 +581,19 @@ class SquadCards(commands.Cog):
                 if voice_perms.view_channel and voice_perms.connect and text_perms.view_channel:
                     eligible.append(uid)
             await run_stats(squad_interest.remember, value)
-            await run_stats(squad_interest.reserve, session['id'], value['id'], eligible)
+            if retry_batch is None:
+                await run_stats(squad_interest.reserve, session['id'], value['id'], eligible)
+            await run_stats(squad_interest.delivery_context,session['id'],value['id'],
+                            dict(guild=guild.id,channel=destination.id,card=session['message'],voice=channel.id))
             batches = await run_stats(squad_interest.pending_deliveries, session['id'], value['id'])
+            if retry_batch is not None:batches=[b for b in batches if b[0]==retry_batch]
             if not batches:
                 return
             label = discord.utils.escape_markdown(value['label'])
             url = f"https://discord.com/channels/{guild.id}/{destination.id}/{session['message']}"
             for batch_id, batch in batches:
-                if not await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id):
+                revision=await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id)
+                if not revision:
                     continue
                 allowed=[]
                 for uid in batch:
@@ -591,7 +604,7 @@ class SquadCards(commands.Cog):
                             allowed.append(uid)
                 batch=allowed
                 if not batch:
-                    await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id)
+                    await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,expected_revision=revision)
                     continue
                 mentions = " ".join(f"<@{uid}>" for uid in batch)
                 view = discord.ui.View()
@@ -606,9 +619,9 @@ class SquadCards(commands.Cog):
                             everyone=False, replied_user=False))
                 except discord.HTTPException as exc:
                     if 400<=exc.status<500 and exc.status!=408:
-                        await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,retry=True)
+                        await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,retry=True,expected_revision=revision)
                     raise
-                await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,message_id=message.id)
+                await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,message_id=message.id,expected_revision=revision)
             await self.refresh_interest_cards(value)
         except Exception:
             log.exception("Next-session notification failed: session=%s", session.get('id'))

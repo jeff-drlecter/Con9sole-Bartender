@@ -245,6 +245,9 @@ class ThemeCollectionView(SafeView):
                 )
         self.add_item(ThemeAction(label="全部主題", action="index", row=3))
         self.add_item(ThemeAction(label="收藏總覽", action="collection", row=3))
+        from features.drink_views import FeatureButton
+        self.add_item(FeatureButton(label='我的會員卡',emoji='🎖️',cog='CommunityLevels',method='menu_entry',row=4))
+        self.add_item(FeatureButton(label='返回吧枱',emoji='🍸',cog='Menu',method='open_main_menu',row=4))
         if self.own:
             self.add_item(ThemeAction(label="選用稱號", action="titles", row=3))
         await interaction.edit_original_response(
