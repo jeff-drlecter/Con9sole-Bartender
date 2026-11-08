@@ -97,7 +97,7 @@ class HealthNavigation(unittest.IsolatedAsyncioTestCase):
         from cogs.bot_health import HealthView
         helper = member(helper=True)
         view = HealthView(helper)
-        self.assertEqual({b.label for b in view.children}, {'返回管理工具'})
+        self.assertEqual({b.label for b in view.children}, {'返回管理工具', '重新整理'})
         inter = types.SimpleNamespace(user=helper, guild_id=1,
             guild=types.SimpleNamespace(get_member=lambda uid: helper),
             response=types.SimpleNamespace(send_message=AsyncMock()))
