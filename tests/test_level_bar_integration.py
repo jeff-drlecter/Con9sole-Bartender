@@ -16,7 +16,7 @@ class BarLevelTests(unittest.IsolatedAsyncioTestCase):
             cog.ledger = Ledger(Path(temp) / 'levels')
             cog.cfg = {'mode': 'active'}
             inter = types.SimpleNamespace(guild_id=1, user=types.SimpleNamespace(id=10, mention='<@10>'), response=types.SimpleNamespace(defer=AsyncMock()), followup=types.SimpleNamespace(send=AsyncMock()))
-            with patch('features.collection_milestones.collection_snapshot', return_value={'names': set()}):
+            with patch('features.collection_milestones.collection_snapshot', return_value={'names': set(), 'awards': [], 'selected': None}):
                 await cog.menu_entry(inter)
             inter.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
             inter.response.defer.reset_mock()
@@ -51,8 +51,8 @@ class BarLevelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_card_navigation_fits_and_result_links_to_card(self):
         view = MemberCardView()
-        self.assertEqual({(b.cog_name,b.method) for b in view.children}, {('CommunityLevels','leaderboard_entry'), ('CommunityLevels','weekly_entry'), ('Drink','collection_entry'), ('DailyBar','menu_entry'), ('Menu','open_main_menu')})
-        self.assertLessEqual(len(view.children), 5)
+        self.assertEqual({(b.cog_name,b.method) for b in view.children}, {('CommunityLevels','leaderboard_entry'), ('CommunityLevels','weekly_entry'), ('Drink','collection_entry'), ('DailyBar','menu_entry'), ('Menu','open_main_menu'), ('TitleRoles','menu_entry')})
+        self.assertLessEqual(len(view.children), 6)
         result = DrinkResultView()
         self.assertTrue(result.is_persistent())
         self.assertTrue(any(b.cog_name == 'CommunityLevels' and b.method == 'menu_entry' for b in result.children))

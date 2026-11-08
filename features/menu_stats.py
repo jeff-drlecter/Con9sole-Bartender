@@ -20,6 +20,7 @@ HK_TZ = timezone(timedelta(hours=8))
 COMMUNITY_NAME = getattr(config, "COMMUNITY_NAME", "Con9sole Community")
 
 FEATURE_LABELS: dict[str, str] = {
+    "title_roles_admin": "稱號管理",
     "bot_health": "系統狀態",
     "community_rank": "我的會員卡",
     "community_leaderboard": "等級總榜",

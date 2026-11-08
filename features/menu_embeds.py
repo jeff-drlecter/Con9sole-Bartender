@@ -59,6 +59,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "🏆 **酒吧排行榜**｜查看叫酒 / 賜酒 / 收酒 / 收藏榜\n"
             "📅 **今日任務**｜查看每日吧枱任務\n\n"
             "🎖️ **我的會員卡**｜等級進度、酒吧收藏及等級總榜／本週排名\n"
+            "🏅 **管理稱號**｜預覽選用已解鎖稱號，並同步已綁定嘅 Discord Role\n"
             "成功飲酒或打氣可獲互動 XP，與文字共用冷卻；查看資料唔加 XP。\n\n"
             "🌊 **探索公海**｜瀏覽遊戲以外的公開話題，或前往身份設定開放公海區\n"
             "🔗 **邀請**｜取得社群邀請碼\n"
@@ -80,6 +81,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
         description=(
             "**管理工具**\n\n"
             "🎖️ **等級管理** — 計分狀態、角色及等級設定\n"
+            "🏅 **稱號管理** — 綁定專用 Role、預覽全員同步及重試\n"
             "🩺 **系統狀態** — 查看計分循環、帳本及待發／待查通知\n"
             "📊 **Stats** — Community Bot 使用數據\n"
             "🔄 **Reload** — 重載 Bot cogs\n"

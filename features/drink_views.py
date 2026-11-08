@@ -263,18 +263,10 @@ class CollectionTitleSelect(discord.ui.Select):
                 "只可以更改自己嘅稱號。", ephemeral=True
             )
             return
-        await interaction.response.defer()
-        from features.collection_milestones import select_title
-
-        if not select_title(interaction.guild_id, interaction.user.id, self.values[0]):
-            await interaction.followup.send(
-                "呢個稱號未解鎖，請重新開啟收藏。", ephemeral=True
-            )
-            return
-        view.remove_item(self)
-        await interaction.edit_original_response(
-            embed=build_drink_collection_embed(view.guild, view.target_user), view=view
-        )
+        cog=interaction.client.get_cog('TitleRoles')
+        if cog is None:
+            await interaction.response.send_message('稱號功能暫時未載入，請稍後再試。',ephemeral=True);return
+        await cog.preview(interaction,self.values[0])
 
 
 class CollectionPageButton(discord.ui.Button):
@@ -371,7 +363,9 @@ class MemberNavigationView(SafeView):
 
 
 class MemberCardView(MemberNavigationView):
-    def __init__(self):super().__init__(current='card')
+    def __init__(self):
+        super().__init__(current='card')
+        self.add_item(FeatureButton(label='管理稱號',emoji='🏅',cog='TitleRoles',method='menu_entry',row=0))
 
 
 class LevelBoardView(MemberNavigationView):

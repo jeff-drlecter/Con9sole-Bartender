@@ -33,6 +33,15 @@ def role_change_denial(bot, guild, actor, role, target_member) -> str | None:
         return '❌ 需要 Admin / Helper 權限先可以修改角色。'
     levels = bot.get_cog('CommunityLevels')
     managed = {int(rid) for rid in getattr(levels, 'cfg', {}).get('rewards', {}).values()}
+    titles=bot.get_cog('TitleRoles')
+    title_roles=set(getattr(titles,'managed',()))
+    if isinstance(titles,commands.Cog):
+        try:
+            from features.title_roles import managed_roles
+            title_roles|=managed_roles(guild.id)
+        except Exception:return '❌ 稱號角色保護資料未能讀取，請稍後再試。'
+    if role.id in title_roles:
+        return '❌ 稱號角色由稱號系統管理；請使用管理稱號功能。'
     if role.id in managed:
         return '❌ 等級角色由會員等級系統管理；請使用等級 XP 調整及核對功能。'
     if role.managed or role.is_default():
