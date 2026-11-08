@@ -5,7 +5,7 @@ from pathlib import Path
 
 import discord
 
-from core.permissions import is_admin_or_helper
+from core.permissions import is_admin_or_helper, is_moderator
 
 MENU_COLOR = 0x2B2D31
 COOLDOWN_SECONDS = 3.0
@@ -21,7 +21,7 @@ MENTION_MESSAGE_DEDUPE: dict[int, float] = {}
 
 def can_use_admin(member: discord.Member | discord.User) -> bool:
     """Backward-compatible admin/helper checker."""
-    return is_admin_or_helper(member)
+    return is_admin_or_helper(member) or is_moderator(member)
 
 
 can_use_admin_stats = can_use_admin

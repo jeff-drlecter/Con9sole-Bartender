@@ -45,3 +45,31 @@ def is_verified_member(member: discord.Member | discord.User) -> bool:
         return False
 
     return any(role.id == verified_role_id for role in member.roles)
+
+
+def is_server_admin(member: discord.Member | discord.User) -> bool:
+    """Configuration authority must never come from the Helpers role."""
+    return isinstance(member, discord.Member) and bool(
+        member.guild_permissions.administrator or member.guild_permissions.manage_guild
+    )
+
+
+def is_moderator(member: discord.Member | discord.User) -> bool:
+    if not isinstance(member, discord.Member):
+        return False
+    perms = member.guild_permissions
+    return is_server_admin(member) or (
+        perms.moderate_members is True and perms.manage_messages is True
+    )
+
+
+def can_use_staff_tool(member: discord.Member | discord.User, item_id: str) -> bool:
+    if is_server_admin(member):
+        return True
+    if item_id in {"admin_tool", "admin_stats", "admin_ping", "bot_health"}:
+        return is_helper(member) or is_moderator(member)
+    if item_id == "admin_roles":
+        return is_helper(member)  # single safe role changes retain their own checks
+    if item_id == "admin_vc_teardown":
+        return is_moderator(member)
+    return False

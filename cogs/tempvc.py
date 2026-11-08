@@ -12,7 +12,7 @@ from discord.ext import commands
 
 import config
 from core.action_guard import claim_action, shared_async_lock
-from core.permissions import is_admin_or_helper
+from core.permissions import is_admin_or_helper, is_server_admin, is_moderator
 from core.safe_send import send_or_followup
 from core.ui import SafeModal, SafeView
 from features import tempvc_storage
@@ -125,7 +125,7 @@ def user_can_admin_teardown(member: discord.Member | discord.User) -> bool:
         return False
 
     perms = member.guild_permissions
-    return bool(perms.administrator or perms.manage_channels or is_admin_or_helper(member))
+    return bool(is_server_admin(member) or perms.manage_channels or is_moderator(member))
 
 
 def user_can_change_vc_limit(member: discord.Member) -> bool:
@@ -145,7 +145,7 @@ def user_can_change_vc_limit(member: discord.Member) -> bool:
 
 def user_bypasses_vc_limit_cooldown(member: discord.Member) -> bool:
     perms = member.guild_permissions
-    return bool(perms.administrator or perms.manage_channels or is_admin_or_helper(member))
+    return bool(is_server_admin(member) or perms.manage_channels or is_moderator(member))
 
 
 def _category_from_ctx_channel(
@@ -469,7 +469,7 @@ class AdminTempVCSelectView(SafeView):
             return False
 
         if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Helper / Manage Channels 權限先可以使用。", ephemeral=True)
+            await interaction.response.send_message("❌ 你需要 Admin / Mod / Manage Channels 權限先可以使用。", ephemeral=True)
             return False
 
         return True
@@ -523,7 +523,7 @@ class AdminTempVCConfirmView(SafeView):
             return False
 
         if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Helper / Manage Channels 權限先可以使用。", ephemeral=True)
+            await interaction.response.send_message("❌ 你需要 Admin / Mod / Manage Channels 權限先可以使用。", ephemeral=True)
             return False
 
         return True
@@ -889,7 +889,7 @@ class TempVC(commands.Cog):
         if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
             await _send_interaction_message(
                 interaction,
-                "❌ 你需要 Admin / Helper / Manage Channels 權限先可以使用 VC Teardown。",
+                "❌ 你需要 Admin / Mod / Manage Channels 權限先可以使用 VC Teardown。",
                 ephemeral=True,
             )
             return

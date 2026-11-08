@@ -76,22 +76,23 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
 
 
 def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
+    from core.permissions import can_use_staff_tool
+    entries = [
+        ("community_levels_admin", "🎖️ 等級管理 — 計分、角色及等級設定"),
+        ("title_roles_admin", "🏅 稱號管理 — 綁定 Role 及全員同步"),
+        ("bot_health", "🩺 系統狀態 — 查看計分循環及待查通知"),
+        ("admin_stats", "📊 Stats — Bot 使用數據"),
+        ("admin_reload", "🔄 Reload — 重載 Bot 模組"),
+        ("admin_roles", "🎭 Role Tools — 角色查閱及授權範圍內操作"),
+        ("admin_game_tools", "🎮 Game Tools — 遊戲專區設定"),
+        ("admin_update_publisher", "📣 Update Publisher — 草擬及發佈公告"),
+        ("admin_ping", "🏓 Ping — Bot 回應時間"),
+        ("admin_vc_teardown", "🧹 VC Teardown — 管理 Bot 臨時語音房"),
+    ]
     embed = discord.Embed(
-        title="🛠️ Admin Tool",
-        description=(
-            "**管理工具**\n\n"
-            "🎖️ **等級管理** — 計分狀態、角色及等級設定\n"
-            "🏅 **稱號管理** — 綁定專用 Role、預覽全員同步及重試\n"
-            "🩺 **系統狀態** — 查看計分循環、帳本及待發／待查通知\n"
-            "📊 **Stats** — Community Bot 使用數據\n"
-            "🔄 **Reload** — 重載 Bot cogs\n"
-            "🎭 **Role Tools** — 成員角色管理\n"
-            "🎮 **Game Tools** — `/add_new_game` / `/add_game_version` 使用說明\n"
-            "📣 **Update Publisher** — 草擬、預覽及手動發佈更新公告\n"
-            "🏓 **Ping** — Bot latency\n"
-            "🧹 **VC Teardown** — 列出並刪除 Bot 建立的臨時語音房\n\n"
-            "⬅️ **Menu** — 返回吧枱主頁"
-        ),
+        title="🛠️ 管理及協助工具",
+        description="\n".join(text for key, text in entries if can_use_staff_tool(user, key))
+        + "\n\n⬅️ Menu — 返回吧枱主頁",
         color=MENU_COLOR,
     )
     embed.set_footer(text="Admin 工具只限授權成員使用。")

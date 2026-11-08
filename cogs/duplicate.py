@@ -9,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from core.permissions import is_admin_or_helper
+from core.permissions import is_server_admin
 from features.update_publisher import record_created_game
 from utils import copy_forum_tags, make_private_overwrites
 
@@ -17,7 +17,7 @@ log = logging.getLogger("con9sole-bartender.duplicate")
 
 
 def user_can_manage_games(interaction: discord.Interaction) -> bool:
-    return is_admin_or_helper(interaction.user)
+    return is_server_admin(interaction.user)
 
 
 def _safe_get(obj: object, attr: str, default: Any = None) -> Any:
@@ -477,7 +477,7 @@ class Duplicate(commands.Cog):
             await interaction.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
             return
         if not user_can_manage_games(interaction):
-            await interaction.response.send_message("需要 Administrator、Manage Server 或 Helper 權限。", ephemeral=True)
+            await interaction.response.send_message("需要 Administrator 或 Manage Server 權限。", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -513,7 +513,7 @@ class Duplicate(commands.Cog):
             await interaction.response.send_message("此指令只限指定伺服器使用。", ephemeral=True)
             return
         if not user_can_manage_games(interaction):
-            await interaction.response.send_message("需要 Administrator、Manage Server 或 Helper 權限。", ephemeral=True)
+            await interaction.response.send_message("需要 Administrator 或 Manage Server 權限。", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)

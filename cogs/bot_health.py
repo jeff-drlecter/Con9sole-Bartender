@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import config
-from core.permissions import is_admin_or_helper
+from core.permissions import can_use_staff_tool
 from features.bot_health import storage_health
 
 
@@ -11,8 +11,8 @@ class BotHealth(commands.Cog):
     def __init__(self,bot):self.bot=bot
 
     async def menu_entry(self,interaction):
-        if interaction.guild_id!=config.GUILD_ID or not is_admin_or_helper(interaction.user):
-            await interaction.response.send_message('只限本伺服器管理員／Helper 使用。',ephemeral=True)
+        if interaction.guild_id!=config.GUILD_ID or not can_use_staff_tool(interaction.user, "bot_health"):
+            await interaction.response.send_message('只限本伺服器管理員／Mod／Helper 使用。',ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True,thinking=True)
         embed=discord.Embed(title='🩺 Bot 系統狀態',description='唯讀檢查；唔會修改 XP、角色或重發通知。')

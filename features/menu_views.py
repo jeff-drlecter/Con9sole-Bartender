@@ -17,6 +17,7 @@ from data.menu_registry import (
 )
 from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
+from core.permissions import can_use_staff_tool
 
 log = logging.getLogger("con9sole-bartender.menu.views")
 
@@ -349,7 +350,8 @@ class RegistryMenuView(BaseMenuView):
             if not await self._enforce_cooldown(interaction):
                 return
 
-        if item.admin_only and not await self._require_admin(interaction):
+        if item.admin_only and not can_use_staff_tool(interaction.user, item.id):
+            await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
             return
         if item.cog is None:
             await send_or_followup(
@@ -449,8 +451,12 @@ class LegacyMenuView(RegistryMenuView):
 
 
 class AdminToolView(RegistryMenuView):
-    def __init__(self, cog: object) -> None:
+    def __init__(self, cog: object, member=None) -> None:
         super().__init__(cog, "admin")
+        if member is not None:
+            for button in list(self.children):
+                if isinstance(button, RegistryButton) and button.item.admin_only and not can_use_staff_tool(member, button.item.id):
+                    self.remove_item(button)
 
 
 class HelpMenuView(QuickBarView):

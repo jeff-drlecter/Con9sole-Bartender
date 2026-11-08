@@ -5,6 +5,7 @@ import inspect
 import discord
 
 from core.safe_send import send_or_followup
+from core.permissions import can_use_staff_tool
 from features.menu_helpers import MENU_COLOR, can_use_admin
 from features.menu_stats import build_admin_stats_embed, record_usage, run_stats
 from features.menu_views import AdminToolView
@@ -21,10 +22,13 @@ async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True
 
 
 async def admin_stats_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_stats"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     await safe_defer(interaction, ephemeral=True)
     await record_usage("admin_stats", interaction.user.id, interaction.guild_id)
     embed = await run_stats(build_admin_stats_embed,guild_id=interaction.guild_id, days=7, title_scope="最近 7 日")
-    await send_or_followup(interaction, embed=embed, view=AdminToolView(menu_cog), ephemeral=True)
+    await send_or_followup(interaction, embed=embed, view=AdminToolView(menu_cog, member=interaction.user), ephemeral=True)
 
 
 async def admin_stats_command(interaction: discord.Interaction, *, scope_value: str) -> None:
@@ -54,6 +58,9 @@ async def admin_stats_command(interaction: discord.Interaction, *, scope_value: 
 
 
 async def admin_reload_from_button(interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_reload"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     await safe_defer(interaction, ephemeral=True)
     await record_usage("admin_reload", interaction.user.id, interaction.guild_id)
 
@@ -93,6 +100,9 @@ async def admin_reload_from_button(interaction: discord.Interaction) -> None:
 
 
 async def admin_role_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_roles"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     await record_usage("admin_role", interaction.user.id, interaction.guild_id)
     await send_or_followup(
         interaction,
@@ -103,10 +113,13 @@ async def admin_role_tools_from_button(menu_cog: object, interaction: discord.In
 
 
 async def admin_game_tools_from_button(menu_cog: object, interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_game_tools"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     if not can_use_admin(interaction.user):
         await send_or_followup(
             interaction,
-            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Game Tools。",
+            content="❌ 你需要 `Administrator` 或 `Manage Server` 權限先可以使用 Game Tools。",
             ephemeral=True,
         )
         return
@@ -125,20 +138,23 @@ async def admin_game_tools_from_button(menu_cog: object, interaction: discord.In
         ),
         color=MENU_COLOR,
     )
-    embed.set_footer(text="Game Tools｜Admin / Helper 專用。")
+    embed.set_footer(text="Game Tools｜Admin 專用。")
     await send_or_followup(
         interaction,
         embed=embed,
-        view=AdminToolView(menu_cog),
+        view=AdminToolView(menu_cog, member=interaction.user),
         ephemeral=True,
     )
 
 
 async def admin_update_publisher_from_button(interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_update_publisher"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     if not can_use_admin(interaction.user):
         await send_or_followup(
             interaction,
-            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Update Publisher。",
+            content="❌ 你需要 `Administrator` 或 `Manage Server` 權限先可以使用 Update Publisher。",
             ephemeral=True,
         )
         return
@@ -156,6 +172,9 @@ async def admin_update_publisher_from_button(interaction: discord.Interaction) -
 
 
 async def admin_ping_from_button(interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_ping"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     await safe_defer(interaction, ephemeral=True)
     await record_usage("admin_ping", interaction.user.id, interaction.guild_id)
     latency_ms = round(interaction.client.latency * 1000)
@@ -163,6 +182,9 @@ async def admin_ping_from_button(interaction: discord.Interaction) -> None:
 
 
 async def admin_vc_teardown_from_button(interaction: discord.Interaction) -> None:
+    if not can_use_staff_tool(interaction.user, "admin_vc_teardown"):
+        await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+        return
     await record_usage("admin_vc_teardown", interaction.user.id, interaction.guild_id)
     tempvc_cog = interaction.client.get_cog("TempVC")
     if tempvc_cog and hasattr(tempvc_cog, "teardown_temp_vc_from_menu"):
