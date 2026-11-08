@@ -257,17 +257,28 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent['content'],self.member.mention)
         self.assertEqual(sent['allowed_mentions'].to_dict(),{'users':[10],'parse':[]})
 
-    async def test_ordinary_level_up_is_boxed_but_never_tags(self):
+    async def test_ordinary_level_up_is_plain_text_and_never_tags(self):
         channel=self.announcement_channel()
         self.cog.cfg.update(level_templates={},announcement_template='恭喜 {user.ping} Lv.{level}',announcement_ping=True)
         self.total(threshold(16))
         self.cog.ledger.mark_notice(1,10,15)
         await self.cog.apply_rewards(self.member,(threshold(15),threshold(16)))
         sent=channel.send.call_args.kwargs
-        self.assertIsNone(sent['content'])
-        self.assertNotIn('<@10>',sent['embed'].description)
+        self.assertNotIn('embed',sent)
+        self.assertNotIn('<@10>',sent['content'])
         self.assertEqual(sent['allowed_mentions'].to_dict(),{'parse':[]})
-        self.assertIn('Lv.16',sent['embed'].description)
+        self.assertIn('Lv.16',sent['content'])
+
+    async def test_ordinary_notice_does_not_require_embed_links(self):
+        channel=self.announcement_channel()
+        self.guild.me=object()
+        channel.permissions_for.return_value=discord.Permissions(view_channel=True,send_messages=True,embed_links=False)
+        self.total(threshold(16))
+        self.cog.ledger.mark_notice(1,10,15)
+        await self.cog.apply_rewards(self.member,(threshold(15),threshold(16)))
+        channel.send.assert_awaited_once()
+        self.assertNotIn('embed',channel.send.call_args.kwargs)
+        self.assertEqual(self.cog.ledger.notice_level(1,10,0),16)
 
     async def test_major_milestone_tags_once_even_with_name_only_template(self):
         channel=self.announcement_channel()

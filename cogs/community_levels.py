@@ -345,21 +345,22 @@ class CommunityLevels(commands.Cog):
             if crossed and isinstance(channel,discord.TextChannel):
                 name=REWARD_NAMES.get(max(crossed),'會員')
                 try:
+                    major=any(notified < level <= new for level in REWARD_NAMES)
                     me=getattr(member.guild,'me',None)
                     if me is not None:
                         perms=channel.permissions_for(me)
-                        if not (perms.view_channel and perms.send_messages and perms.embed_links):
-                            log.warning('Level announcement needs View, Send and Embed Links permissions')
+                        if not (perms.view_channel and perms.send_messages and (not major or perms.embed_links)):
+                            log.warning('Level announcement permissions missing')
                             return False
-                    embed=build_level_notice_embed(self.cfg,member,new,max(crossed))
-                    # Ordinary level-ups stay visible but never tag. Major role
-                    # milestones may notify only this member, unless pings are off.
-                    major=any(notified < level <= new for level in REWARD_NAMES)
-                    if not major:
-                        name=discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))
-                        embed.description=re.sub(r'<@!?'+str(member.id)+r'>',lambda _:name,embed.description)
                     ping=bool(self.cfg['announcement_ping'] and major)
-                    await channel.send(content=member.mention if ping else None,embed=embed,
+                    if major:
+                        payload=dict(content=member.mention if ping else None,
+                            embed=build_level_notice_embed(self.cfg,member,new,max(crossed)))
+                    else:
+                        name=discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))
+                        text=render_notice(self.cfg,member,new,max(crossed))
+                        payload=dict(content=re.sub(r'<@!?'+str(member.id)+r'>',lambda _:name,text))
+                    await channel.send(**payload,
                         allowed_mentions=discord.AllowedMentions(users=[member] if ping else False,roles=False,everyone=False,replied_user=False))
                     await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)
                 except discord.HTTPException:
