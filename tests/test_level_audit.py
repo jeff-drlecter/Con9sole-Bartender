@@ -223,6 +223,19 @@ class LevelAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel.send.await_count, 1)
         self.assertEqual(self.cog.ledger.notice_level(1, 10, 0), 15)
 
+    async def test_notice_uses_embed_box_and_preserves_explicit_ping_setting(self):
+        channel = self.announcement_channel()
+        self.cog.cfg['level_templates'] = {}
+        self.cog.cfg['announcement_template'] = '恭喜 {user.ping} 升級！依家你係 等級{level}'
+        self.cog.cfg['announcement_ping'] = False
+        self.total(threshold(15))
+        await self.cog.apply_rewards(self.member, (threshold(14), threshold(15)))
+        sent=channel.send.call_args.kwargs
+        self.assertIsNone(sent['content'])
+        self.assertIsInstance(sent['embed'],discord.Embed)
+        self.assertIn('等級15',sent['embed'].description)
+        self.assertEqual(sent['allowed_mentions'].to_dict(),{'parse':[]})
+
     async def test_failed_notice_is_retried_on_later_reconciliation(self):
         channel = self.announcement_channel()
         channel.send.side_effect = [

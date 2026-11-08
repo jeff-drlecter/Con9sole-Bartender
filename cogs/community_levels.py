@@ -17,7 +17,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
-from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice
+from features.community_levels import Ledger, REWARD_NAMES, battle_identity, calendar, level_for, threshold, render_notice, build_level_notice_embed
 from features.level_history import HistoryAudit
 from features.level_activation import readiness as activation_readiness,commit as activation_commit,role_plan as activation_role_plan,pending_count as activation_pending
 from features.level_role_drill import restore as restore_role_drill
@@ -345,8 +345,12 @@ class CommunityLevels(commands.Cog):
             if crossed and isinstance(channel,discord.TextChannel):
                 name=REWARD_NAMES.get(max(crossed),'會員')
                 try:
-                    await channel.send(render_notice(self.cfg,member,new,max(crossed)),
-                        allowed_mentions=discord.AllowedMentions(users=self.cfg['announcement_ping'],roles=False,everyone=False))
+                    embed=build_level_notice_embed(self.cfg,member,new,max(crossed))
+                    # Embed mentions alone do not notify. Preserve the existing
+                    # opt-in and template mention requirement, scoped to this member.
+                    ping=bool(self.cfg['announcement_ping'] and member.mention in embed.description)
+                    await channel.send(content=member.mention if ping else None,embed=embed,
+                        allowed_mentions=discord.AllowedMentions(users=[member] if ping else False,roles=False,everyone=False,replied_user=False))
                     await asyncio.to_thread(self.ledger.mark_notice,member.guild.id,member.id,new)
                 except discord.HTTPException:
                     log.warning('Level announcement failed')

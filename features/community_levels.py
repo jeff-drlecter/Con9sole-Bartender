@@ -408,3 +408,19 @@ def render_notice(cfg,member,level,milestone):
     import discord
     template=cfg['level_templates'].get(str(milestone),cfg['announcement_template'])
     return template.replace('{user.ping}',member.mention).replace('{user}',discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))).replace('{level}',str(level))[:1900]
+
+
+
+def build_level_notice_embed(cfg, member, level, milestone):
+    """Amari-style box; reuse the configured announcement template verbatim."""
+    import discord
+    name = getattr(member, 'global_name', None) or getattr(member, 'name', None) or member.display_name
+    embed = discord.Embed(title=f'{name} leveled up!'[:256],
+        description=render_notice(cfg, member, level, milestone), color=0xFFF0B3)
+    guild = member.guild
+    footer = dict(text=getattr(guild, 'name', 'Con9sole【家用夠】'))
+    icon = getattr(guild, 'icon', None)
+    if icon:
+        footer['icon_url'] = str(icon.url)
+    embed.set_footer(**footer)
+    return embed
