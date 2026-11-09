@@ -68,7 +68,7 @@ async def execute(guild,plan,authorize,*,restore=False):
     if not restore and any(o['state'] in ('applying','uncertain','conflict') for o in plan['ops']):
         raise ValueError('計劃有未核對結果／衝突，禁止繼續套用；先復原或核對。')
     for op in reversed(plan['ops']) if restore else plan['ops']:
-        if restore and op['state'] not in ('applying','verified','uncertain','conflict'):continue
+        if restore and (not op.get('attempted') or op['state'] not in ('applying','verified','uncertain','conflict')):continue
         if not restore and op['state'] not in ('prepared',):continue
         if not await authorize():raise ValueError('管理員權限已改變，停止。')
         value,role,channel=await current(guild,op)
@@ -79,7 +79,7 @@ async def execute(guild,plan,authorize,*,restore=False):
             op['state']='conflict';save(plan);break
         if not await authorize():raise ValueError('管理員權限已改變，停止。')
         # Write-ahead receipt survives restart/HTTP ambiguity. Never blindly replay.
-        op['state']='applying';save(plan)
+        op['state']='applying';op['attempted']=True;save(plan)
         try:
             reason=f"Anti-scam Update {plan['id']} actor={plan['actor']} restore={restore}"
             if channel is None:await role.edit(permissions=discord.Permissions(desired),reason=reason)

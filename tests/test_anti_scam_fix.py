@@ -59,3 +59,21 @@ class FixTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(f,'current',AsyncMock(return_value=(0,role,None))):
             with self.assertRaises(ValueError):await f.execute(NS(),p,AsyncMock(side_effect=[True,False]))
         role.edit.assert_not_awaited()
+
+
+    async def test_already_desired_no_write_must_not_be_restored(self):
+        p=self.plan();role=NS(edit=AsyncMock())
+        with patch.object(f,'current',AsyncMock(return_value=(1,role,None))) as read:
+            await f.execute(NS(),p,AsyncMock(return_value=True))
+            await f.execute(NS(),p,AsyncMock(return_value=True),restore=True)
+        self.assertEqual(read.await_count,1)
+        role.edit.assert_not_awaited()
+        self.assertFalse(p['ops'][0].get('attempted',False))
+
+    async def test_prewrite_conflict_must_not_be_restored(self):
+        p=self.plan();role=NS(edit=AsyncMock())
+        with patch.object(f,'current',AsyncMock(return_value=(9,role,None))) as read:
+            await f.execute(NS(),p,AsyncMock(return_value=True))
+            await f.execute(NS(),p,AsyncMock(return_value=True),restore=True)
+        self.assertEqual(read.await_count,1)
+        role.edit.assert_not_awaited()
