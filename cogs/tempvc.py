@@ -105,19 +105,31 @@ async def _send_interaction_message(
 
 
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
-    if not inter.user or not isinstance(inter.user, discord.Member):
+    if not inter.guild or inter.guild_id != config.GUILD_ID:
         return False
-
-    member: discord.Member = inter.user
+    member = inter.guild.get_member(inter.user.id) if inter.user else None
+    if not isinstance(member, discord.Member):
+        return False
+    if member.bot is True or member.pending is True or member.is_timed_out() is True:
+        return False
     perms = member.guild_permissions
     if perms.administrator or perms.manage_channels:
         return True
-
-    verified_role_id = getattr(config, "VERIFIED_ROLE_ID", None)
-    if verified_role_id is None:
+    category = _category_from_ctx_channel(inter.channel)
+    if category is None:
         return False
-
-    return any(role.id == verified_role_id for role in member.roles)
+    source = inter.channel.parent if isinstance(inter.channel, discord.Thread) else inter.channel
+    if source is None or not source.permissions_for(member).view_channel:
+        return False
+    inherited = category.permissions_for(member)
+    if not (inherited.view_channel and inherited.connect and inherited.speak):
+        return False
+    for hub in category.voice_channels:
+        if _is_hub_channel(hub):
+            effective = hub.permissions_for(member)
+            if effective.view_channel and effective.connect and effective.speak:
+                return True
+    return False
 
 
 def user_can_admin_teardown(member: discord.Member | discord.User) -> bool:
@@ -723,7 +735,7 @@ class TempVC(commands.Cog):
 
     async def _create_default_room(self, interaction: discord.Interaction, *, name: str | None = None, limit: int | None = None) -> None:
         if not interaction.guild or not user_can_run_tempvc(interaction):
-            await send_or_followup(interaction, content="需要已驗證會員身份，先可以開小隊 call。", ephemeral=True)
+            await send_or_followup(interaction, content="請喺你有權加入嘅遊戲區／公海使用；該區需要有「開一個小隊 call」入口。", ephemeral=True)
             return
         with claim_action("vc-create", interaction.guild_id, interaction.user.id) as claimed:
             if not claimed:
@@ -737,11 +749,18 @@ class TempVC(commands.Cog):
                 await interaction.edit_original_response(content="暫時確認唔到你原本間房，請稍後再試。")
                 return
             if room is not None:
+                current_member = guild.get_member(interaction.user.id)
+                if current_member is None or not (room.permissions_for(current_member).view_channel and room.permissions_for(current_member).connect):
+                    await interaction.edit_original_response(content="你之前間小隊房目前無法存取，請聯絡管理員。")
+                    return
                 await interaction.edit_original_response(content=f"🎧 你間小隊 call：{room.mention}", view=TempVCControlView(self, channel_id=room.id, guild_id=guild.id))
                 return
             async with shared_async_lock("voice-create", guild.id):
                 if self._unloading:
                     await interaction.edit_original_response(content="功能正在重載，請重新開啟。")
+                    return
+                if not user_can_run_tempvc(interaction):
+                    await interaction.edit_original_response(content="存取權限已改變，請喺有權加入嘅區域重新開房。")
                     return
                 try:
                     room = await self._create_manual_temp_vc(

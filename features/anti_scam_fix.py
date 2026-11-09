@@ -63,7 +63,7 @@ async def current(guild,op):
     return [p.value for p in channel.overwrites_for(role).pair()],role,channel
 
 
-async def execute(guild,plan,authorize,*,restore=False):
+async def execute(guild,plan,authorize,*,restore=False,validate=None):
     if not restore and time.time()-plan['stamp']>1800:raise ValueError('預覽已超過30分鐘，請重新預覽。')
     if not restore and any(o['state'] in ('applying','uncertain','conflict') for o in plan['ops']):
         raise ValueError('計劃有未核對結果／衝突，禁止繼續套用；先復原或核對。')
@@ -72,6 +72,7 @@ async def execute(guild,plan,authorize,*,restore=False):
         if not restore and op['state'] not in ('prepared',):continue
         if not await authorize():raise ValueError('管理員權限已改變，停止。')
         value,role,channel=await current(guild,op)
+        if validate is not None:validate(op,role,channel)
         expected=op['after'] if restore else op['before']; desired=op['before'] if restore else op['after']
         if value==desired:
             op['state']='restored' if restore else 'verified';save(plan);continue

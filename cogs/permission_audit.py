@@ -74,6 +74,7 @@ class PermissionAudit(commands.Cog):
                     await asyncio.to_thread(fixes.save,plan)
                 elif action in ('apply','restore'):
                     plan=await asyncio.to_thread(fixes.load,plan_id,inter.guild_id,inter.user.id)
+                    if plan.get('scope')=='participation':raise ValueError('呢個係公海參與計劃，請用 /participation_fix。')
                     await fixes.execute(inter.guild,plan,lambda:self.authorized(inter),restore=action=='restore')
                 else:raise ValueError('未知操作。')
                 if not await self.authorized(inter):return
@@ -132,6 +133,40 @@ class PermissionAudit(commands.Cog):
             except (ValueError,discord.HTTPException) as exc:
                 detail=str(exc) if isinstance(exc,ValueError) else 'Discord 操作未能確認，請查看狀態；唔自動重複建立。'
                 await inter.followup.send(detail+'\n可能已有部分規則建立，請用查看狀態核對。',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(name='participation_fix',description='預覽／套用已加入公海會員的聊天權限修正')
+    @app_commands.choices(action=[app_commands.Choice(name='預覽',value='preview'),app_commands.Choice(name='套用指定預覽',value='apply'),app_commands.Choice(name='復原指定計劃',value='restore')])
+    async def participation(self,inter:discord.Interaction,action:str='preview',plan_id:str=''):
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
+        if self.lock.locked():
+            await inter.followup.send('另一項操作進行中，請稍後。',ephemeral=True);return
+        from features import anti_scam_fix as fixes
+        from features.participation_fix import build,execute
+        import io,json
+        async with self.lock:
+            try:
+                if action=='preview':
+                    roles,channels=await asyncio.gather(inter.guild.fetch_roles(),inter.guild.fetch_channels())
+                    plan=build(roles,channels,inter.guild_id,inter.user.id)
+                    await asyncio.to_thread(fixes.save,plan)
+                elif action in ('apply','restore'):
+                    plan=await asyncio.to_thread(fixes.load,plan_id,inter.guild_id,inter.user.id)
+                    if plan.get('scope')!='participation':raise ValueError('計劃唔屬於公海參與修正。')
+                    await execute(inter.guild,plan,lambda:self.authorized(inter),restore=action=='restore')
+                else:raise ValueError('未知操作。')
+                if not await self.authorized(inter):return
+                lines=[fixes.summary(plan)]+[o['name'] for o in plan['ops']]+plan['skipped']
+                lines+=['只改兩個指定公海頻道的 off-topic 發言／討論串回覆。唔改可見性或附件權限位元；舊角色已有附件／預覽權限可能隨發言開放而可用。連結仍只提示。']
+                if action=='preview':lines+=['套用時指定計劃 ID：'+plan['id']]
+                payload=io.BytesIO(json.dumps(plan,ensure_ascii=False,indent=2).encode())
+                await inter.followup.send('\n'.join(lines),file=discord.File(payload,filename='participation-plan.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+            except (ValueError,discord.HTTPException) as exc:
+                text=str(exc) if isinstance(exc,ValueError) else 'Discord 操作需核對，唔會自動重試。'
+                await inter.followup.send(text,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot):await bot.add_cog(PermissionAudit(bot))

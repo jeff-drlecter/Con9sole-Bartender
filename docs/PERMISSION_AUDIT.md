@@ -83,3 +83,26 @@ non-staff ordinary role access and no member-specific View Allow. Private
 message content is not fetched; no artificial scam/spam messages are sent.
 No block/timeout actions, Verified revocations or automatic verification are
 included. Native AutoMod admin exemptions and explicit-URL coverage gaps remain.
+
+## Opted-in unverified participation
+
+`/participation_fix` previews/applies/restores only Send Messages and Send
+Messages in Threads for the off-topic role on the two reviewed public chat/forum
+IDs. It never edits View Channel, attachment/embed rights, the NSFW channel,
+other categories or onboarding. Explicit role-specific send denials are skipped.
+Plans reuse durable ownership-aware journaling and are scope-bound; moved or
+retyped channels stop apply. This is independent of AutoMod enforcement mode.
+
+Manual TempVC creation no longer depends on Verified. Ordinary members must be
+current cached members, not screening-pending/timed-out/bots, able to view the
+source, inherit View/Connect/Speak from the destination category, and access a
+matching hub there. No eligible category means use an appropriate game/public
+channel first. Authority is rechecked after owned-room lookup and inside the
+create lock. Existing owned rooms are only returned when still accessible.
+Existing admin/Manage Channels creation and staff teardown controls remain.
+
+Important combination limitation: leaving attachment/embed bits unchanged does
+not guarantee text-only access. An unverified off-topic+legacy-PGA combination
+already has these base grants; allowing Send makes them usable. Verified-based
+attachment/link enforcement is a separate pending scope; current AutoMod remains
+alert-only. Do not describe this participation change as strict text-only access.
