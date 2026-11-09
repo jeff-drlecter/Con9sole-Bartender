@@ -66,3 +66,20 @@ role revocation, punishment or threat-feed integration is part of this release.
 Discord's native Administrator/Manage Server AutoMod exemptions still apply.
 Sources: https://support.discord.com/hc/en-us/articles/4421269296535-AutoMod-FAQ
 and https://discord.com/safety/auto-moderation-in-discord .
+
+## Alert-only activation
+
+`/anti_scam_monitor mode:enable` creates the two approved alert-only rules;
+`status` is the default read-only operation; `disable` only disables matching
+rules owned by this tool. A persistent receipt records intent before POST,
+creator/rule IDs and actor. Unknown outcomes are never blindly recreated;
+matching rules may be reconciled by exact name, bot creator and payload only
+when an intent receipt exists. Rules modified outside the tool stop processing.
+Existing unrelated rules are never edited/deleted. Creation and enabled-state
+changes are re-read. Native rule names and ID receipts prevent duplicates.
+
+Enable requires the configured private text destination to exist, with no
+non-staff ordinary role access and no member-specific View Allow. Private
+message content is not fetched; no artificial scam/spam messages are sent.
+No block/timeout actions, Verified revocations or automatic verification are
+included. Native AutoMod admin exemptions and explicit-URL coverage gaps remain.
