@@ -111,5 +111,27 @@ class PermissionAudit(commands.Cog):
             except discord.HTTPException:
                 await inter.followup.send('未能讀取完整 AutoMod 設定，未產生可套用草案；未修改任何設定。',ephemeral=True)
 
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(name='anti_scam_monitor',description='啟用／查看／停用兩條指定 AutoMod 只提示監察規則')
+    @app_commands.choices(mode=[app_commands.Choice(name='查看狀態',value='status'),app_commands.Choice(name='啟用只提示監察',value='enable'),app_commands.Choice(name='停用本工具監察',value='disable')])
+    async def monitor(self,inter:discord.Interaction,mode:str='status'):
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
+        if self.lock.locked():
+            await inter.followup.send('另一項操作進行中，請稍後。',ephemeral=True);return
+        if mode not in ('status','enable','disable'):
+            await inter.followup.send('未知操作。',ephemeral=True);return
+        from features.anti_scam_monitor import run
+        async with self.lock:
+            try:
+                result=await run(inter.guild,config.VERIFIED_ROLE_ID,lambda:self.authorized(inter),mode,actor=inter.user.id)
+                if not await self.authorized(inter):return
+                await inter.followup.send('**Anti-scam｜只提示監察**\n'+'\n'.join(result)+'\n提示送到管理員指令頻道；唔封鎖訊息、唔停權、唔撤銷 Verified。',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+            except (ValueError,discord.HTTPException) as exc:
+                detail=str(exc) if isinstance(exc,ValueError) else 'Discord 操作未能確認，請查看狀態；唔自動重複建立。'
+                await inter.followup.send(detail+'\n可能已有部分規則建立，請用查看狀態核對。',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+
 
 async def setup(bot):await bot.add_cog(PermissionAudit(bot))
