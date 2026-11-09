@@ -363,6 +363,7 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
     ],
     "info": [
+        MenuItem("language", "語境設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
         MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
         MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),
         MenuItem("instagram", "IG", "📸", "secondary", "info", 1, "Menu", "open_instagram_from_button"),
