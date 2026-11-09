@@ -4,7 +4,8 @@ from __future__ import annotations
 import discord
 
 ROLE_NAMES = {"hk": "語境偏好｜香港", "tw": "語境偏好｜台灣"}
-PROMPT_TITLE = "Bot 想用邊種語境？／希望 Bot 使用哪種用語？"
+from features.onboarding_wording import LANGUAGE_TITLE
+PROMPT_TITLE = LANGUAGE_TITLE
 
 
 def language(member) -> str:
