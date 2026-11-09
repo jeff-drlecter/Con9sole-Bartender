@@ -160,7 +160,7 @@ class PermissionAudit(commands.Cog):
                 else:raise ValueError('未知操作。')
                 if not await self.authorized(inter):return
                 lines=[fixes.summary(plan)]+[o['name'] for o in plan['ops']]+plan['skipped']
-                lines+=['只改兩個指定公海頻道的 off-topic 發言／討論串回覆；唔改可見性、連結預覽、附件或其他區域。']
+                lines+=['只改兩個指定公海頻道的 off-topic 發言／討論串回覆。唔改可見性或附件權限位元；舊角色已有附件／預覽權限可能隨發言開放而可用。連結仍只提示。']
                 if action=='preview':lines+=['套用時指定計劃 ID：'+plan['id']]
                 payload=io.BytesIO(json.dumps(plan,ensure_ascii=False,indent=2).encode())
                 await inter.followup.send('\n'.join(lines),file=discord.File(payload,filename='participation-plan.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())

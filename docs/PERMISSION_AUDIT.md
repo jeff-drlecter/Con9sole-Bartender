@@ -100,3 +100,9 @@ matching hub there. No eligible category means use an appropriate game/public
 channel first. Authority is rechecked after owned-room lookup and inside the
 create lock. Existing owned rooms are only returned when still accessible.
 Existing admin/Manage Channels creation and staff teardown controls remain.
+
+Important combination limitation: leaving attachment/embed bits unchanged does
+not guarantee text-only access. An unverified off-topic+legacy-PGA combination
+already has these base grants; allowing Send makes them usable. Verified-based
+attachment/link enforcement is a separate pending scope; current AutoMod remains
+alert-only. Do not describe this participation change as strict text-only access.

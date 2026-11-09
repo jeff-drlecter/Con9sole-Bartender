@@ -99,3 +99,14 @@ class ExecutionRechecks(unittest.IsolatedAsyncioTestCase):
                 await cog._create_default_room(inter)
             cog._create_manual_temp_vc.assert_not_awaited()
         finally:await cog.cog_unload()
+
+
+    def test_legacy_role_combination_is_not_claimed_text_only(self):
+        from features.permission_audit import permissions,role_permissions
+        roles=[dict(id='1',permissions=permissions(0)),dict(id=str(f.OFF_TOPIC),permissions=permissions(0)),dict(id='7',permissions=permissions(discord.Permissions(attach_files=True,embed_links=True).value))]
+        before=dict(overwrites=[dict(id='1',type='role',allow=permissions(0),deny=permissions(discord.Permissions(view_channel=True,send_messages=True).value)),dict(id=str(f.OFF_TOPIC),type='role',allow=permissions(discord.Permissions(view_channel=True).value),deny=permissions(0))])
+        initial=role_permissions(roles,before,1,[f.OFF_TOPIC,7])
+        self.assertFalse(initial.send_messages);self.assertTrue(initial.attach_files)
+        before['overwrites'][1]['allow']=permissions(discord.Permissions(view_channel=True,send_messages=True).value)
+        result=role_permissions(roles,before,1,[f.OFF_TOPIC,7])
+        self.assertTrue(result.send_messages);self.assertTrue(result.attach_files)
