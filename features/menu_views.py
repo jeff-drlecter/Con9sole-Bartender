@@ -97,7 +97,7 @@ NO_COOLDOWN_ITEM_IDS = {
     "drink_collection",
     "drink_leaderboard",
     "daily_bar",
-    "records", "rankings", "social", "info", "customize", "titles", "squad_subscriptions",
+    "language", "records", "rankings", "social", "info", "customize", "titles", "squad_subscriptions",
 }
 
 LABEL_OVERRIDES: dict[str, str] = {
@@ -311,12 +311,14 @@ class RegistryMenuView(BaseMenuView):
     async def _send_home_menu_direct(self, interaction: discord.Interaction) -> None:
         await self._record(interaction, "home_menu")
         embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
+        from features.language_preferences import localize_menu
+        embed, view = localize_menu(interaction.user, embed, HomeMenuView(self.cog, include_admin=can_use_admin(interaction.user)))
 
         try:
             await send_or_followup(
                 interaction,
                 embed=embed,
-                view=HomeMenuView(self.cog, include_admin=can_use_admin(interaction.user)),
+                view=view,
                 ephemeral=True,
             )
             return

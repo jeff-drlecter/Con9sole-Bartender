@@ -42,6 +42,19 @@ def build_home_menu_embed(user: discord.abc.User, *, include_thumbnail: bool = T
 
 
 def build_help_embed(user: discord.abc.User) -> discord.Embed:
+    from features.language_preferences import language
+    if language(user) == "tw":
+        return discord.Embed(title="ℹ️ 使用說明", description=(
+            "使用 `/menu` 開啟吧台。\n\n"
+            "🍹 **喝一杯／請客喝一杯**：享用飲品或邀請朋友喝一杯。\n"
+            "👥 **組隊／小隊語音**：找隊友、建立及管理臨時語音房。\n"
+            "🎖️ **我的會員卡**：查看等級、經驗值、稱號與排名。\n"
+            "📅 **今日小任務**：自由參加，完成後領取額外經驗值。\n"
+            "🍾 **我的收藏／酒吧紀錄**：查看收藏與互動紀錄。\n"
+            "🙌 **社群互動**：幫大家加油、匿名投稿，或探索公海話題。\n"
+            "🌐 **資訊與設定 → 語境設定**：隨時切換香港或台灣用語。\n\n"
+            "成功喝酒或加油可獲得互動經驗值，與文字訊息共用冷卻時間；查看資料不會獲得經驗值。"
+        ), color=MENU_COLOR)
     embed = discord.Embed(
         title="ℹ️ 幫助",
         description=(

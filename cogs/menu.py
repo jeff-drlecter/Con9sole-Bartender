@@ -117,8 +117,9 @@ class Menu(commands.Cog):
     async def _open_section(self, interaction: discord.Interaction, section: str) -> None:
         from features.menu_embeds import build_section_embed
         await self.record_usage(f"menu_{section}", interaction.user.id, interaction.guild_id)
-        await send_or_followup(interaction, embed=build_section_embed(section),
-                               view=SectionMenuView(self, section), ephemeral=True)
+        from features.language_preferences import localize_menu
+        embed, view = localize_menu(interaction.user, build_section_embed(section), SectionMenuView(self, section))
+        await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
 
     async def open_records_menu(self, interaction: discord.Interaction) -> None:
         await self._open_section(interaction, "records")
@@ -133,9 +134,12 @@ class Menu(commands.Cog):
         await self._open_section(interaction, "info")
 
     async def open_customize_menu(self, interaction: discord.Interaction) -> None:
+        from features.language_preferences import language, localize_menu
+        _, view = localize_menu(interaction.user, view=SectionMenuView(self, "info"))
+        content = "⚙️ 前往 <id:customize>，自行選擇遊戲版本、公海、新聞及直播區內容，可隨時更改。" if language(interaction.user) == "tw" else "⚙️ 前往 <id:customize>，自行揀選遊戲版本、公海、新聞及直播區內容。可隨時再更改。"
         await send_or_followup(interaction,
-            content="⚙️ 前往 <id:customize>，自行揀選遊戲版本、公海、新聞及直播區內容。可隨時再更改。",
-            view=SectionMenuView(self, "info"), ephemeral=True)
+            content=content,
+            view=view, ephemeral=True)
 
     async def open_help_from_button(self, interaction: discord.Interaction) -> None:
         await run_open_help_menu(self, interaction)
