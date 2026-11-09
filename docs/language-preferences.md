@@ -14,3 +14,7 @@
 Discord 入服前問題目前已滿四條，僅將已知的新聞區題目 `1426676369567387826` 改為入服後，不改原題目／答案 ID、角色、頻道 mappings 或預設頻道。其餘四題配置不符時中止。PATCH 前重新讀取並比較，原始 prompts 備份到持久資料目錄 `language-onboarding-before-*.json`，讀回確認，結果不明不自動重試。
 
 discord.py 2.7.1 的 `Guild.edit_onboarding` 會重新編 prompt ID，且 option serializer 遺漏 option ID，因此此處僅用其 HTTP transport，明確傳入完整原有 ID。測試使用實際 discord.py prompt/option 物件，避免 mock 掩蓋型別差異。
+
+## Onboarding 共用文字
+
+Onboarding 在選擇語境前統一使用中性繁體中文。指定六個既有問題及語境問題，清除「咩、邊啲、唔、睇、開台」等地域口語；公海入口說明同步引用「綜合聊天區」。只改已知問題標題與已知選項的標題／說明，保留 IDs、emoji、roles、channels、required、single_select 及排序。重跑 `/language_onboarding_setup` 可更新現有題目文字，不重建語境問題。未知問題及遊戲名稱保持原樣。

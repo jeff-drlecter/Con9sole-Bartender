@@ -203,8 +203,8 @@ class PublicExploreButton(discord.ui.Button):
                 content=(
                     "🌊 **公海討論區**\n\n"
                     "公海區只會向已選擇相關身份的成員顯示。\n"
-                    "請先前往 <id:customize>，在「想唔想加入公海吹水區？」"
-                    "選擇 **🥜 加入公海**。\n"
+                    "請先前往 <id:customize>，在「你想加入綜合聊天區嗎？」"
+                    "選擇 **🥜 加入綜合聊天區**。\n"
                     "完成後即可瀏覽及參與相關話題。"
                 ),
                 ephemeral=True,

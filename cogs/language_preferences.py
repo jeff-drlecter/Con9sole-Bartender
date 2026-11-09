@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 import config
 from core.permissions import is_server_admin
+from features.onboarding_wording import neutralize_prompts
 from features.language_preferences import LanguageView, ROLE_NAMES, PROMPT_TITLE, preference_roles, serialize_prompts, make_room_for_language
 
 
@@ -52,7 +53,7 @@ class LanguagePreferences(commands.Cog):
                         roles.append(await guild.create_role(name=name, permissions=discord.Permissions.none(), mentionable=False, hoist=False, reason="Wording preference only"))
                 chosen = preference_roles(roles, await guild.fetch_channels())
                 current = await guild.onboarding()
-                prompts = serialize_prompts(current)
+                prompts = neutralize_prompts(serialize_prompts(current))
                 matches = [p for p in prompts if p["title"] == PROMPT_TITLE]
                 if len(matches) > 1:
                     raise ValueError("重複語境題目；未更改 onboarding。")
@@ -65,6 +66,8 @@ class LanguagePreferences(commands.Cog):
                 else:
                     prompts = make_room_for_language(prompts)
                     prompts.append(dict(id="0", type=0, title=PROMPT_TITLE, single_select=True, required=False, in_onboarding=True, options=expected))
+                prompts = neutralize_prompts(prompts)
+                if prompts != serialize_prompts(current):
                     if not is_server_admin(await guild.fetch_member(interaction.user.id)):
                         raise ValueError("管理權限已變更。")
                     if serialize_prompts(await guild.onboarding()) != serialize_prompts(current):
@@ -75,15 +78,17 @@ class LanguagePreferences(commands.Cog):
                     backup = DATA_DIR / ("language-onboarding-before-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f") + ".json")
                     backup.write_text(json.dumps({"guild_id": str(guild.id), "prompts": serialize_prompts(current)}, ensure_ascii=False, indent=2))
                     # Use raw transport solely to retain existing prompt/option snowflake IDs.
-                    await guild._state.http.edit_guild_onboarding(guild.id, prompts=prompts, reason="Add optional wording preference; preserve existing answers")
+                    await guild._state.http.edit_guild_onboarding(guild.id, prompts=prompts, reason="Neutral Traditional Chinese onboarding copy; preserve answer IDs and mappings")
                 after = serialize_prompts(await guild.onboarding())
-                original = serialize_prompts(current) if matches else make_room_for_language(serialize_prompts(current))
+                original = neutralize_prompts(serialize_prompts(current))
+                if not matches:
+                    original = make_room_for_language(original)
                 if any(p not in after for p in original):
                     raise ValueError("讀回發現原有題目不同，請管理員檢查；未自動重試。")
                 added = [p for p in after if p["title"] == PROMPT_TITLE]
                 if len(added) != 1 or [o.get("role_ids") for o in added[0]["options"]] != [o["role_ids"] for o in expected]:
                     raise ValueError("未能確認新題目；請檢查，未自動重試。")
-                await interaction.followup.send("✅ 語境 onboarding 已加入並讀回確認；原有問題及選項 ID 已保留；新聞區顯示選項移到入服後「頻道與身份組」（原先四條入服前問題已滿）。兩個偏好角色均為零權限。日常可用 /menu → 更多玩法 → 資訊與設定 → 語境設定，或 /language 切換。", ephemeral=True)
+                await interaction.followup.send("✅ Onboarding 中性繁體中文及語境選項已讀回確認；原有問題及選項 ID 已保留；新聞區顯示選項移到入服後「頻道與身份組」（原先四條入服前問題已滿）。兩個偏好角色均為零權限。日常可用 /menu → 更多玩法 → 資訊與設定 → 語境設定，或 /language 切換。", ephemeral=True)
             except (ValueError, discord.HTTPException) as exc:
                 await interaction.followup.send(f"設定未完成：{exc}", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
