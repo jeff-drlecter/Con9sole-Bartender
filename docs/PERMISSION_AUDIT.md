@@ -106,3 +106,22 @@ not guarantee text-only access. An unverified off-topic+legacy-PGA combination
 already has these base grants; allowing Send makes them usable. Verified-based
 attachment/link enforcement is a separate pending scope; current AutoMod remains
 alert-only. Do not describe this participation change as strict text-only access.
+
+## Verified capability preview
+
+`/verified_access_preview` fetches a fresh snapshot and privately reports
+hypothetical unverified attachment/embed witnesses. It tests everyone, eligible
+single roles and pairs, onboarding answer role groups and groups plus the
+public/news opt-in roles. Managed human roles are included; bot-managed and
+staff roles are excluded. This is not a member census or exhaustive arbitrary
+multi-role audit. Thread replies are labelled candidates, not actual thread
+access. Member overrides are exceptions rather than applied to role scenarios.
+
+Candidate changes contain only attachment/embed overwrite bits: everyone deny,
+Verified allow, clear eligible ordinary role allows. Existing explicit Verified
+denials require manual review and no automatic proposal; member grants also
+require review. Proposed Verified allows may expand those capabilities for
+Verified, and category synchronization/other overrides need review before apply.
+The JSON has no executable-plan identity, is never consumed by remediation,
+and changes no Discord settings. URL posting remains distinct from Embed Links;
+the native URL/spam rules remain alert-only. No block enforcement is enabled.

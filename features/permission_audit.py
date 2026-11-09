@@ -91,7 +91,7 @@ async def collect(guild, verified_id):
                     'threads':'Not enumerated; archived/private threads and membership require separate audit',
                     'limits':'Non-atomic snapshot. No messages, DMs, invites, webhooks tokens or Bot runtime policies exported. Role scenarios exclude member overrides/timeouts/owner and implicit channel permission dependencies.'},
         'roles':[{'id':str(r.id),'name':r.name,'position':r.position,'managed':r.managed,
-                  'hoist':r.hoist,'mentionable':r.mentionable,'colour':r.colour.value,
+                  'bot_managed':r.is_bot_managed(),'hoist':r.hoist,'mentionable':r.mentionable,'colour':r.colour.value,
                   'permissions':permissions(r.permissions.value)} for r in sorted(roles,key=lambda r:r.id)],
         'channels':[]}
     for c in sorted(channels,key=lambda c:c.id):
