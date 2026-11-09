@@ -86,5 +86,30 @@ class PermissionAudit(commands.Cog):
                 text=str(exc) if isinstance(exc,ValueError) else 'Discord 操作結果需核對；停止後續修改，唔會自動重試。'
                 await inter.followup.send(text+'\n如有部分操作，請用相同計劃復原或重新審核。',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(name='anti_scam_rules',description='唯讀產生連結限制及全員疑似洗版 AutoMod 草案')
+    async def rules(self,inter:discord.Interaction):
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
+        if self.lock.locked():
+            await inter.followup.send('另一項審核進行中，請稍後。',ephemeral=True);return
+        from features.anti_scam_rules import draft,summary
+        import io
+        import json
+        async with self.lock:
+            try:
+                roles,channels,rules=await asyncio.gather(inter.guild.fetch_roles(),inter.guild.fetch_channels(),inter.guild.fetch_automod_rules())
+                plan=draft(roles,channels,rules,config.VERIFIED_ROLE_ID)
+                if not await self.authorized(inter):
+                    await inter.followup.send('權限已改變，草案未送出。',ephemeral=True);return
+                payload=json.dumps(plan,ensure_ascii=False,indent=2).encode()
+                if len(payload)>inter.guild.filesize_limit:
+                    await inter.followup.send('草案超出附件限制，未送出。',ephemeral=True);return
+                await inter.followup.send(summary(plan),file=discord.File(io.BytesIO(payload),filename='anti-scam-rule-draft.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException:
+                await inter.followup.send('未能讀取完整 AutoMod 設定，未產生可套用草案；未修改任何設定。',ephemeral=True)
+
 
 async def setup(bot):await bot.add_cog(PermissionAudit(bot))

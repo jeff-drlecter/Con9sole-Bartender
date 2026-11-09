@@ -48,3 +48,21 @@ No visibility, connect, speak, membership, onboarding or moderation powers chang
 Existing private/VIP explicit voice denials remain. New category-inheriting rooms
 receive the base voice-activation permission unless an explicit deny overrides it.
 The plan JSON contains full before/after values and states; do not publish it.
+
+## AutoMod rule preview
+
+`/anti_scam_rules` fetches current roles, channels and AutoMod rules and privately
+exports a JSON draft. It has no create/edit/delete path. Candidate rules remain
+`enabled=false`, and candidate initial actions are alert-only. The draft includes
+possible later block+alert actions for unverified explicit URLs, not an approval
+to enable them. Verified only exempts that URL rule; all-user spam monitoring has
+no explicit role exemptions. Existing rules remain unchanged. Custom keyword
+quota, missing targets and duplicate names are review blockers.
+
+Explicit URL matching is not a complete phishing classifier: bare domains,
+obfuscation, images and DMs are excluded. Local Python regex examples do not
+constitute Discord Rust-regex acceptance or live-message tests. No auto-Verified,
+role revocation, punishment or threat-feed integration is part of this release.
+Discord's native Administrator/Manage Server AutoMod exemptions still apply.
+Sources: https://support.discord.com/hc/en-us/articles/4421269296535-AutoMod-FAQ
+and https://discord.com/safety/auto-moderation-in-discord .
