@@ -74,7 +74,7 @@ class PermissionAudit(commands.Cog):
                     await asyncio.to_thread(fixes.save,plan)
                 elif action in ('apply','restore'):
                     plan=await asyncio.to_thread(fixes.load,plan_id,inter.guild_id,inter.user.id)
-                    if plan.get('scope')=='participation':raise ValueError('呢個係公海參與計劃，請用 /participation_fix。')
+                    if plan.get('scope') is not None:raise ValueError('計劃屬於其他修正範圍，請使用原有專用指令。')
                     await fixes.execute(inter.guild,plan,lambda:self.authorized(inter),restore=action=='restore')
                 else:raise ValueError('未知操作。')
                 if not await self.authorized(inter):return
@@ -191,6 +191,60 @@ class PermissionAudit(commands.Cog):
                 await inter.followup.send(summary(result),file=discord.File(io.BytesIO(payload),filename='verified-access-preview.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
             except discord.HTTPException:
                 await inter.followup.send('未能讀取完整設定；未修改任何權限。',ephemeral=True)
+
+
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(name='stage1_permissions',description='第1階段：預覽／分批套用附件預覽權限及驗收')
+    @app_commands.choices(action=[app_commands.Choice(name='預覽',value='preview'),app_commands.Choice(name='套用指定預覽',value='apply'),app_commands.Choice(name='復原指定計劃',value='restore'),app_commands.Choice(name='驗收目前設定',value='verify')])
+    async def stage1(self,inter:discord.Interaction,action:str='preview',plan_id:str=''):
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
+        if self.lock.locked():
+            await inter.followup.send('另一項權限操作進行中，請稍後。',ephemeral=True);return
+        from features import stage1_permissions as policy, anti_scam_fix as journal
+        import io,json
+        async with self.lock:
+            try:
+                snapshot=await collect(inter.guild,config.VERIFIED_ROLE_ID)
+                snapshot['service_members']={}
+                for role in snapshot['roles']:
+                    if role.get('bot_id'):
+                        member=await inter.guild.fetch_member(int(role['bot_id']))
+                        snapshot['service_members'][role['id']]=[str(r.id) for r in member.roles if r.id!=inter.guild_id]
+                trusted={r['id'] for r in snapshot['roles'] if policy.privileged(r)}
+                snapshot['staff_members']={}
+                async for member in inter.guild.fetch_members(limit=None):
+                    ids=[str(r.id) for r in member.roles if r.id!=inter.guild_id]
+                    if not member.bot and trusted.intersection(ids):
+                        snapshot['staff_members'][str(member.id)]=ids
+                if action=='preview':
+                    result=await asyncio.to_thread(policy.build,snapshot,inter.user.id,config.VERIFIED_ROLE_ID)
+                    await asyncio.to_thread(journal.save,result)
+                    text=journal.summary(result)+'\n只改附件及連結預覽；4個VIP例外保留。\n套用：/stage1_permissions action:套用指定預覽 plan_id:'+result['id']
+                    text+='\n階段未結案：'+('；'.join(result['blockers']) or '仍需套用後驗收及Bot功能實測。')
+                elif action in ('apply','restore'):
+                    result=await asyncio.to_thread(journal.load,plan_id,inter.guild_id,inter.user.id)
+                    if result.get('scope')!='stage1_caps':raise ValueError('計劃不屬於第1階段。')
+                    if action=='apply' and policy.fingerprint(snapshot)!=result['fingerprint']:
+                        raise ValueError('角色／頻道設定已變更，請重新預覽；未套用。')
+                    await policy.execute(inter.guild,result,lambda:self.authorized(inter),restore=action=='restore')
+                    if action=='apply':
+                        result['live_verification']=await asyncio.to_thread(policy.verify,await collect(inter.guild,config.VERIFIED_ROLE_ID),config.VERIFIED_ROLE_ID)
+                        await asyncio.to_thread(journal.save,result)
+                    text=journal.summary(result)+'\n已停止於第一個衝突／未知結果；詳見附件。階段是否完成仍以驗收及Bot最小權限核對為準。'
+                elif action=='verify':
+                    result=await asyncio.to_thread(policy.verify,snapshot,config.VERIFIED_ROLE_ID)
+                    text='目前附件／預覽驗收：非例外殘留 '+str(len(result['unexpected_unverified_caps']))+' 個。\n此結果不代表Bot降權或實際成員功能已驗收完成。'
+                else:raise ValueError('未知操作。')
+                if not await self.authorized(inter):return
+                payload=json.dumps(result,ensure_ascii=False,indent=2).encode()
+                if len(payload)>inter.guild.filesize_limit:raise ValueError('報告超出附件限制。')
+                await inter.followup.send(text,file=discord.File(io.BytesIO(payload),filename='stage1-permissions.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+            except (ValueError,discord.HTTPException) as exc:
+                text=str(exc) if isinstance(exc,ValueError) else 'Discord結果需核對；停止後續修改，不自動重試。'
+                await inter.followup.send(text,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot):await bot.add_cog(PermissionAudit(bot))
