@@ -168,5 +168,29 @@ class PermissionAudit(commands.Cog):
                 text=str(exc) if isinstance(exc,ValueError) else 'Discord 操作需核對，唔會自動重試。'
                 await inter.followup.send(text,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(name='verified_access_preview',description='唯讀檢查未 Verified 附件／預覽角色組合及產生收窄草案')
+    async def verified_preview(self,inter:discord.Interaction):
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
+        if self.lock.locked():
+            await inter.followup.send('另一項操作進行中，請稍後。',ephemeral=True);return
+        from features.verified_access_preview import preview,summary
+        import io,json
+        async with self.lock:
+            try:
+                snapshot=await collect(inter.guild,config.VERIFIED_ROLE_ID)
+                result=await asyncio.to_thread(preview,snapshot,config.VERIFIED_ROLE_ID)
+                if not await self.authorized(inter):
+                    await inter.followup.send('權限已改變，預覽未送出。',ephemeral=True);return
+                payload=json.dumps(result,ensure_ascii=False,indent=2).encode()
+                if len(payload)>inter.guild.filesize_limit:
+                    await inter.followup.send('預覽超出附件限制，未送出。',ephemeral=True);return
+                await inter.followup.send(summary(result),file=discord.File(io.BytesIO(payload),filename='verified-access-preview.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException:
+                await inter.followup.send('未能讀取完整設定；未修改任何權限。',ephemeral=True)
+
 
 async def setup(bot):await bot.add_cog(PermissionAudit(bot))
