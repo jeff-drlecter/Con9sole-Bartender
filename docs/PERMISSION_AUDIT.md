@@ -31,3 +31,20 @@ The unverified PTT finding compares an everyone-only voice scenario against the
 approved goal of voice activity without Verified; role combinations can differ.
 This release exports evidence and does not implement auto-verification, link
 blocking, role revocation, or any server permission changes.
+
+## Narrow remediation
+
+`/anti_scam_fix action:preview` creates an actor/guild-bound, 30-minute plan.
+`action:apply plan_id:<id>` applies only that saved plan. `action:restore` reverses
+attempted/verified operations only when the current value still matches the
+recorded result (or already matches the original). Each operation has a durable
+write-ahead receipt and readback. Conflicts/unknown results stop apply and block
+blind replay; partial results are retained. Discord has no atomic compare-and-swap
+for permissions, so manual concurrent edits must be avoided during execution.
+
+Scope is fixed reviewed ordinary game role IDs plus Verified mention overwrites,
+and the @everyone voice-activation bit. Staff/managed candidates are skipped.
+No visibility, connect, speak, membership, onboarding or moderation powers change.
+Existing private/VIP explicit voice denials remain. New category-inheriting rooms
+receive the base voice-activation permission unless an explicit deny overrides it.
+The plan JSON contains full before/after values and states; do not publish it.

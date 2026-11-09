@@ -53,5 +53,38 @@ class PermissionAudit(commands.Cog):
         except discord.HTTPException:
             await inter.followup.send('Discord 讀取或附件傳送失敗；未修改任何設定，請稍後再試。',ephemeral=True)
 
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(name='anti_scam_fix',description='預覽／套用大量 mention 清理及未驗證語音感應修正')
+    @app_commands.choices(action=[app_commands.Choice(name='預覽',value='preview'),app_commands.Choice(name='套用指定預覽',value='apply'),app_commands.Choice(name='復原指定計劃',value='restore')])
+    async def fix(self,inter:discord.Interaction,action:str='preview',plan_id:str=''):
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
+        if self.lock.locked():
+            await inter.followup.send('另一項審核／修正進行中，請稍後。',ephemeral=True);return
+        from features import anti_scam_fix as fixes
+        import io
+        import json
+        async with self.lock:
+            try:
+                if action=='preview':
+                    roles=await inter.guild.fetch_roles();channels=await inter.guild.fetch_channels()
+                    plan=fixes.build(roles,channels,inter.guild_id,inter.user.id,config.VERIFIED_ROLE_ID)
+                    await asyncio.to_thread(fixes.save,plan)
+                elif action in ('apply','restore'):
+                    plan=await asyncio.to_thread(fixes.load,plan_id,inter.guild_id,inter.user.id)
+                    await fixes.execute(inter.guild,plan,lambda:self.authorized(inter),restore=action=='restore')
+                else:raise ValueError('未知操作。')
+                if not await self.authorized(inter):return
+                text=fixes.summary(plan)
+                if action=='preview':
+                    text+='\n只清理已核對普通角色嘅大量 mention 權限，並開啟 @everyone 語音感應；唔會開放原本不可見／不可連線嘅房間。\n完整修改清單見附件。套用：/anti_scam_fix action:套用指定預覽 plan_id:'+plan['id']
+                payload=io.BytesIO(json.dumps(plan,ensure_ascii=False,indent=2).encode())
+                await inter.followup.send(text,file=discord.File(payload,filename='anti-scam-change-plan.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+            except (ValueError,discord.HTTPException) as exc:
+                text=str(exc) if isinstance(exc,ValueError) else 'Discord 操作結果需核對；停止後續修改，唔會自動重試。'
+                await inter.followup.send(text+'\n如有部分操作，請用相同計劃復原或重新審核。',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+
 
 async def setup(bot):await bot.add_cog(PermissionAudit(bot))
