@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 from features.maintenance import Store, differences, snapshot
-from cogs.maintenance import Maintenance, private_destination, format_findings
+from cogs.maintenance import Maintenance, private_destination, private_candidate, format_findings
 
 
 def role(rid, mask=0, bot=None, name='role'):
@@ -117,6 +117,17 @@ class StoreTests(unittest.TestCase):
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_candidate_search_rejects_public_member_and_unsupported_channels(self):
+        roles = [role(1, 1024), role(2, 8)]
+        raw = dict(id='10', type=0, permission_overwrites=[])
+        self.assertFalse(private_candidate(1, roles, raw))
+        raw['permission_overwrites'] = [dict(id='1', type=0, allow='0', deny='1024')]
+        self.assertTrue(private_candidate(1, roles, raw))
+        raw['permission_overwrites'].append(dict(id='77', type=1, allow='1024', deny='0'))
+        self.assertFalse(private_candidate(1, roles, raw))
+        raw.update(type=20, permission_overwrites=[])
+        self.assertFalse(private_candidate(1, roles, raw))
+
     def test_admin_only_and_member_allow_fail_closed(self):
         guild = NS(id=1)
         everyone, admin, mod = role(1), role(2, 8), role(3, 8192)
@@ -217,6 +228,18 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.check(self.guild, background=True)
         await self.cog.check(self.guild, background=True)
         self.assertEqual(self.destination.send.await_count, 2)
+
+    async def test_delivery_probe_is_labelled_and_once_per_baseline(self):
+        self.assertIn('已送出', await self.cog.test_delivery(self.guild))
+        self.assertIn('唔會重發', await self.cog.test_delivery(self.guild))
+        self.destination.send.assert_awaited_once()
+        self.assertIn('並非異常警報', self.destination.send.call_args.args[0])
+
+    async def test_delivery_probe_timeout_never_retries(self):
+        self.destination.send.side_effect = TimeoutError()
+        self.assertIn('結果不明', await self.cog.test_delivery(self.guild))
+        self.assertIn('唔會重發', await self.cog.test_delivery(self.guild))
+        self.destination.send.assert_awaited_once()
 
     async def test_manual_check_never_sends(self):
         for _ in range(3):

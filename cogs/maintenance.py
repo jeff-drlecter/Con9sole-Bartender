@@ -38,6 +38,22 @@ def private_destination(guild, roles, channel):
             raise ValueError('提示頻道有個人成員 Allow；請先人工覆核。')
 
 
+def private_candidate(guild_id, roles, raw):
+    if raw['type'] != 0:
+        return False
+    rows = [dict(id=str(r.id), permissions=permissions(r.permissions.value)) for r in roles]
+    overwrites = [dict(id=str(o['id']), type='role' if o['type'] == 0 else 'member',
+                       allow=permissions(int(o['allow'])), deny=permissions(int(o['deny'])))
+                  for o in raw.get('permission_overwrites', [])]
+    for role in roles:
+        if role.permissions.administrator or role.permissions.manage_guild or role.is_bot_managed():
+            continue
+        if role_permissions(rows, {'overwrites': overwrites}, guild_id, [role.id]).view_channel:
+            return False
+    return not any(o['type'] == 'member' and discord.Permissions(int(o['allow']['value'])).view_channel
+                   for o in overwrites)
+
+
 def format_findings(findings):
     lines = []
     for kind, ids in findings.get('drift', {}).items():
@@ -160,6 +176,24 @@ class Maintenance(commands.Cog):
                 log.warning('Maintenance alert withheld/uncertain guild=%s kind=%s', guild.id, type(exc).__name__)
         return findings
 
+    async def test_delivery(self, guild):
+        state = self.store.state(guild.id)
+        if not state['baseline']:
+            raise ValueError('請先建立基準。')
+        channel = await self.destination(guild, state['channel'])
+        fingerprint = digest({'kind': 'delivery-test', 'baseline': state['baseline']['id']})
+        if not self.store.reserve(guild.id, fingerprint):
+            return '本基準已有測試通知紀錄；請核對目的地，唔會重發。'
+        try:
+            async with asyncio.timeout(30):
+                message = await channel.send('🛠️ Stage 5 維護通知測試｜只驗證送達，並非異常警報。\n'
+                                             '目的地私隱已核對；未修改權限、XP、訂閱或防騙規則。',
+                                             allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+                self.store.sent(guild.id, fingerprint, message.id)
+        except Exception:
+            return '測試通知結果不明；請核對目的地，唔會自動重試。'
+        return '測試通知已送出；本基準只測一次。'
+
     @tasks.loop(minutes=30)
     async def poll(self):
         try:
@@ -199,7 +233,8 @@ class Maintenance(commands.Cog):
     @app_commands.command(name='maintenance', description='管理員專用：設定基準、唯讀核對及維護提示')
     @app_commands.choices(action=[app_commands.Choice(name=n, value=v) for n, v in (
         ('狀態', 'status'), ('立即核對（不發通知）', 'check'), ('預覽新基準', 'preview'),
-        ('確認新基準', 'accept'), ('啟用背景提示', 'enable'), ('停用背景提示', 'disable'))])
+        ('確認新基準', 'accept'), ('啟用背景提示', 'enable'), ('停用背景提示', 'disable'),
+        ('測試通知送達（每個基準一次）', 'test'), ('尋找現有私人目的地', 'destinations'))])
     @app_commands.describe(code='確認基準時填入預覽確認碼', channel='預覽基準時選擇管理員專用文字頻道')
     async def maintenance(self, interaction: discord.Interaction, action: str = 'status',
                           code: str = '', channel: discord.TextChannel | None = None):
@@ -213,6 +248,13 @@ class Maintenance(commands.Cog):
                     state = self.store.state(interaction.guild_id)
                     if action == 'check':
                         await self.check(interaction.guild, background=False)
+                    elif action == 'destinations':
+                        roles = await interaction.guild.fetch_roles()
+                        channels = await interaction.guild._state.http.get_all_guild_channels(interaction.guild_id)
+                        ids = [str(c['id']) for c in channels if private_candidate(interaction.guild_id, roles, c)]
+                        text = '現有管理員專用文字頻道候選（實際使用前會重新核對）：\n' + '\n'.join('<#' + cid + '>' for cid in ids[:10]) if ids else '未找到符合管理員專用條件嘅現有文字頻道；未改任何權限。'
+                        await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+                        return
                     elif action == 'preview':
                         destination = channel.id if channel else state['channel'] or ALERT_CHANNEL
                         await self.destination(interaction.guild, destination)
@@ -233,6 +275,12 @@ class Maintenance(commands.Cog):
                         if not await self.authorize(interaction):
                             raise ValueError('管理員權限已改變。')
                         self.store.accept(interaction.guild_id, interaction.user.id, code, observed)
+                    elif action == 'test':
+                        if not await self.authorize(interaction):
+                            raise ValueError('管理員權限已改變。')
+                        text = await self.test_delivery(interaction.guild)
+                        await interaction.followup.send(text, ephemeral=True)
+                        return
                     elif action in ('enable', 'disable'):
                         if action == 'enable':
                             await self.destination(interaction.guild, state['channel'])
