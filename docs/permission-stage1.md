@@ -27,3 +27,17 @@ Categories update synced children; no duplicate direct child writes are planned.
 - [ ] Service-specific least-privilege configuration for Carl-bot, Dyno, Bartender. Administrator remains an explicit blocker; it is not removed by this capability gate.
 
 Do not close Stage 1 until every item is done. Do not re-open completed items unless configuration changes, a regression or an unresolved verification result gives a concrete reason.
+
+
+## Bounded execution and incident recovery
+
+Each apply/restore invocation now stops after 20 attempted entries, 90 seconds
+between entries, or a 150-second hard timeout. Cancellation during a write records
+`uncertain` before releasing the lock. A ten-second heartbeat reports receipt
+counts. `查詢計劃進度` with the original plan ID reads durable receipts even while
+another operation holds the mutation lock; it does not claim that a held lock
+means forward progress. `核對中斷結果` only reads ambiguous entries and marks them
+verified if the observed value equals the intended result, otherwise conflict.
+It never replays a write. Keep all old plan IDs for restoration. For remaining
+prepared entries create a fresh preview of current settings before the next batch.
+The original fingerprint check and all per-write scope/authority checks remain.
