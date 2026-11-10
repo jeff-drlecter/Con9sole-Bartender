@@ -31,6 +31,7 @@ from features.tempvc_settings import (
     get_vc_limit_min,
     get_vc_limit_user_cooldown_seconds,
     next_temp_channel_name,
+    temp_channel_number,
     normalize_limit,
     parse_manual_limit,
 )
@@ -204,16 +205,14 @@ async def _order_temp_channels(guild: discord.Guild, category_id: int | None) ->
     hub = next((ch for ch in voices if _is_hub_channel(ch)), None)
     if hub is None:
         return
-    pattern = re.compile(rf"^{re.escape(get_temp_channel_base_name())}\s+(\d+)$")
     rooms = [ch for ch in voices if is_temp_vc_id(ch.id)]
     def room_key(ch: discord.VoiceChannel) -> tuple[int, int, int]:
-        match = pattern.fullmatch(ch.name)
-        return (0, int(match.group(1)), ch.id) if match else (1, ch.position, ch.id)
+        number = temp_channel_number(ch.name)
+        return (0, number, ch.id) if number is not None else (1, ch.position, ch.id)
     rooms.sort(key=room_key)
     room_ids = {ch.id for ch in rooms}
-    ordered = [ch for ch in voices if ch.id not in room_ids]
-    index = ordered.index(hub)
-    ordered[index:index] = rooms
+    ordered = [ch for ch in voices if ch.id not in room_ids and ch.id != hub.id]
+    ordered.extend([*rooms, hub])
     if ordered == voices:
         return
     positions = [ch.position for ch in voices]
@@ -591,6 +590,50 @@ class TempVC(commands.Cog):
         self._creating_for_members: set[int] = set()
         self._creation_lock = asyncio.Lock()
         self._unloading = False
+        self._mode_names: dict[int, str] = {}
+        self._mode_tasks: dict[int, asyncio.Task] = {}
+
+    def queue_mode_name(self, channel: discord.VoiceChannel, mode: str) -> None:
+        """Coalesce mode changes outside the squad lock and interaction lifetime."""
+        if self._unloading or not is_temp_vc_id(channel.id):
+            return
+        number = temp_channel_number(channel.name)
+        if number is None:
+            return  # Preserve manually named rooms and the creation hub.
+        mode = " ".join(mode.split())[:90]
+        existing = {ch.name for ch in channel.guild.voice_channels if ch.id != channel.id}
+        existing.update(name for cid, name in self._mode_names.items() if cid != channel.id)
+        if mode:
+            prefix = f"{mode} • "
+            current_name = self._mode_names.get(channel.id, channel.name)
+            match = re.fullmatch(rf"{re.escape(prefix)}(\d+)", current_name)
+            number = int(match.group(1)) if match else 1
+            while f"{prefix}{number}" in existing:
+                number += 1
+            name = f"{prefix}{number}"
+        else:
+            name = next_temp_channel_name(existing)
+        self._mode_names[channel.id] = name
+        if channel.id not in self._mode_tasks:
+            self._mode_tasks[channel.id] = asyncio.create_task(self._apply_mode_name(channel))
+
+    async def _apply_mode_name(self, channel: discord.VoiceChannel) -> None:
+        try:
+            while channel.id in self._mode_names:
+                await asyncio.sleep(1)
+                name = self._mode_names[channel.id]
+                current = channel.guild.get_channel(channel.id)
+                if current is None or not is_temp_vc_id(channel.id) or temp_channel_number(current.name) is None:
+                    return
+                if current.name != name:
+                    channel = await current.edit(name=name, reason="Sync small-team call game mode")
+                if self._mode_names.get(channel.id) == name:
+                    self._mode_names.pop(channel.id, None)
+        except discord.HTTPException:
+            log.exception("Could not sync temp VC mode: channel=%s", channel.id)
+        finally:
+            self._mode_names.pop(channel.id, None)
+            self._mode_tasks.pop(channel.id, None)
 
     async def cog_load(self) -> None:
         tempvc_storage.init_tempvc_db()
@@ -603,6 +646,7 @@ class TempVC(commands.Cog):
     async def cog_unload(self) -> None:
         self._unloading = True
         tasks = [task for task in (getattr(self, "_startup_task", None), self._sweeper_task) if task is not None]
+        tasks.extend(self._mode_tasks.values())
         for task in tasks:
             task.cancel()
         cancel_all_delete_tasks()

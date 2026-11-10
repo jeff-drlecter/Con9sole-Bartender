@@ -5,7 +5,7 @@ import pathlib
 import types
 import unittest
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 source = pathlib.Path(__file__).resolve().parents[1] / 'cogs' / 'squad_cards.py'
 tree = ast.parse(source.read_text())
@@ -85,7 +85,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('12', cog.state['sessions'])
 
     async def test_setup_preserves_other_games_and_migrates_legacy(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         setup_method = next(n for c in ast.parse(source.read_text()).body
                             if isinstance(c, ast.ClassDef) and c.name == 'SquadCards'
                             for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'squad_setup')
@@ -111,7 +111,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_first_player_ping_only_on_initial_send(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         render_method = next(n for c in ast.parse(source.read_text()).body
                              if isinstance(c, ast.ClassDef) and c.name == 'SquadCards'
                              for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'render')
@@ -176,13 +176,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_edit_permissions_checked_on_button_and_submission(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         parsed = ast.parse(source.read_text())
         edit = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'CardView'
                     for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'edit')
         submit = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'Details'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'on_submit')
-        scope = dict(humans=namespace['humans'],
+        scope = dict(sync_mode_name=Mock(), humans=namespace['humans'],
                      is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'),
                      Details=lambda *args: object(), RecruitmentChoices=lambda *args: object())
         scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
@@ -212,11 +212,11 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_quick_counts_recheck_permissions_and_preserve_game(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         parsed = ast.parse(source.read_text())
         method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'RecruitmentChoices'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'set_count')
-        scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        scope = dict(sync_mode_name=Mock(), humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
         scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), scope)
         for kind, in_call, active, allowed in [
@@ -243,13 +243,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_mode_selection_permissions_clear_and_stale_profile(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         parsed = ast.parse(source.read_text())
         definitions = [n for n in parsed.body if
                        isinstance(n, ast.FunctionDef) and n.name == 'game_profile' or
                        isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in
                        ('GAME_LABELS', 'MODE_PRESETS') for a in n.targets)]
-        scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        scope = dict(sync_mode_name=Mock(), humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
         scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), scope)
         method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'ModePicker'

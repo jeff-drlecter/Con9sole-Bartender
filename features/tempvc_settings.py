@@ -100,15 +100,23 @@ def format_seconds(seconds: float) -> str:
     return f"{minutes} 分 {sec} 秒"
 
 
+def temp_channel_number(name: str, *, base: str | None = None) -> int | None:
+    normalized_base = (base or get_temp_channel_base_name()).strip()
+    match = re.fullmatch(rf"{re.escape(normalized_base)}\s+(\d+)(?: · .+)?", name.strip())
+    if match:
+        return int(match.group(1))
+    mode_match = re.fullmatch(r".+ • (\d+)", name.strip())
+    return int(mode_match.group(1)) if mode_match else None
+
+
 def next_temp_channel_name(existing_names: Iterable[str], *, base: str | None = None) -> str:
     normalized_base = (base or get_temp_channel_base_name()).strip()
-    pattern = re.compile(rf"^{re.escape(normalized_base)}\s+(\d+)$")
     used_numbers: set[int] = set()
 
     for name in existing_names:
-        match = pattern.fullmatch(name.strip())
-        if match:
-            used_numbers.add(int(match.group(1)))
+        number = temp_channel_number(name, base=normalized_base)
+        if number is not None:
+            used_numbers.add(number)
 
     number = 1
     while number in used_numbers:

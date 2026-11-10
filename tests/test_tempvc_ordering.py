@@ -35,7 +35,7 @@ class TempVCOrderingTests(unittest.IsolatedAsyncioTestCase):
         update = await self.order(channels, {3, 4, 5, 7})
         self.assertEqual(update.await_args.args[1], [
             {'id': cid, 'position': pos}
-            for cid, pos in zip([1, 5, 4, 3, 2, 6], range(1, 7))])
+            for cid, pos in zip([1, 6, 5, 4, 3, 2], range(1, 7))])
 
     async def test_gap_filling_room_goes_between_one_and_three(self):
         update = await self.order([voice(1, '小隊call • 1', 1),
@@ -55,7 +55,13 @@ class TempVCOrderingTests(unittest.IsolatedAsyncioTestCase):
     async def test_untracked_similar_name_is_not_moved(self):
         update = await self.order([voice(1, '小隊call • 1', 1),
             voice(2, '開一個小隊 call', 2), voice(3, '小隊call • 2', 3)], {1})
-        update.assert_not_awaited()
+        self.assertEqual([x["id"] for x in update.await_args.args[1]], [3, 1, 2])
+
+    async def test_renamed_rooms_keep_numeric_order(self):
+        update = await self.order([voice(1, "開一個小隊 call", 1),
+            voice(2, "Park • 10", 2),
+            voice(3, "REC • 2", 3)], {2, 3})
+        self.assertEqual([x["id"] for x in update.await_args.args[1]], [3, 2, 1])
 
     async def test_permission_failure_does_not_break_creation(self):
         response = MagicMock(status=403, reason='Forbidden')
