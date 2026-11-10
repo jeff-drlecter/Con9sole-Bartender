@@ -732,9 +732,9 @@ class TempVC(commands.Cog):
             if room is not None:
                 current_member = guild.get_member(interaction.user.id)
                 if current_member is None or not (room.permissions_for(current_member).view_channel and room.permissions_for(current_member).connect):
-                    await interaction.edit_original_response(content="你之前間小隊房目前無法存取，請聯絡管理員。")
+                    await interaction.edit_original_response(content=wording_text(interaction.user, "你之前間小隊房目前無法存取，請聯絡管理員。"))
                     return
-                await interaction.edit_original_response(content=f"🎧 你間小隊 call：{room.mention}", view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=guild.id)))
+                await interaction.edit_original_response(content=wording_text(interaction.user, "🎧 你間小隊 call：{room}").format(room=room.mention), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=guild.id)))
                 return
             async with shared_async_lock("voice-create", guild.id):
                 if self._unloading:
