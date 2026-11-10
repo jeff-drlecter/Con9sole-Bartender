@@ -1,4 +1,5 @@
 from __future__ import annotations
+from features.wording import text as wording_text, view_copy as wording_view
 
 import inspect
 import logging
@@ -231,7 +232,7 @@ class PublicExploreButton(discord.ui.Button):
                 "或開設新帖分享寵物、飲食、音樂、電影等話題。\n\n"
                 f"前往 {forum.mention} 看看吧。"
             ),
-            view=PublicDiscussionView(forum),
+            view=wording_view(interaction.user, PublicDiscussionView(forum)),
             ephemeral=True,
         )
 
@@ -318,7 +319,7 @@ class RegistryMenuView(BaseMenuView):
             await send_or_followup(
                 interaction,
                 embed=embed,
-                view=view,
+                view=wording_view(interaction.user, view),
                 ephemeral=True,
             )
             return
@@ -328,7 +329,7 @@ class RegistryMenuView(BaseMenuView):
         await send_or_followup(
             interaction,
             embed=embed,
-            view=HomeMenuView(self.cog, include_external_links=False, include_admin=can_use_admin(interaction.user)),
+            view=wording_view(interaction.user, HomeMenuView(self.cog, include_external_links=False, include_admin=can_use_admin(interaction.user))),
             ephemeral=True,
         )
 
@@ -354,12 +355,12 @@ class RegistryMenuView(BaseMenuView):
                 return
 
         if item.admin_only and not can_use_staff_tool(interaction.user, item.id):
-            await send_or_followup(interaction, content="❌ 你目前嘅職責未獲授權使用呢項工具。", ephemeral=True)
+            await send_or_followup(interaction, content=wording_text(interaction.user, "❌ 你目前嘅職責未獲授權使用呢項工具。"), ephemeral=True)
             return
         if item.cog is None:
             await send_or_followup(
                 interaction,
-                content="❌ 呢個功能未設定 cog。",
+                content=wording_text(interaction.user, "❌ 呢個功能未設定 cog。"),
                 ephemeral=True,
             )
             return
@@ -368,8 +369,8 @@ class RegistryMenuView(BaseMenuView):
         if target is None:
             await send_or_followup(
                 interaction,
-                content="呢個功能暫時未準備好，請稍後再試。",
-                view=QuickBarView(self.cog),
+                content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),
+                view=wording_view(interaction.user, QuickBarView(self.cog)),
                 ephemeral=True,
             )
             return
@@ -378,8 +379,8 @@ class RegistryMenuView(BaseMenuView):
         if method is None:
             await send_or_followup(
                 interaction,
-                content="呢個功能暫時未準備好，請稍後再試。",
-                view=QuickBarView(self.cog),
+                content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),
+                view=wording_view(interaction.user, QuickBarView(self.cog)),
                 ephemeral=True,
             )
             return
