@@ -1,6 +1,6 @@
 # Stage 2: alert-only anti-scam and spam monitoring
 
-Status: OPEN. Stage 1 remains closed. Do not repeat completed acceptance unless settings change.
+Status: CLOSED for the current alert-only rollout, 10 November 2026. Stage 1 remains closed. Do not repeat completed acceptance unless settings change. Future automatic verification or enforcement is not activated or approved by this closure.
 
 ## Current rollout
 
@@ -48,8 +48,24 @@ No production member was revoked or punished to test this policy. The currently 
 
 Primary reference reviewed 10 November 2026: https://support.discord.com/hc/en-us/articles/4421269296535-AutoMod-FAQ (native exemptions, spam classifier limitations and alert destinations).
 
-## Remaining before closure
+## Final onboarding and restoration acceptance
 
-1. Inspect every post-join onboarding answer's actual role grants. Browser approval connection became unavailable immediately after the 27 pre-join answer checks; no post-join result is claimed.
-2. Confirm that all current self-service/external role paths exclude Verified and document the current manual restoration record workflow. Do not claim an implemented persistent automatic-verification hold.
-3. Close Stage 2 only when the remaining audit is resolved, with these coverage limits retained.
+Browser access resumed and all seven post-join answers were opened individually, read-only; each dialog was cancelled without saving. Combined with the 27 pre-join answers, all 34 configured answer grants were checked and none included Verified.
+
+| Post-join answer | Assigned roles |
+| --- | --- |
+| 顯示新聞區 | news-sub |
+| 暫時隱藏 | no-news-sub |
+| 直播及觀看直播 | 主播, 觀眾 |
+| 只進行直播 | 主播 |
+| 只觀看直播 | 觀眾 |
+| 暫不參與 | 非直播 |
+| 參與測試 | 🧪 Tester |
+
+Current checked grant paths are onboarding (34 answers), Carl-bot autoroles/sticky roles/reaction roles, Dyno role automation modules, and Bartender's role-grant source paths. None provides an automatic Verified re-grant. Bartender's generic role_grant remains an administrator-directed operation, not self-service verification. Manual Discord role assignment by authorised staff remains possible and must follow the review policy above; this is an intentional administrative action, not an automatic restoration.
+
+Current restoration workflow: record an anti-scam revocation and review-required status privately with member ID, evidence, actor and date; keep the member unverified while unresolved; an administrator reviews the evidence and records approval before manually granting Verified; then record the resolution. A single ordinary URL or a monitor alert alone is not grounds for automated revocation. No member was actually revoked as an enforcement drill.
+
+The current no-automatic-verification configuration satisfies the no-automatic-restoration rule for this rollout. A persistent technical hold is NOT implemented or claimed; it is a prerequisite before any future automatic verification feature. Re-audit integrations or role-grant paths if they change.
+
+Stage 2's current alert-only baseline is closed. Known limitations above remain explicit; this closure is not a guarantee of complete scam detection. Stage 3–5 remain separate work.
