@@ -51,3 +51,11 @@ PR #97 fixed bounded progress/recovery. PR #98 deployed service preparation; 539
 Actual smoke checks after removal: Dyno `?dinfo` embed; Carl `/ping` and message-edit log with before/after content; Bartender existing Hong Kong language role verification, main menu, membership card, temporary voice-room creation, and `/bot_health`. Health reports loaded systems, running loops, ledger OK, and zero pending/uncertain notification work. The empty test voice room no longer appears in the sidebar after its cleanup interval.
 
 Still open: ordinary/Verified/Mod/Helpers actual-account chat, voice, attachment/embed and private-thread acceptance. Permission proof and administrator-account Bot smoke checks do not substitute for those tests. No live member was kicked, banned or timed out for testing.
+
+### Human-account checks — 12:45–13:03 Hong Kong
+
+Using `jeff_con9sole`, Helpers message send and membership-card interaction passed. User removed Helpers; Verified message send, membership-card slash command and a real Discord.com link embed passed in FC chat. User then removed Verified and EA FC-M. EA FC-M was confirmed to retain Manage Messages, Timeout and scoped attach/embed grants; its presence explained the first unverified embed result, rather than a Tester-role leak.
+
+At 13:02, the profile no longer listed Helpers, Verified or EA FC-M; Tester and ordinary game/level roles remained. In the test sandbox, a fresh message sent successfully, the Discord.com URL remained plain with no embed, the composer actions menu offered Create Thread/Use Apps/Schedule Message with no upload entry, and `/levels rank` returned the membership card at 13:03. This verifies normal text/Bot use and the visible attachment restriction for that account in the sandbox, not an attempted file-upload rejection.
+
+Remaining live acceptance: voice and private-thread scenarios, Mod without owner/Admin bypass, and actual file-upload behavior where required. Historical embeds remain visible after role removal; only newly sent messages were used to judge the restriction.
