@@ -1,6 +1,6 @@
 # Anti-scam Update — Stage 1 acceptance record
 
-Status: applied and Bot least-privilege migration verified on 2026-11-10; human-account functional acceptance remains open.
+Status: Stage 1 baseline acceptance completed on 2026-11-10 after ordinary-member voice and uninvited private-thread checks. Evidence and coverage limits are recorded below.
 
 ## Fixed decisions
 
@@ -23,7 +23,7 @@ Categories update synced children; no duplicate direct child writes are planned.
 - [x] Fresh live preview and inspect diff; historical snapshot is not authority to apply.
 - [x] Apply attachment/embed policy and read back each change.
 - [x] Post-apply zero non-exception ordinary grants; no Bot/staff capability loss.
-- [ ] Live ordinary/Verified/Mod/Helpers and Bot functional acceptance.
+- [x] Live ordinary/Verified/Mod/Helpers and Bot baseline functional acceptance (scope and limits below).
 - [x] Service-specific least-privilege configuration for Carl-bot, Dyno, Bartender. Administrator removed through Discord role settings after scoped channel preparation and functional checks.
 
 Do not close Stage 1 until every item is done. Do not re-open completed items unless configuration changes, a regression or an unresolved verification result gives a concrete reason.
@@ -65,3 +65,11 @@ Remaining live acceptance: voice and private-thread scenarios, Mod without owner
 User assigned Mod to `jeff_con9sole`; the profile showed Mod and the account remained distinct from server owner `jeff_drlecter`. In the sandbox, a new Discord.com link produced an embed and Upload a File was present. Created `Stage 1 私人討論串驗收` with the private checkbox selected; Discord displayed the private-thread invitation notice and accepted its first message. Joined the empty sandbox voice hub while muted; Bartender created `小隊call • 1`, moved the account, and Discord showed Voice Connected. Explicitly disconnected afterward; connection controls disappeared.
 
 These complete the requested Mod/private-thread/voice smoke scenarios. Coverage limits remain: no actual file-transfer attempt, no uninvited-account private-thread visibility test, no speech/audio-quality test, and no ordinary-account voice test. No ban/kick/timeout or other-member deletion was exercised. Treat these as scoped smoke acceptance, not an exhaustive role-by-channel matrix or proof of all moderation actions. Full Stage 1 closure remains conditional on the required coverage decision; the live changes and successful smoke checks themselves are complete.
+
+### Final baseline acceptance — 13:22–13:26 Hong Kong
+
+User removed Mod. Fresh profile inspection of `jeff_con9sole` showed ordinary game/level roles and Tester, with no Mod, Helpers, Verified or EA FC-M. Joined the empty sandbox voice hub while muted; Bartender created/moved the account to `小隊call • 1` and Discord showed Voice Connected. Disconnected and restored the original unmuted toggle afterward; this did not test microphone audio quality.
+
+Switched to owner `jeff_drlecter` and created private thread `Stage 1 未獲邀可見性驗收` (`1569583382529314919`) with the private checkbox selected and a non-mention text marker; did not invite `jeff_con9sole`. Switched back to the ordinary account and navigated directly to the observed thread URL. Discord redirected to the guild root and did not expose the thread message. On return to the parent channel, the original thread owned by `jeff_con9sole` remained listed, while the new uninvited thread was absent. This distinguishes membership from loss of Mod powers.
+
+The previously pending ordinary-voice and private-thread visibility scenarios now pass. Stage 1 baseline acceptance is complete: applied permission receipts, zero nonexception role grants, Bot least-privilege and functional checks, human text/Bot checks, ordinary voice connectivity and private-thread membership boundary. Earlier pending notes are chronological evidence and are superseded here. Remaining coverage limitations are actual file-transfer attempts (upload controls were checked), audio quality, and destructive moderation operations; these are not claimed as tested. No further live permission changes were made during final acceptance. Preserve test markers for audit; temporary voice rooms use existing empty-room cleanup.
