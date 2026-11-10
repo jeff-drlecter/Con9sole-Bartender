@@ -19,7 +19,7 @@ class LanguagePreferences(commands.Cog):
         from features.language_preferences import language
         current = "台灣" if language(interaction.user) == "tw" else "香港"
         await interaction.response.send_message(
-            f"目前語境：{current}。\n香港語境／台灣語境：影響主選單、分類選單及使用說明，其他舊功能回覆逐步加入。與所在地無關。\n切換後請使用新選單；舊訊息不會自動改寫。",
+            f"目前語境：{current}。\n香港語境／台灣語境：影響個人選單、會員卡、組隊通知設定及語音房操作等回覆；多人共用卡片使用中性繁體中文。與所在地無關。\n切換後請使用新選單；舊訊息不會自動改寫。",
             view=LanguageView(interaction.user.id), ephemeral=True)
 
     @app_commands.command(name="language", description="切換香港／台灣 Bot 用語")
