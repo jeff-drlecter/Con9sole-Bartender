@@ -52,7 +52,7 @@ class RuleCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_revoked_actor_cannot_receive_draft(self):
         from unittest.mock import AsyncMock,patch
         from cogs.permission_audit import PermissionAudit
-        guild=NS(fetch_roles=AsyncMock(return_value=[]),fetch_channels=AsyncMock(return_value=[]),fetch_automod_rules=AsyncMock(return_value=[]))
+        guild=NS(fetch_roles=AsyncMock(return_value=[]),fetch_channels=AsyncMock(side_effect=RuntimeError("Unknown channel type 20")),fetch_channel=AsyncMock(return_value=NS(id=ALERT_CHANNEL)),fetch_automod_rules=AsyncMock(return_value=[]))
         inter=NS(guild=guild,response=NS(defer=AsyncMock()),followup=NS(send=AsyncMock()))
         cog=PermissionAudit(None)
         with patch.object(cog,'authorized',AsyncMock(side_effect=[True,False])):

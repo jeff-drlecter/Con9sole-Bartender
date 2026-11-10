@@ -52,11 +52,11 @@ def private_alert(guild_id,roles,channel):
 async def run(guild,verified,authorize,mode='status',*,actor=0):
     rows=[]
     roles=await guild.fetch_roles()
-    channels=await guild.fetch_channels()
     rules=await guild.fetch_automod_rules()
     if mode=='enable':
         if not any(r.id==verified for r in roles):raise ValueError('Verified 角色不存在。')
-        private_alert(guild.id,roles,next((c for c in channels if c.id==ALERT_CHANNEL),None))
+        channel=await guild.fetch_channel(ALERT_CHANNEL)
+        private_alert(guild.id,roles,channel)
     for payload in desired(verified):
         name=payload['name'];record=receipt(guild.id,name)
         found=[r for r in rules if r.name==name]

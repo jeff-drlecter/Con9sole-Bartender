@@ -96,12 +96,13 @@ class PermissionAudit(commands.Cog):
             await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
         if self.lock.locked():
             await inter.followup.send('另一項審核進行中，請稍後。',ephemeral=True);return
-        from features.anti_scam_rules import draft,summary
+        from features.anti_scam_rules import ALERT_CHANNEL,draft,summary
         import io
         import json
         async with self.lock:
             try:
-                roles,channels,rules=await asyncio.gather(inter.guild.fetch_roles(),inter.guild.fetch_channels(),inter.guild.fetch_automod_rules())
+                roles,channel,rules=await asyncio.gather(inter.guild.fetch_roles(),inter.guild.fetch_channel(ALERT_CHANNEL),inter.guild.fetch_automod_rules())
+                channels=[channel]
                 plan=draft(roles,channels,rules,config.VERIFIED_ROLE_ID)
                 if not await self.authorized(inter):
                     await inter.followup.send('權限已改變，草案未送出。',ephemeral=True);return
