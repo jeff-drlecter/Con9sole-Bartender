@@ -9,7 +9,7 @@ PROMPT_TITLE = LANGUAGE_TITLE
 
 
 def language(member) -> str:
-    names = {r.name for r in getattr(member, "roles", []) if not r.managed and r.permissions.value == 0}
+    names = {r.name for r in getattr(member, "roles", []) if not getattr(r, "managed", True) and getattr(getattr(r, "permissions", None), "value", None) == 0}
     # Ambiguous dual-role selections fail back to the server default.
     return "tw" if ROLE_NAMES["tw"] in names and ROLE_NAMES["hk"] not in names else "hk"
 
@@ -51,7 +51,8 @@ def menu_text(text: str, code: str) -> str:
     for hk, tw in TW.items():
         if text.endswith(hk) and len(text) - len(hk) <= 4:
             return text[:-len(hk)] + tw
-    return text
+    from features.wording import text_for_code
+    return text_for_code(code, text)
 
 
 def localize_menu(member, embed=None, view=None):
@@ -63,6 +64,8 @@ def localize_menu(member, embed=None, view=None):
         if embed.description:
             embed.description = menu_text(embed.description, code)
     if view is not None:
+        from features.wording import view_copy
+        view_copy(member, view)
         for child in view.children:
             if isinstance(child, discord.ui.Button) and child.label:
                 child.label = menu_text(child.label, code)
