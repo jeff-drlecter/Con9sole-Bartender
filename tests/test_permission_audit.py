@@ -94,3 +94,15 @@ class ExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['options'][0]['id'],'123456789012345678')
         self.assertEqual(result['options'][0]['role_ids'],['987654321012345678'])
         archive(s)
+
+
+    async def test_stage1_status_reads_receipts_while_mutation_locked(self):
+        inter=NS(response=NS(defer=AsyncMock()),followup=NS(send=AsyncMock()),guild_id=1,user=NS(id=7))
+        cog=PermissionAudit(None)
+        await cog.lock.acquire()
+        try:
+            with patch.object(cog,'authorized',AsyncMock(return_value=True)),patch('features.anti_scam_fix.load',return_value=dict(id='p',scope='stage1_caps',ops=[dict(state='verified'),dict(state='prepared')])),patch('cogs.permission_audit.collect',AsyncMock()) as read:
+                await cog.stage1.callback(cog,inter,action='status',plan_id='p')
+                read.assert_not_awaited()
+            self.assertIn('verified 1',inter.followup.send.call_args.args[0])
+        finally:cog.lock.release()
