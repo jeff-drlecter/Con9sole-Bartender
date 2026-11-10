@@ -229,7 +229,9 @@ async def _order_temp_channels(guild: discord.Guild, category_id: int | None) ->
 async def _try_order_temp_channels(guild: discord.Guild, category_id: int | None) -> None:
     try:
         await _order_temp_channels(guild, category_id)
-    except discord.HTTPException:
+    except (discord.HTTPException, discord.InvalidData):
+        # New Discord channel types may make the bulk channel fetch fail.
+        # Cosmetic ordering must not prevent the creation reply/cleanup setup.
         # Ordering failure must not strand the creator in the hub or orphan a room.
         log.exception("Could not sort temp VCs: guild=%s category=%s", guild.id, category_id)
 
