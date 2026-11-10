@@ -160,6 +160,24 @@ class Maintenance(commands.Cog):
                 log.warning('Maintenance alert withheld/uncertain guild=%s kind=%s', guild.id, type(exc).__name__)
         return findings
 
+    async def test_delivery(self, guild):
+        state = self.store.state(guild.id)
+        if not state['baseline']:
+            raise ValueError('請先建立基準。')
+        channel = await self.destination(guild, state['channel'])
+        fingerprint = digest({'kind': 'delivery-test', 'baseline': state['baseline']['id']})
+        if not self.store.reserve(guild.id, fingerprint):
+            return '本基準已有測試通知紀錄；請核對目的地，唔會重發。'
+        try:
+            async with asyncio.timeout(30):
+                message = await channel.send('🛠️ Stage 5 維護通知測試｜只驗證送達，並非異常警報。\n'
+                                             '目的地私隱已核對；未修改權限、XP、訂閱或防騙規則。',
+                                             allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+                self.store.sent(guild.id, fingerprint, message.id)
+        except Exception:
+            return '測試通知結果不明；請核對目的地，唔會自動重試。'
+        return '測試通知已送出；本基準只測一次。'
+
     @tasks.loop(minutes=30)
     async def poll(self):
         try:
@@ -199,7 +217,8 @@ class Maintenance(commands.Cog):
     @app_commands.command(name='maintenance', description='管理員專用：設定基準、唯讀核對及維護提示')
     @app_commands.choices(action=[app_commands.Choice(name=n, value=v) for n, v in (
         ('狀態', 'status'), ('立即核對（不發通知）', 'check'), ('預覽新基準', 'preview'),
-        ('確認新基準', 'accept'), ('啟用背景提示', 'enable'), ('停用背景提示', 'disable'))])
+        ('確認新基準', 'accept'), ('啟用背景提示', 'enable'), ('停用背景提示', 'disable'),
+        ('測試通知送達（每個基準一次）', 'test'))])
     @app_commands.describe(code='確認基準時填入預覽確認碼', channel='預覽基準時選擇管理員專用文字頻道')
     async def maintenance(self, interaction: discord.Interaction, action: str = 'status',
                           code: str = '', channel: discord.TextChannel | None = None):
@@ -233,6 +252,12 @@ class Maintenance(commands.Cog):
                         if not await self.authorize(interaction):
                             raise ValueError('管理員權限已改變。')
                         self.store.accept(interaction.guild_id, interaction.user.id, code, observed)
+                    elif action == 'test':
+                        if not await self.authorize(interaction):
+                            raise ValueError('管理員權限已改變。')
+                        text = await self.test_delivery(interaction.guild)
+                        await interaction.followup.send(text, ephemeral=True)
+                        return
                     elif action in ('enable', 'disable'):
                         if action == 'enable':
                             await self.destination(interaction.guild, state['channel'])
