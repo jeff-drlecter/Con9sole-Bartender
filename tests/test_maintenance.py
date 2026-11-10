@@ -218,6 +218,18 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.check(self.guild, background=True)
         self.assertEqual(self.destination.send.await_count, 2)
 
+    async def test_delivery_probe_is_labelled_and_once_per_baseline(self):
+        self.assertIn('已送出', await self.cog.test_delivery(self.guild))
+        self.assertIn('唔會重發', await self.cog.test_delivery(self.guild))
+        self.destination.send.assert_awaited_once()
+        self.assertIn('並非異常警報', self.destination.send.call_args.args[0])
+
+    async def test_delivery_probe_timeout_never_retries(self):
+        self.destination.send.side_effect = TimeoutError()
+        self.assertIn('結果不明', await self.cog.test_delivery(self.guild))
+        self.assertIn('唔會重發', await self.cog.test_delivery(self.guild))
+        self.destination.send.assert_awaited_once()
+
     async def test_manual_check_never_sends(self):
         for _ in range(3):
             await self.cog.check(self.guild, background=False)
