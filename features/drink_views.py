@@ -1,4 +1,5 @@
 from __future__ import annotations
+from features.wording import text as wording_text, view_copy as wording_view
 
 import discord
 
@@ -89,7 +90,7 @@ class DrinkCollectionView(SafeView):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message(
-                "呢個酒單收藏面板只限發起者使用。", ephemeral=True
+                wording_text(interaction.user, "呢個酒單收藏面板只限發起者使用。"), ephemeral=True
             )
             return False
         return True
@@ -145,7 +146,7 @@ class DrinkCollectionRarityButton(discord.ui.Button):
             self.view.add_item(CollectionPageButton(1))
             embed = await run_stats(build_drink_collection_rarity_embed,
                                    self.view.guild, self.view.target_user, self.rarity, 0)
-            await interaction.edit_original_response(embed=embed, view=self.view)
+            await interaction.edit_original_response(embed=embed, view=wording_view(interaction.user, self.view))
 
 
 
@@ -165,7 +166,7 @@ class DrinkCollectionRecentButton(discord.ui.Button):
         embed = build_drink_collection_recent_embed(
             self.view.guild, self.view.target_user
         )
-        await interaction.response.edit_message(embed=embed, view=self.view)
+        await interaction.response.edit_message(embed=embed, view=wording_view(interaction.user, self.view))
 
 
 class DrinkCollectionSummaryButton(discord.ui.Button):
@@ -187,7 +188,7 @@ class DrinkCollectionSummaryButton(discord.ui.Button):
                 self.view.remove_item(child)
         self.view.active_rarity = None
         embed = build_drink_collection_embed(self.view.guild, self.view.target_user)
-        await interaction.edit_original_response(embed=embed, view=self.view)
+        await interaction.edit_original_response(embed=embed, view=wording_view(interaction.user, self.view))
         if self.view.owner_id == self.view.target_user.id:
             from features.theme_views import deliver_pending_notice
 
@@ -216,7 +217,7 @@ class DrinkMilestonesButton(discord.ui.Button):
         if view.owner_id == view.target_user.id and snapshot["awards"]:
             view.add_item(CollectionTitleSelect(snapshot))
         await interaction.edit_original_response(
-            embed=build_drink_milestones_embed(view.guild, view.target_user), view=view
+            embed=build_drink_milestones_embed(view.guild, view.target_user), view=wording_view(interaction.user, view)
         )
 
 
@@ -260,7 +261,7 @@ class CollectionTitleSelect(discord.ui.Select):
             or interaction.user.id != view.target_user.id
         ):
             await interaction.response.send_message(
-                "只可以更改自己嘅稱號。", ephemeral=True
+                wording_text(interaction.user, "只可以更改自己嘅稱號。"), ephemeral=True
             )
             return
         cog=interaction.client.get_cog('TitleRoles')
@@ -289,7 +290,7 @@ class CollectionPageButton(discord.ui.Button):
             view.rarity_page = max(0, min(last, view.rarity_page + self.direction))
             embed = await run_stats(build_drink_collection_rarity_embed,
                                    view.guild, view.target_user, view.active_rarity, view.rarity_page)
-            await interaction.edit_original_response(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=wording_view(interaction.user, view))
 
 
 class FeatureButton(discord.ui.Button):
@@ -320,7 +321,7 @@ class FeatureButton(discord.ui.Button):
         if cog is None:
             await send_or_followup(
                 interaction,
-                content="呢個功能暫時未準備好，請稍後再試。",
+                content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),
                 ephemeral=True,
             )
             return
