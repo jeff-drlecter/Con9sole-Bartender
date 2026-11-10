@@ -18,7 +18,7 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         p=patch.object(m,'PATH',Path(self.tmp.name)/'monitor.db');p.start();self.addCleanup(p.stop)
-        self.guild=NS(id=1,me=NS(id=99),fetch_roles=AsyncMock(return_value=[NS(id=10)]),fetch_channels=AsyncMock(return_value=[]),fetch_automod_rules=AsyncMock(),create_automod_rule=AsyncMock())
+        self.guild=NS(id=1,me=NS(id=99),fetch_roles=AsyncMock(return_value=[NS(id=10)]),fetch_channels=AsyncMock(side_effect=discord.InvalidData("Unknown channel type 20")),fetch_channel=AsyncMock(return_value=NS(id=m.ALERT_CHANNEL)),fetch_automod_rules=AsyncMock(),create_automod_rule=AsyncMock())
 
     async def test_enable_creates_alert_only_and_repeated_enable_no_duplicate(self):
         rules=[]
@@ -69,6 +69,8 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
         self.guild.fetch_automod_rules.return_value=[]
         rows=await m.run(self.guild,10,AsyncMock(return_value=True),'status')
         self.assertEqual(len(rows),2);self.guild.create_automod_rule.assert_not_awaited()
+        self.guild.fetch_channels.assert_not_awaited()
+        self.guild.fetch_channel.assert_not_awaited()
 
 
     def test_real_discord_spam_rule_has_null_metadata(self):
