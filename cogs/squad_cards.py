@@ -29,6 +29,12 @@ def humans(channel):
     return [m for m in channel.members if not m.bot]
 
 
+def sync_mode_name(cog, channel, session):
+    tempvc = cog.bot.get_cog("TempVC")
+    if tempvc is not None:
+        tempvc.queue_mode_name(channel, session.get("mode", ""))
+
+
 # Shared labels are kept separate from version-specific options.
 GAME_LABELS = {"fc": "EA SPORTS FC", "2k": "NBA 2K", "2k27": "NBA 2K27"}
 MODE_PRESETS = {
@@ -77,6 +83,7 @@ class ModePicker(discord.ui.Select):
                 return
             await interaction.response.defer(ephemeral=True)
             session["mode"] = "" if value == "__none__" else value
+            sync_mode_name(self.cog, channel, session)
             if self.profile:
                 session["profile"] = self.profile
             session["dirty"] = True
@@ -108,6 +115,7 @@ class GamePicker(discord.ui.Select):
                 session["game"] = ""
             else:
                 session.update(profile=profile, game=GAME_LABELS[profile], mode="")
+            sync_mode_name(self.cog, channel, session)
             session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
@@ -142,6 +150,7 @@ class Details(discord.ui.Modal, title="組隊狀態"):
                 return
             session.update(game=str(self.game.value).strip(), mode=str(self.mode.value).strip(),
                            missing=int(value) if value else None)
+            sync_mode_name(self.cog, channel, session)
             session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
