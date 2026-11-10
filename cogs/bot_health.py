@@ -1,3 +1,4 @@
+from features.wording import text as wording_text, view_copy as wording_view
 import asyncio
 import discord
 from discord import app_commands
@@ -50,7 +51,7 @@ class HealthView(SafeView):
         current = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
         if interaction.guild_id == config.GUILD_ID and interaction.user.id == self.owner and can_use_staff_tool(current, 'bot_health'):
             return True
-        await interaction.response.send_message('權限已改變或面板唔屬於你，請重新開啟。', ephemeral=True)
+        await interaction.response.send_message(wording_text(interaction.user, '權限已改變或面板唔屬於你，請重新開啟。'), ephemeral=True)
         return False
 
 
@@ -62,9 +63,9 @@ class BotHealth(commands.Cog):
             await interaction.response.send_message('只限本伺服器管理員／Mod／Helper 使用。',ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True,thinking=not refresh)
-        embed=discord.Embed(title='🩺 Bot 系統狀態',description='唯讀檢查；唔會修改 XP、角色或重發通知。')
+        embed=discord.Embed(title='🩺 Bot 系統狀態',description=wording_text(interaction.user, '唯讀檢查；唔會修改 XP、角色或重發通知。'))
         for name,label in (
-            ('Menu','主選單'),('Drink','酒吧／收藏'),('Cheers','打氣'),('DailyBar','每日任務'),
+            ('Menu','主選單'),('Drink','酒吧／收藏'),('Cheers',wording_text(interaction.user, '打氣')),('DailyBar','每日任務'),
             ('CommunityLevels','會員等級'),('SquadCards','招募／足跡卡'),('TempVC','小隊語音房'),
             ('RoleManager','角色工具'),('ActivityReminder','活動提醒'),('UpdatePublisher','更新公告'),
             ('Confession','匿名投稿'),('TwitchRelay','直播轉發')):
@@ -89,13 +90,13 @@ class BotHealth(commands.Cog):
         for name,values in health.items():
             embed.add_field(name=name,value='｜'.join(f'{key}：{value}' for key,value in values.items()),inline=False)
         embed.timestamp=discord.utils.utcnow()
-        embed.set_footer(text='最近檢查｜循環運行唔代表每項工作已成功；待查通知需逐項核對。')
-        embed.add_field(name='異常處理', value='角色同步：進入等級／稱號管理核對。\n通知：進入待查通知逐項處理，保留操作紀錄。\n召人卡結果不明：先核對原頻道，再用 /squad_recover 配對實際卡片；唔會自動補發。\n收尾通知由背景工作重試；持續積壓請查管理日誌。', inline=False)
+        embed.set_footer(text=wording_text(interaction.user, '最近檢查｜循環運行唔代表每項工作已成功；待查通知需逐項核對。'))
+        embed.add_field(name='異常處理', value=wording_text(interaction.user, '角色同步：進入等級／稱號管理核對。\n通知：進入待查通知逐項處理，保留操作紀錄。\n召人卡結果不明：先核對原頻道，再用 /squad_recover 配對實際卡片；唔會自動補發。\n收尾通知由背景工作重試；持續積壓請查管理日誌。'), inline=False)
         view=HealthView(interaction.guild.get_member(interaction.user.id))
         if refresh:
-            await interaction.edit_original_response(embed=embed,view=view)
+            await interaction.edit_original_response(embed=embed,view=wording_view(interaction.user, view))
             return
-        await interaction.followup.send(embed=embed,view=view,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+        await interaction.followup.send(embed=embed,view=wording_view(interaction.user, view),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)
