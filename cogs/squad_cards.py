@@ -17,6 +17,7 @@ from core.permissions import is_admin_or_helper, is_server_admin
 from core.action_guard import shared_async_lock
 from core.storage_paths import DATA_DIR
 from core.ui import SafeView
+from features.language_preferences import wording, localize_menu, language, menu_text
 from features import squad_interest
 from features.menu_stats import run_stats
 
@@ -53,7 +54,7 @@ def game_profile(channel, session):
 class ModePicker(discord.ui.Select):
     def __init__(self, cog, key, session, profile):
         self.cog, self.key, self.session, self.profile = cog, key, session, profile
-        options = [discord.SelectOption(label="未定／唔填", value="__none__")]
+        options = [discord.SelectOption(label="未定／不填", value="__none__")]
         options += [discord.SelectOption(label=mode, value=mode,
                                         default=mode == session.get("mode"))
                     for mode in MODE_PRESETS.get(profile, ())]
@@ -65,14 +66,14 @@ class ModePicker(discord.ui.Select):
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
             if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
-                await interaction.response.send_message("呢場已結束，或者你冇修改權限。", ephemeral=True)
+                await interaction.response.send_message(menu_text("呢場已結束，或者你冇修改權限。", language(interaction.user)), ephemeral=True)
                 return
             value = self.values[0]
             if value == "__custom__":
                 await interaction.response.send_modal(Details(self.cog, self.key, session))
                 return
             if self.profile != game_profile(channel, session):
-                await interaction.response.send_message("遊戲設定已改，請重新開啟招募設定。", ephemeral=True)
+                await interaction.response.send_message(menu_text("遊戲設定已改，請重新開啟招募設定。", language(interaction.user)), ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True)
             session["mode"] = "" if value == "__none__" else value
@@ -81,7 +82,7 @@ class ModePicker(discord.ui.Select):
             session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
-        await interaction.followup.send("已更新遊戲模式。", ephemeral=True)
+        await interaction.followup.send(menu_text("已更新遊戲模式。", language(interaction.user)), ephemeral=True)
 
 
 class GamePicker(discord.ui.Select):
@@ -98,7 +99,7 @@ class GamePicker(discord.ui.Select):
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
             if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
-                await interaction.followup.send("呢場已結束，或者你冇修改權限。", ephemeral=True)
+                await interaction.followup.send(menu_text("呢場已結束，或者你冇修改權限。", language(interaction.user)), ephemeral=True)
                 return
             profile = self.values[0]
             if profile == "other":
@@ -111,14 +112,14 @@ class GamePicker(discord.ui.Select):
             self.cog.save()
             await self.cog.render(channel, session)
         await interaction.edit_original_response(
-            content="遊戲已更新，模式同人數都可以唔填。",
+            content="遊戲已更新，模式與人數均可留空。",
             view=RecruitmentChoices(self.cog, self.key, session))
 
 
 class Details(discord.ui.Modal, title="組隊狀態"):
-    game = discord.ui.TextInput(label="玩緊乜？（選填）", max_length=100, required=False)
+    game = discord.ui.TextInput(label="遊戲名稱（選填）", max_length=100, required=False)
     mode = discord.ui.TextInput(label="模式（選填／自訂）", max_length=100, required=False)
-    missing = discord.ui.TextInput(label="仲缺幾人？（留空＝不限人數）", max_length=2, required=False)
+    missing = discord.ui.TextInput(label="還缺幾人？（留空＝不限人數）", max_length=2, required=False)
 
     def __init__(self, cog, key, session):
         super().__init__()
@@ -130,21 +131,21 @@ class Details(discord.ui.Modal, title="組隊狀態"):
     async def on_submit(self, interaction):
         value = str(self.missing.value).strip()
         if value and (not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 99):
-            await interaction.response.send_message("請填 1–99，或者留空代表不限人數。", ephemeral=True)
+            await interaction.response.send_message(menu_text("請填 1–99，或者留空代表不限人數。", language(interaction.user)), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         async with self.cog.lock:
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
             if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
-                await interaction.followup.send("呢場已結束，或者你冇修改權限（需為在場成員、Admin 或 Helper）。", ephemeral=True)
+                await interaction.followup.send(menu_text("呢場已結束，或者你冇修改權限（需為在場成員、Admin 或 Helper）。", language(interaction.user)), ephemeral=True)
                 return
             session.update(game=str(self.game.value).strip(), mode=str(self.mode.value).strip(),
                            missing=int(value) if value else None)
             session["dirty"] = True
             self.cog.save()
             await self.cog.render(channel, session)
-        await interaction.followup.send("已更新組隊狀態。", ephemeral=True)
+        await interaction.followup.send(menu_text("已更新組隊狀態。", language(interaction.user)), ephemeral=True)
 
 
 class RecruitmentChoices(discord.ui.View):
@@ -172,7 +173,7 @@ class RecruitmentChoices(discord.ui.View):
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
             if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
-                await interaction.followup.send("呢場已結束，或者你冇修改權限。", ephemeral=True)
+                await interaction.followup.send(menu_text("呢場已結束，或者你冇修改權限。", language(interaction.user)), ephemeral=True)
                 return
             session["missing"] = value
             session["dirty"] = True
@@ -186,7 +187,7 @@ class RecruitmentChoices(discord.ui.View):
         session = self.cog.state["sessions"].get(self.key)
         channel = self.cog.bot.get_channel(int(self.key))
         if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
-            await interaction.response.send_message("呢場已結束，或者你冇修改權限。", ephemeral=True)
+            await interaction.response.send_message(menu_text("呢場已結束，或者你冇修改權限。", language(interaction.user)), ephemeral=True)
             return
         await interaction.response.send_modal(Details(self.cog, self.key, session))
 
@@ -208,8 +209,8 @@ def interest_topic(channel, session):
     return squad_interest.topic(config.GUILD_ID, game)
 
 
-INTEREST_FIELD = "🙋 下次叫埋"
-RECURRING_FIELD = "🔔 每次都叫"
+INTEREST_FIELD = "🙋 下次通知"
+RECURRING_FIELD = "🔔 每次通知"
 
 
 def interest_roster(guild, destination, ids):
@@ -233,8 +234,8 @@ def interest_summary(roster):
             break
         lines.append(line)
     if not lines:
-        return "未有人登記。"
-    suffix = f"\n另有 {len(roster) - len(lines)} 人，撳「查看／更新名單」。" if len(lines) < len(roster) else ""
+        return "尚無人登記。"
+    suffix = f"\n另有 {len(roster) - len(lines)} 人，可按「查看／更新名單」。" if len(lines) < len(roster) else ""
     return "、".join(lines) + suffix
 
 
@@ -245,7 +246,7 @@ class InterestRosterPages(SafeView):
         self.user_id, self.roster, self.label, self.page = user_id, roster, label, 0
         self.source_view, self.source_message = source_view, source_message
         if source_view is not None:
-            for kind, label in (("once", "🙋 下次叫我"), ("always", "🔔 每次都叫我")):
+            for kind, label in (("once", "🙋 下次通知我"), ("always", "🔔 每次通知我")):
                 button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary, row=1)
                 async def choose(interaction, choice=kind):
                     await self.source_view.toggle(interaction, choice,
@@ -258,13 +259,13 @@ class InterestRosterPages(SafeView):
     def embed(self):
         start = self.page * 20
         lines = [f"<@{uid}> · {name}" for uid, name in self.roster[start:start + 20]]
-        embed = discord.Embed(title="🙋 下次想玩", description="\n".join(lines) or "暫時未有人登記。", colour=0x5865F2)
+        embed = discord.Embed(title="🙋 下次想玩", description="\n".join(lines) or "暫時尚無人登記。", colour=0x5865F2)
         embed.set_footer(text=f"{self.label} · {len(self.roster)} 人 · 第 {self.page + 1}/{max(1, (len(self.roster) + 19) // 20)} 頁")
         return embed
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("請由足跡卡開啟自己嘅名單。", ephemeral=True)
+            await interaction.response.send_message(menu_text("請由足跡卡開啟自己嘅名單。", language(interaction.user)), ephemeral=True)
             return False
         return True
 
@@ -272,7 +273,7 @@ class InterestRosterPages(SafeView):
         self.page = max(0, min((max(1, len(self.roster)) - 1) // 20, self.page + delta))
         self.previous.disabled = self.page == 0
         self.next_page.disabled = (self.page + 1) * 20 >= len(self.roster)
-        await interaction.response.edit_message(embed=self.embed(), view=self,
+        await interaction.response.edit_message(embed=localize_menu(interaction.user, self.embed())[0], view=self,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
     @discord.ui.button(label="上一頁", style=discord.ButtonStyle.secondary)
@@ -287,7 +288,7 @@ class InterestRosterPages(SafeView):
 def add_interest_fields(embed, roster, preferences):
     """Remove legacy public subscription fields; rosters are button-only."""
     for index in reversed(range(len(embed.fields))):
-        if embed.fields[index].name.startswith((INTEREST_FIELD, RECURRING_FIELD, "🙋 下次想玩")):
+        if embed.fields[index].name.startswith((INTEREST_FIELD, RECURRING_FIELD, "🙋 下次叫埋", "🔔 每次都叫", "🙋 下次想玩")):
             embed.remove_field(index)
 
 
@@ -296,8 +297,8 @@ class FootprintView(SafeView):
         super().__init__(timeout=None)
         self.cog, self.topic = cog, dict(value, label=value['label'].split(' · ', 1)[0])
         self.lock = cog.lock if cog is not None else asyncio.Lock()
-        for kind, label, prefix in (("once", "🙋 下次叫我", "squad-interest"),
-                                     ("always", "🔔 每次都叫我", "squad-interest-always")):
+        for kind, label, prefix in (("once", "🙋 下次通知我", "squad-interest"),
+                                     ("always", "🔔 每次通知我", "squad-interest-always")):
             button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary,
                                        custom_id=f"{prefix}:{value['id']}")
             async def choose(interaction, choice=kind):
@@ -311,10 +312,10 @@ class FootprintView(SafeView):
 
     async def permitted(self, interaction):
         if interaction.guild_id != self.topic["guild_id"] or interaction.user.bot:
-            await interaction.response.send_message("請喺原本伺服器使用。", ephemeral=True)
+            await interaction.response.send_message(menu_text("請喺原本伺服器使用。", language(interaction.user)), ephemeral=True)
             return False
         if not interaction.permissions.view_channel:
-            await interaction.response.send_message("你未有查看呢個頻道嘅權限。", ephemeral=True)
+            await interaction.response.send_message(menu_text("你未有查看呢個頻道嘅權限。", language(interaction.user)), ephemeral=True)
             return False
         return True
 
@@ -340,7 +341,7 @@ class FootprintView(SafeView):
             embed = message.embeds[0].copy()
             add_interest_fields(embed, roster, preferences)
             await message.edit(embed=embed, view=self, allowed_mentions=discord.AllowedMentions.none())
-        return [(uid, f"{name}（{'下次叫我' if preferences[uid] == 'once' else '每次都叫我'}）")
+        return [(uid, f"{name}（{'下次通知我' if preferences[uid] == 'once' else '每次通知我'}）")
                 for uid, name in roster]
 
     async def show_roster(self, interaction):
@@ -351,7 +352,8 @@ class FootprintView(SafeView):
             roster = await self.refresh(interaction)
         pages = InterestRosterPages(interaction.user.id, roster, self.topic['label'],
                                     source_view=self, source_message=interaction.message)
-        await interaction.followup.send(embed=pages.embed(), view=pages, ephemeral=True,
+        embed, pages = localize_menu(interaction.user, pages.embed(), pages)
+        await interaction.followup.send(embed=embed, view=pages, ephemeral=True,
                                         allowed_mentions=discord.AllowedMentions.none())
 
     async def toggle(self, interaction, kind='once', *, source_message=None, roster_pages=None):
@@ -377,21 +379,21 @@ class FootprintView(SafeView):
         if not joined:
             text = f"已取消 **{label}** 開局通知。"
         elif kind == 'once':
-            text = f"🙋 記低咗，下次 **{label}** 開局叫埋你！只通知下一局；再撳就取消。"
+            text = wording(interaction.user, "🙋 記低咗，下次 **{game}** 開局叫埋你！只通知下一局；再撳就取消。", "🙋 已登記，下次 **{game}** 開局會通知你！只通知下一局；再按一次即可取消。", game=label)
         else:
-            text = f"🔔 記低咗，以後每次 **{label}** 開局都叫你！再撳就取消。"
+            text = wording(interaction.user, "🔔 記低咗，以後每次 **{game}** 開局都叫你！再撳就取消。", "🔔 已登記，以後每次 **{game}** 開局都會通知你！再按一次即可取消。", game=label)
         if not refreshed:
-            text += "\n登記已儲存；卡片暫時未更新，可撳「查看／更新名單」重試。"
+            text += wording(interaction.user, "\n登記已儲存；卡片暫時未更新，可撳「查看／更新名單」重試。", "\n登記已儲存；卡片暫時未更新，可按「查看／更新名單」重試。")
         if roster_pages is not None:
             if refreshed:
                 roster_pages.roster = roster
             roster_pages.page = min(roster_pages.page, max(0, (len(roster_pages.roster) - 1) // 20))
             roster_pages.previous.disabled = roster_pages.page == 0
             roster_pages.next_page.disabled = (roster_pages.page + 1) * 20 >= len(roster_pages.roster)
-            await interaction.edit_original_response(content=text, embed=roster_pages.embed(),
+            await interaction.edit_original_response(content=text, embed=localize_menu(interaction.user, roster_pages.embed())[0],
                 view=roster_pages, allowed_mentions=discord.AllowedMentions.none())
         else:
-            await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            await interaction.followup.send(menu_text(text, language(interaction.user)), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
 class CardView(FootprintView):
@@ -419,10 +421,10 @@ class CardView(FootprintView):
         session = self.cog.state["sessions"].get(self.key)
         channel = self.cog.bot.get_channel(int(self.key))
         if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
-            await interaction.response.send_message("只限呢個 call 嘅在場成員、Admin 或 Helper 修改。", ephemeral=True)
+            await interaction.response.send_message(menu_text("只限呢個 call 嘅在場成員、Admin 或 Helper 修改。", language(interaction.user)), ephemeral=True)
             return
         await interaction.response.send_message(
-            "揀遊戲模式或快捷人數；全部選填，唔填都歡迎加入。",
+            menu_text("揀遊戲模式或快捷人數；全部選填，唔填都歡迎加入。", language(interaction.user)),
             view=RecruitmentChoices(self.cog, self.key, session), ephemeral=True)
 
 
@@ -475,16 +477,16 @@ class SquadCards(commands.Cog):
         mode = discord.utils.escape_markdown(session.get("mode", ""))
         missing = session.get("missing")
         if ended:
-            title, colour = "🏁 今晚收工，下次再戰！", 0x808080
+            title, colour = "🏁 本局結束，下次再戰！", 0x808080
         elif missing is not None and missing > 0:
-            title, colour = f"🙌 缺 {missing} 人，一齊玩！", 0x57F287
+            title, colour = f"🙌 缺 {missing} 人，一起玩！", 0x57F287
         else:
-            title, colour = "🟢 開緊團 · 歡迎加入", 0x57F287
+            title, colour = "🟢 組隊中 · 歡迎加入", 0x57F287
         lines = []
         game_mode = " · ".join(part for part in (game, mode) if part)
         if game_mode:
             lines.append(f"🎮 {game_mode}")
-        lines.append(f"👥 {'一齊玩過' if ended else str(len(members)) + ' 人'} · {roster[:1024]}")
+        lines.append(f"👥 {'曾參與' if ended else str(len(members)) + ' 人'} · {roster[:1024]}")
         if ended:
             minutes = max(0, int((session["ended"] - session["started"]) // 60))
             hours, remaining = divmod(minutes, 60)
@@ -523,7 +525,7 @@ class SquadCards(commands.Cog):
         # Notify only on the original card, never on edits or replacement cards.
         first_id = session.get("first_member")
         if not ended and not session.get("message") and first_id in {m.id for m in members}:
-            kwargs["content"] = f"<@{first_id}> 你係第一個到步嘅玩家，請問需要更多玩家嗎？可撳「招募設定」，遊戲同缺幾人都可以留空。"
+            kwargs["content"] = f"<@{first_id}> 你是首位加入的玩家，需要招募隊友嗎？可按「招募設定」，遊戲及缺少人數均可留空。"
             kwargs["allowed_mentions"] = discord.AllowedMentions(
                 users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
         ready=getattr(self.bot,'is_ready',None)
@@ -551,7 +553,7 @@ class SquadCards(commands.Cog):
 
     async def menu_entry(self, interaction, *, page=0):
         if interaction.guild_id!=config.GUILD_ID or interaction.user.bot:
-            await interaction.response.send_message('請喺原本伺服器使用。',ephemeral=True)
+            await interaction.response.send_message(menu_text('請喺原本伺服器使用。', language(interaction.user)),ephemeral=True)
             return
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True,thinking=True)
@@ -580,7 +582,7 @@ class SquadCards(commands.Cog):
                     continue
                 value=dict(id=row['scope'],guild_id=row['guild_id'],label=row['label'])
                 if callable(ready) and not ready():return
-                await message.edit(content=f'🏁 呢局已結束。[查看足跡]({url})，可登記下次通知。',
+                await message.edit(content=f'🏁 此局已結束。[查看足跡]({url})，可登記下次通知。',
                     view=FootprintView(self,value),allowed_mentions=discord.AllowedMentions.none())
                 await run_stats(squad_interest.track_card,row['scope'],channel.id,message.id,'')
                 await run_stats(squad_interest.notice_closed,row)
@@ -693,7 +695,7 @@ class SquadCards(commands.Cog):
                         return
                     try:
                         message=await destination.send(
-                            f"{mentions}｜🎮 **{label}** 開局喇！[查看召人卡]({url})",
+                            f"{mentions}｜🎮 **{label}** 開局了！[查看招募卡]({url})",
                             view=view, suppress_embeds=True,
                             allowed_mentions=discord.AllowedMentions(
                                 users=[discord.Object(id=uid) for uid in batch], roles=False,
@@ -825,31 +827,31 @@ class SquadCards(commands.Cog):
     @app_commands.check(lambda i: is_server_admin(i.user))
     async def squad_recover(self, interaction: discord.Interaction, channel: discord.VoiceChannel, message_id: str):
         if interaction.guild_id!=config.GUILD_ID or not is_server_admin(interaction.user) or not message_id.isdigit():
-            await interaction.response.send_message('請喺本伺服器提供現有訊息 ID。',ephemeral=True)
+            await interaction.response.send_message(menu_text('請喺本伺服器提供現有訊息 ID。', language(interaction.user)),ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True,thinking=True)
         async with self.lock:
             session=self.state['sessions'].get(str(channel.id))
             post=await run_stats(squad_interest.uncertain_card,session['id']) if session else None
             if not post or not humans(channel):
-                await interaction.followup.send('未有可核對嘅進行中發卡紀錄。',ephemeral=True);return
+                await interaction.followup.send(menu_text('未有可核對嘅進行中發卡紀錄。', language(interaction.user)),ephemeral=True);return
             destination=self.bot.get_channel(post['destination'])
             try:
                 message=await destination.fetch_message(int(message_id))
             except (discord.HTTPException,AttributeError):
-                await interaction.followup.send('讀取唔到指定訊息，紀錄保持待查。',ephemeral=True);return
+                await interaction.followup.send(menu_text('讀取唔到指定訊息，紀錄保持待查。', language(interaction.user)),ephemeral=True);return
             join_url=f'https://discord.com/channels/{config.GUILD_ID}/{channel.id}'
             components=[c for row in message.components for c in row.children]
             links=[getattr(c,'url',None) for c in components]
             controls=[getattr(c,'custom_id',None) for c in components]
             if not message.embeds or f"squad:{session['id']}" not in controls or message.author.id!=self.bot.user.id or join_url not in links or message.created_at.timestamp()<post['stamp']-5:
-                await interaction.followup.send('訊息作者、語音連結或時間唔吻合，紀錄保持待查。',ephemeral=True);return
+                await interaction.followup.send(menu_text('訊息作者、語音連結或時間唔吻合，紀錄保持待查。', language(interaction.user)),ephemeral=True);return
             await run_stats(squad_interest.finish_card_post,post['attempt'],message_id=message.id)
             session['message']=message.id
             self.interest_baseline.add(session['id'])
             self.save()
             await self.render(channel,session)
-        await interaction.followup.send('已連結現有召人卡；沒有重發卡片或補 tag。',ephemeral=True)
+        await interaction.followup.send(menu_text('已連結現有召人卡；沒有重發卡片或補 tag。', language(interaction.user)),ephemeral=True)
 
     @app_commands.command(name="squad_setup", description="設定自動組隊卡：一人留滿30秒後發召人卡")
     @app_commands.guild_only()
@@ -859,7 +861,7 @@ class SquadCards(commands.Cog):
         permissions = destination.permissions_for(interaction.guild.me)
         if not all((permissions.view_channel, permissions.send_messages,
                     permissions.embed_links, permissions.read_message_history)):
-            await interaction.response.send_message("Bot 喺狀態卡頻道需要查看、發訊息、嵌入連結及讀取歷史權限。", ephemeral=True)
+            await interaction.response.send_message(menu_text("Bot 喺狀態卡頻道需要查看、發訊息、嵌入連結及讀取歷史權限。", language(interaction.user)), ephemeral=True)
             return
         async with self.lock:
             settings = self.state["settings"]

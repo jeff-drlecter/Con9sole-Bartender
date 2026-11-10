@@ -7,6 +7,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 import discord
+from features.language_preferences import wording
 from discord.ext import commands
 
 from core.action_guard import claim_action
@@ -141,7 +142,7 @@ class Teams(commands.Cog):
                             self.dirty.discard(state.message_id)
                             continue
                         await message.edit(
-                            content="⌛ 呢次招募已結束，可以重新開局。",
+                            content="⌛ 本次招募已結束，可以重新開局。",
                             view=CancelledTeamView(self),
                             allowed_mentions=discord.AllowedMentions.none(),
                         )
@@ -174,7 +175,7 @@ class Teams(commands.Cog):
         game = infer_game_name(interaction.channel)
         view = TeamCountView(self, interaction.user.id, game=game)
         await interaction.response.send_message(
-            f"👥 {game or '搵人玩'} · 而家開局\n仲差幾位隊友？",
+            wording(interaction.user, "👥 {game} · 而家開局\n仲差幾位隊友？", "👥 {game} · 現在開局\n還缺幾位隊友？", game=game or wording(interaction.user, "搵人玩", "找人一起玩")),
             view=view,
             ephemeral=True,
         )
@@ -185,7 +186,7 @@ class Teams(commands.Cog):
     ) -> bool:
         if not 1 <= count <= 16 or not mode.strip() or len(mode.strip()) > 100:
             await send_or_followup(
-                interaction, content="請填遊戲名稱，同揀 1–16 位隊友。", ephemeral=True
+                interaction, content="請填寫遊戲名稱，並選擇 1–16 位隊友。", ephemeral=True
             )
             return False
         with claim_action(
@@ -250,12 +251,12 @@ class Teams(commands.Cog):
         status = (
             f"尚欠：**{remaining} 位**"
             if remaining
-            else "✅ 已齊人，召集人可以開小隊 call。"
+            else "✅ 人數已齊，召集人可以建立小隊語音房。"
         )
         return (
-            f"👥 **{discord.utils.escape_markdown(state.mode)} · 而家開局**\n"
-            f"召集人：<@{state.leader_id}> · 搵緊 {state.required} 位隊友\n\n"
-            f"{status}\n✅ 已加入：{names(state.join_now)}\n🕒 遲少少：{names(state.join_later)}\n\n"
+            f"👥 **{discord.utils.escape_markdown(state.mode)} · 現在開局**\n"
+            f"召集人：<@{state.leader_id}> · 招募 {state.required} 位隊友\n\n"
+            f"{status}\n✅ 已加入：{names(state.join_now)}\n🕒 稍後加入：{names(state.join_later)}\n\n"
             "招募 6 小時後自動結束。召集人可用「更多」修改或結束。"
         )
 
@@ -294,7 +295,7 @@ class TeamCountView(SafeView):
         if interaction.user.id == self.owner_id:
             return True
         await interaction.response.send_message(
-            "呢個選單只限召集人使用。", ephemeral=True
+            "此選單僅限召集人使用。", ephemeral=True
         )
         return False
 
@@ -331,9 +332,9 @@ class TeamCountView(SafeView):
                 pass
 
 
-class TeamDetailsModal(SafeModal, title="搵人玩"):
-    game = discord.ui.TextInput(label="玩咩遊戲／模式？", max_length=100)
-    count = discord.ui.TextInput(label="仲差幾位？（1–16）", max_length=2, default="2")
+class TeamDetailsModal(SafeModal, title="招募隊友"):
+    game = discord.ui.TextInput(label="遊戲／模式名稱", max_length=100)
+    count = discord.ui.TextInput(label="還缺幾位？（1–16）", max_length=2, default="2")
 
     def __init__(
         self,
@@ -408,7 +409,7 @@ class TeamView(SafeView):
                 "Could not save team change: message=%s", self.state.message_id
             )
             await interaction.followup.send(
-                "暫時保存唔到，未有更改名單，請稍後再試。", ephemeral=True
+                "暫時無法儲存，名單尚未更改，請稍後再試。", ephemeral=True
             )
             return False
         try:
@@ -423,7 +424,7 @@ class TeamView(SafeView):
                 "Team saved but card refresh failed: message=%s", self.state.message_id
             )
             await interaction.followup.send(
-                "名單已保存，但畫面暫時更新唔到，請勿重複加入。", ephemeral=True
+                "名單已儲存，但畫面暫時無法更新，請勿重複加入。", ephemeral=True
             )
         return True
 
@@ -436,7 +437,7 @@ class TeamView(SafeView):
             uid = interaction.user.id
             if uid == self.state.leader_id:
                 await interaction.followup.send(
-                    "你係召集人，唔使再加入。", ephemeral=True
+                    "你是召集人，無須再次加入。", ephemeral=True
                 )
                 return
             if uid in self.state.join_now or uid in self.state.join_later:
@@ -511,7 +512,7 @@ class TeamView(SafeView):
     ) -> None:
         if interaction.user.id != self.state.leader_id:
             await send_or_followup(
-                interaction, content="呢個係召集人嘅管理選單。", ephemeral=True
+                interaction, content="此為召集人的管理選單。", ephemeral=True
             )
             return
         await interaction.response.send_message(
@@ -551,7 +552,7 @@ class TeamView(SafeView):
                 pass
             except discord.HTTPException:
                 await interaction.edit_original_response(
-                    content="招募已結束，但畫面暫時更新唔到；酒保會再嘗試更新。"
+                    content="招募已結束，但畫面暫時無法更新；稍後會再次更新。"
                 )
                 return
             try:
@@ -620,7 +621,7 @@ class EditTeamModal(SafeModal, title="修改招募"):
                 return
             if count < len(state.join_now) + len(state.join_later):
                 await interaction.edit_original_response(
-                    content="人數唔可以少過已加入嘅隊友。"
+                    content="人數不可少於已加入的隊友。"
                 )
                 return
             previous = state.payload()

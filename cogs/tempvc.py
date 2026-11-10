@@ -7,6 +7,7 @@ import time
 from typing import Dict, Optional, Union
 
 import discord
+from features.language_preferences import wording, localize_menu, language, menu_text
 from discord import app_commands
 from discord.ext import commands
 
@@ -98,6 +99,9 @@ async def _send_interaction_message(
     ephemeral: bool = True,
     view: discord.ui.View | None = None,
 ) -> None:
+    if ephemeral:
+        content = menu_text(content, language(interaction.user))
+        _, view = localize_menu(interaction.user, view=view)
     if _interaction_response_done(interaction):
         await interaction.followup.send(content, ephemeral=ephemeral, view=view)
     else:
@@ -288,40 +292,30 @@ async def schedule_delete_if_empty(channel: discord.VoiceChannel, *, force: bool
     set_delete_task(ch_id, asyncio.create_task(_task()))
 
 
-def _build_created_message(ch: discord.VoiceChannel, limit: int) -> str:
-    actual_limit = ch.user_limit or limit
-    return (
-        f"✅ **Temp VC 已建立**：{ch.mention}\n"
-        f"📝 **名稱**：`{ch.name}`\n"
-        f"👥 **人數上限**：`{actual_limit}`\n"
-        f"✨ 祝你哋傾得開心。"
-    )
+def _build_created_message(ch: discord.VoiceChannel, limit: int, member=None) -> str:
+    return wording(member,
+        "✅ **小隊 call 已建立**：{room}\n📝 **名稱**：`{name}`\n👥 **人數上限**：`{limit}`\n✨ 祝你哋傾得開心。",
+        "✅ **小隊語音房已建立**：{room}\n📝 **名稱**：`{name}`\n👥 **人數上限**：`{limit}`\n✨ 祝大家聊得開心。",
+        room=ch.mention, name=ch.name, limit=ch.user_limit or limit)
 
 
-def _build_control_panel_message(ch: discord.VoiceChannel) -> str:
-    current_limit = ch.user_limit or "無限制"
-    return (
-        "🎛️ **小隊 call 控制**\n\n"
-        f"目前房間：{ch.mention}\n"
-        f"📝 名稱：`{ch.name}`\n"
-        f"👥 目前人數：`{len(ch.members)}`\n"
-        f"🔢 目前上限：`{current_limit}`\n\n"
-        "可用操作：\n"
-        "👥 **改人數上限** — Lv 15+ / Helper / Admin\n"
-        "🧹 **刪除小隊 call** — 只可喺房內得返自己一個時使用"
-    )
+def _build_control_panel_message(ch: discord.VoiceChannel, member=None) -> str:
+    return wording(member,
+        "🎛️ **小隊 call 控制**\n\n目前房間：{room}\n📝 名稱：`{name}`\n👥 目前人數：`{count}`\n🔢 目前上限：`{limit}`\n\n可用操作：\n👥 **改人數上限** — Lv 15+ / Helper / Admin\n🧹 **刪除小隊 call** — 只可喺房內得返自己一個時使用",
+        "🎛️ **小隊語音管理**\n\n目前房間：{room}\n📝 名稱：`{name}`\n👥 目前人數：`{count}`\n🔢 目前上限：`{limit}`\n\n可用操作：\n👥 **修改人數上限** — Lv 15+ / Helper / Admin\n🧹 **刪除小隊語音房** — 僅限房內只剩自己一人時使用",
+        room=ch.mention, name=ch.name, count=len(ch.members), limit=ch.user_limit or "無限制")
 
 
 def _build_admin_teardown_panel_message(channels: list[discord.VoiceChannel]) -> str:
     if not channels:
-        return "🧹 **Admin VC Teardown**\n\n目前無可刪除嘅 Bot Temp VC。"
+        return "🧹 **語音房清理**\n\n目前沒有可刪除的 Bot 臨時語音房。"
 
     shown = min(len(channels), MAX_ADMIN_SELECT_OPTIONS)
     extra = len(channels) - shown
     extra_text = f"\n\n⚠️ 目前共有 `{len(channels)}` 間 Temp VC，Discord dropdown 最多顯示 `{shown}` 間。" if extra > 0 else ""
     return (
-        "🧹 **Admin VC Teardown**\n\n"
-        "請先喺 dropdown 選擇要刪除嘅小隊 call。\n"
+        "🧹 **語音房清理**\n\n"
+        "請先從選單選擇要刪除的小隊語音房。\n"
         "選完之後，系統會再要求你按 **確認刪除**。"
         f"{extra_text}"
     )
@@ -330,7 +324,7 @@ def _build_admin_teardown_panel_message(channels: list[discord.VoiceChannel]) ->
 def _build_admin_confirm_message(ch: discord.VoiceChannel) -> str:
     limit = ch.user_limit or "無限制"
     return (
-        "🧹 **確認刪除小隊 call？**\n\n"
+        "🧹 **確認刪除小隊語音房？**\n\n"
         f"房間：{ch.mention}\n"
         f"📝 名稱：`{ch.name}`\n"
         f"👥 目前人數：`{len(ch.members)}`\n"
@@ -344,7 +338,7 @@ def _channel_sort_key(ch: discord.VoiceChannel) -> tuple[str, str, int]:
     return (category_name.lower(), ch.name.lower(), ch.id)
 
 
-class ChangeLimitModal(SafeModal, title="修改小隊 call 人數上限"):
+class ChangeLimitModal(SafeModal, title="修改小隊語音房人數上限"):
     new_limit = discord.ui.TextInput(
         label="新的人數上限",
         placeholder="請輸入 1-99，例如：11",
@@ -453,7 +447,7 @@ class AdminTempVCSelect(discord.ui.Select):
             )
 
         super().__init__(
-            placeholder="選擇要刪除嘅 Temp VC",
+            placeholder="選擇要刪除的臨時語音房",
             min_values=1,
             max_values=1,
             options=options,
@@ -477,11 +471,11 @@ class AdminTempVCSelectView(SafeView):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("呢個 Admin Teardown 面板只限發起者使用。", ephemeral=True)
+            await interaction.response.send_message("此語音房清理面板僅限發起者使用。", ephemeral=True)
             return False
 
         if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Mod / Manage Channels 權限先可以使用。", ephemeral=True)
+            await interaction.response.send_message("❌ 需要 Admin／Mod 或管理頻道權限才能使用。", ephemeral=True)
             return False
 
         return True
@@ -503,7 +497,7 @@ class AdminTempVCSelectView(SafeView):
 
         if not isinstance(channel, discord.VoiceChannel) or not is_temp_vc_id(channel.id):
             await interaction.response.edit_message(
-                content="❌ 呢間 Temp VC 已不存在，或者已不再係 Bot 建立嘅 Temp VC。",
+                content="❌ 此語音房已不存在，或已不再是 Bot 建立的臨時語音房。",
                 view=None,
             )
             self.stop()
@@ -517,7 +511,7 @@ class AdminTempVCSelectView(SafeView):
 
     @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=1)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(content="已取消 Admin VC Teardown。", view=None)
+        await interaction.response.edit_message(content="已取消 語音房清理。", view=None)
         self.stop()
 
 
@@ -531,11 +525,11 @@ class AdminTempVCConfirmView(SafeView):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("呢個確認面板只限發起者使用。", ephemeral=True)
+            await interaction.response.send_message("此確認面板僅限發起者使用。", ephemeral=True)
             return False
 
         if not isinstance(interaction.user, discord.Member) or not user_can_admin_teardown(interaction.user):
-            await interaction.response.send_message("❌ 你需要 Admin / Mod / Manage Channels 權限先可以使用。", ephemeral=True)
+            await interaction.response.send_message("❌ 需要 Admin／Mod 或管理頻道權限才能使用。", ephemeral=True)
             return False
 
         return True
@@ -543,7 +537,7 @@ class AdminTempVCConfirmView(SafeView):
     @discord.ui.button(label="確認刪除", emoji="✅", style=discord.ButtonStyle.danger, row=0)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.done:
-            await interaction.response.send_message("呢個操作已經完成。", ephemeral=True)
+            await interaction.response.send_message("此操作已完成。", ephemeral=True)
             return
 
         if not interaction.guild:
@@ -564,7 +558,7 @@ class AdminTempVCConfirmView(SafeView):
 
         if not isinstance(channel, discord.VoiceChannel) or not is_temp_vc_id(channel.id):
             await interaction.edit_original_response(
-                content="❌ 呢間 Temp VC 已不存在，或者已不再係 Bot 建立嘅 Temp VC。",
+                content="❌ 此語音房已不存在，或已不再是 Bot 建立的臨時語音房。",
                 view=None,
             )
             self.stop()
@@ -599,7 +593,7 @@ class AdminTempVCConfirmView(SafeView):
 
     @discord.ui.button(label="取消", emoji="❌", style=discord.ButtonStyle.secondary, row=0)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(content="已取消 Admin VC Teardown。", view=None)
+        await interaction.response.edit_message(content="已取消 語音房清理。", view=None)
         self.stop()
 
 
@@ -646,10 +640,10 @@ class TempVC(commands.Cog):
 
         channel = member.voice.channel
         if not isinstance(channel, discord.VoiceChannel):
-            return member, None, "你目前身處嘅唔係語音房。"
+            return member, None, "你目前不在語音房內。"
 
         if not is_temp_vc_id(channel.id):
-            return member, None, "你目前身處嘅唔係由 Bartender 建立嘅小隊 call。"
+            return member, None, "你目前不在 Bartender 建立的小隊語音房內。"
 
         return member, channel, None
 
@@ -659,7 +653,7 @@ class TempVC(commands.Cog):
             return member, None, error
 
         if current_channel.id != channel_id:
-            return member, None, "你已經離開原本嗰間小隊 call。請喺目前房間重新打開控制面板。"
+            return member, None, "你已離開原本的小隊語音房。請在目前房間重新開啟控制面板。"
 
         return member, current_channel, None
 
@@ -735,7 +729,7 @@ class TempVC(commands.Cog):
 
     async def _create_default_room(self, interaction: discord.Interaction, *, name: str | None = None, limit: int | None = None) -> None:
         if not interaction.guild or not user_can_run_tempvc(interaction):
-            await send_or_followup(interaction, content="請喺你有權加入嘅遊戲區／公海使用；該區需要有「開一個小隊 call」入口。", ephemeral=True)
+            await send_or_followup(interaction, content="請在有權加入的遊戲區／公海使用；該區需要有建立小隊語音房的入口。", ephemeral=True)
             return
         with claim_action("vc-create", interaction.guild_id, interaction.user.id) as claimed:
             if not claimed:
@@ -746,21 +740,21 @@ class TempVC(commands.Cog):
             try:
                 room = await self._find_owned_room(guild, interaction.user.id)
             except discord.HTTPException:
-                await interaction.edit_original_response(content="暫時確認唔到你原本間房，請稍後再試。")
+                await interaction.edit_original_response(content="暫時無法確認你原本的房間，請稍後再試。")
                 return
             if room is not None:
                 current_member = guild.get_member(interaction.user.id)
                 if current_member is None or not (room.permissions_for(current_member).view_channel and room.permissions_for(current_member).connect):
-                    await interaction.edit_original_response(content="你之前間小隊房目前無法存取，請聯絡管理員。")
+                    await interaction.edit_original_response(content="你之前的小隊語音房目前無法存取，請聯絡管理員。")
                     return
-                await interaction.edit_original_response(content=f"🎧 你間小隊 call：{room.mention}", view=TempVCControlView(self, channel_id=room.id, guild_id=guild.id))
+                await interaction.edit_original_response(content=f"🎧 你的小隊語音房：{room.mention}", view=TempVCControlView(self, channel_id=room.id, guild_id=guild.id))
                 return
             async with shared_async_lock("voice-create", guild.id):
                 if self._unloading:
                     await interaction.edit_original_response(content="功能正在重載，請重新開啟。")
                     return
                 if not user_can_run_tempvc(interaction):
-                    await interaction.edit_original_response(content="存取權限已改變，請喺有權加入嘅區域重新開房。")
+                    await interaction.edit_original_response(content="存取權限已變更，請在有權加入的區域重新建立語音房。")
                     return
                 try:
                     room = await self._create_manual_temp_vc(
@@ -769,10 +763,10 @@ class TempVC(commands.Cog):
                     )
                 except discord.HTTPException:
                     log.exception("Failed to create manual VC: user=%s", interaction.user.id)
-                    await interaction.edit_original_response(content="暫時開唔到房，請稍後再試；如持續出現，請通知管理員。")
+                    await interaction.edit_original_response(content="暫時無法建立語音房，請稍後再試；如持續出現，請通知管理員。")
                     return
             await record_usage("tempvc", interaction.user.id, guild.id)
-            await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32), view=TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id))
+            await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32, interaction.user), view=TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id))
 
     async def open_control_panel_from_menu(self, interaction: discord.Interaction) -> None:
         member, channel, error = self._get_current_member_temp_vc(interaction)
@@ -780,14 +774,14 @@ class TempVC(commands.Cog):
         if error or member is None or channel is None:
             await _send_interaction_message(
                 interaction,
-                f"❌ {error or '搵唔到你目前嘅小隊 call。'}",
+                f"❌ {error or '找不到你目前的小隊語音房。'}",
                 ephemeral=True,
             )
             return
 
         await _send_interaction_message(
             interaction,
-            _build_control_panel_message(channel),
+            _build_control_panel_message(channel, interaction.user),
             view=TempVCControlView(self, channel_id=channel.id, guild_id=channel.guild.id),
             ephemeral=True,
         )
@@ -800,14 +794,14 @@ class TempVC(commands.Cog):
     ) -> None:
         member, channel, error = self._get_control_channel(interaction, channel_id)
         if error or member is None or channel is None:
-            await interaction.response.send_message(f"❌ {error or '搵唔到你目前嘅小隊 call。'}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {error or '找不到你目前的小隊語音房。'}", ephemeral=True)
             return
 
         if not user_can_change_vc_limit(member):
             await interaction.response.send_message(
-                "❌ 呢個功能只限 **Lv 15 或以上會員** 使用。\n\n"
+                "❌ 此功能僅限 **Lv 15 或以上會員** 使用。\n\n"
                 "你目前未擁有 Lv 15+ 會員身份。\n"
-                "可以參與聊天、語音及 Bot 活動提升會員等級；用「我的會員卡」查看進度，升到 Lv 15 後再使用呢個功能。",
+                "可以參與聊天、語音及 Bot 活動提升會員等級；用「我的會員卡」查看進度，升至 Lv 15 後再使用此功能。",
                 ephemeral=True,
             )
             return
@@ -816,7 +810,7 @@ class TempVC(commands.Cog):
         max_limit = get_vc_limit_max()
         if new_limit is None or new_limit < min_limit or new_limit > max_limit:
             await interaction.response.send_message(
-                f"❌ 請輸入 `{min_limit}` 至 `{max_limit}` 之間嘅人數上限。",
+                f"❌ 請輸入 `{min_limit}` 至 `{max_limit}` 之間的人數上限。",
                 ephemeral=True,
             )
             return
@@ -832,7 +826,7 @@ class TempVC(commands.Cog):
         old_limit = channel.user_limit or 0
         if old_limit == new_limit:
             await interaction.response.send_message(
-                f"ℹ️ 呢間小隊 call 目前已經係 `{new_limit}` 人上限。",
+                f"ℹ️ 此小隊語音房目前已是 `{new_limit}` 人上限。",
                 ephemeral=True,
             )
             return
@@ -848,7 +842,7 @@ class TempVC(commands.Cog):
 
             if retry > 0:
                 await interaction.response.send_message(
-                    f"⏳ 呢個功能剛剛使用過，請等 `{format_seconds(retry)}` 後再試。",
+                    f"⏳ 此功能剛使用過，請等待 `{format_seconds(retry)}` 後再試。",
                     ephemeral=True,
                 )
                 return
@@ -873,19 +867,19 @@ class TempVC(commands.Cog):
                 VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = now
 
             await send_or_followup(interaction,
-                content=f"✅ 已更新小隊 call 人數上限：`{old_limit or '無限制'}` → `{new_limit}`",
+                content=f"✅ 已更新小隊語音房人數上限：`{old_limit or '無限制'}` → `{new_limit}`",
                 ephemeral=True,
             )
 
     async def delete_temp_vc_from_control(self, interaction: discord.Interaction, channel_id: int) -> None:
         member, channel, error = self._get_control_channel(interaction, channel_id)
         if error or member is None or channel is None:
-            await interaction.response.send_message(f"❌ {error or '搵唔到你目前嘅小隊 call。'}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {error or '找不到你目前的小隊語音房。'}", ephemeral=True)
             return
 
         if len(channel.members) != 1 or channel.members[0].id != member.id:
             await interaction.response.send_message(
-                "❌ 呢間小隊 call 仲有其他成員。\n\n"
+                "❌ 此小隊語音房還有其他成員。\n\n"
                 "請等到房內只剩你一個人，或者先叫其他成員離開後再刪除。\n"
                 f"目前房內人數：`{len(channel.members)}`",
                 ephemeral=True,
@@ -898,7 +892,7 @@ class TempVC(commands.Cog):
         except discord.HTTPException:
             await interaction.edit_original_response(content="刪除失敗，房間仍保留，請稍後再試。")
             return
-        await interaction.edit_original_response(content="✅ 已刪除你目前嘅小隊 call。")
+        await interaction.edit_original_response(content="✅ 已刪除你目前的小隊語音房。")
 
     async def open_admin_teardown_panel(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:

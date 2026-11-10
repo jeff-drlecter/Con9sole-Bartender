@@ -658,8 +658,11 @@ class CommunityLevels(commands.Cog):
                 e.add_field(name='🏅 展示稱號',value=discord.utils.escape_markdown(title)+'\n'+status,inline=False)
         except Exception:
             log.exception('Could not load member card collection')
-            e.add_field(name='🍾 酒吧收藏',value='暫時讀取唔到，請稍後再試。',inline=False)
-        await inter.followup.send(embed=e,view=MemberCardView(),allowed_mentions=discord.AllowedMentions.none())
+            from features.language_preferences import language, menu_text
+            e.add_field(name='🍾 酒吧收藏',value=menu_text('暫時讀取唔到，請稍後再試。', language(inter.user)),inline=False)
+        from features.language_preferences import localize_menu
+        e, view = localize_menu(inter.user, e, MemberCardView())
+        await inter.followup.send(embed=e,view=view,allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='leaderboard',description='查看總榜或香港時間每週榜')
     async def leaderboard(self,inter:discord.Interaction,weekly:bool=False,page:app_commands.Range[int,1,10000]=1,period:str|None=None):

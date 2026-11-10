@@ -16,6 +16,8 @@ async def report_ui_error(interaction: discord.Interaction, error: Exception) ->
         exc_info=(type(error), error, error.__traceback__),
     )
     content = "暫時完成唔到呢個操作，請稍後再試；如持續出現，請通知管理員。"
+    from features.language_preferences import language, menu_text
+    content = menu_text(content, language(interaction.user))
     try:
         if (
             interaction.response.type

@@ -126,7 +126,7 @@ class TempVCFlowTests(unittest.IsolatedAsyncioTestCase):
             await self.cog._create_default_room(i)
         self.cog._create_manual_temp_vc.assert_not_awaited()
         self.assertIn(
-            "你間小隊 call", i.edit_original_response.await_args.kwargs["content"]
+            "你的小隊語音房", i.edit_original_response.await_args.kwargs["content"]
         )
 
     async def test_concurrent_create_requests_do_not_create_two_rooms(self):

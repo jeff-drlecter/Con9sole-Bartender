@@ -65,10 +65,12 @@ async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
     except discord.HTTPException as exc:
         _log_http_exception("slash home_menu full view", exc)
 
+    embed, view = localize_menu(interaction.user, build_home_menu_embed(interaction.user, include_thumbnail=False),
+                                HomeMenuView(cog, include_external_links=False))
     await send_or_followup(
         interaction,
-        embed=build_home_menu_embed(interaction.user, include_thumbnail=False),
-        view=HomeMenuView(cog, include_external_links=False),
+        embed=embed,
+        view=view,
         ephemeral=True,
     )
 

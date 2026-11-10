@@ -49,6 +49,19 @@ async def send_or_followup(
         ephemeral=ephemeral,
     )
 
+    if ephemeral:
+        from features.language_preferences import language, menu_text, localize_menu
+        if content is not None:
+            kwargs["content"] = menu_text(content, language(interaction.user))
+        if embed is not None or view is not None:
+            localized_embed, localized_view = localize_menu(interaction.user, embed, view)
+            if embed is not None:
+                kwargs["embed"] = localized_embed
+            if view is not None:
+                kwargs["view"] = localized_view
+        if embeds is not None:
+            kwargs["embeds"] = [localize_menu(interaction.user, item)[0] for item in embeds]
+
     if interaction.response.is_done():
         await interaction.followup.send(**kwargs)
     else:

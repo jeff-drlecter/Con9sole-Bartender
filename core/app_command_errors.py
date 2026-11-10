@@ -11,10 +11,12 @@ from core.safe_send import send_or_followup
 log = logging.getLogger("con9sole-bartender.app-commands")
 
 
-def _user_message(error: app_commands.AppCommandError) -> str:
+def _user_message(error: app_commands.AppCommandError, member=None) -> str:
     if isinstance(error, app_commands.CommandOnCooldown):
         retry_after = max(1, round(error.retry_after))
-        return f"⏳ 呢個指令冷卻中，請等約 `{retry_after}` 秒後再試。"
+        from features.language_preferences import wording
+        return wording(member, "⏳ 呢個指令冷卻中，請等約 `{seconds}` 秒後再試。",
+                       "⏳ 此指令冷卻中，請等待約 `{seconds}` 秒後再試。", seconds=retry_after)
 
     if isinstance(error, app_commands.BotMissingPermissions):
         return "❌ Bot 權限不足，暫時無法完成呢個操作。請通知管理員檢查 Bot 角色權限。"
@@ -68,7 +70,7 @@ async def handle_app_command_error(
     try:
         await send_or_followup(
             interaction,
-            content=_user_message(error),
+            content=_user_message(error, interaction.user),
             ephemeral=True,
         )
     except (discord.NotFound, discord.Forbidden):

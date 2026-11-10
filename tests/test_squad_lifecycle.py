@@ -5,6 +5,7 @@ import pathlib
 import types
 import unittest
 import uuid
+from features.language_preferences import menu_text, language
 from unittest.mock import AsyncMock
 
 source = pathlib.Path(__file__).resolve().parents[1] / 'cogs' / 'squad_cards.py'
@@ -145,7 +146,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        started=1000, ended=2000)
         await scope['render'](cog, channel, session)
         sent = destination.send.call_args.kwargs
-        self.assertEqual(sent['embed'].title, '🟢 開緊團 · 歡迎加入')
+        self.assertEqual(sent['embed'].title, '🟢 組隊中 · 歡迎加入')
         self.assertIn('<@1>', sent['content'])
         self.assertNotIn('<@2>', sent['content'])
         self.assertEqual([u.id for u in sent['allowed_mentions'].users], [1])
@@ -154,20 +155,20 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.edit.call_args.kwargs['allowed_mentions'].users, [])
         session['missing'] = 2
         await scope['render'](cog, channel, session)
-        self.assertEqual(embeds[-1].title, '🙌 缺 2 人，一齊玩！')
+        self.assertEqual(embeds[-1].title, '🙌 缺 2 人，一起玩！')
         session['missing'] = 0
         await scope['render'](cog, channel, session)
-        self.assertEqual(embeds[-1].title, '🟢 開緊團 · 歡迎加入')
+        self.assertEqual(embeds[-1].title, '🟢 組隊中 · 歡迎加入')
         session['mode'] = 'Clubs Rush'
         await scope['render'](cog, channel, session)
         self.assertIn('🎮 Clubs Rush', embeds[-1].description)
         self.assertEqual(embeds[-1].fields, [])
         await scope['render'](cog, channel, session, ended=True)
-        self.assertEqual(embeds[-1].title, '🏁 今晚收工，下次再戰！')
+        self.assertEqual(embeds[-1].title, '🏁 本局結束，下次再戰！')
         self.assertIn('🎮 Clubs Rush', embeds[-1].description)
         self.assertEqual(embeds[-1].fields, [])
         self.assertIn('16 分鐘', embeds[-1].description)
-        self.assertIn('一齊玩過 · A、B', embeds[-1].description)
+        self.assertIn('曾參與 · A、B', embeds[-1].description)
         self.assertLessEqual(len(embeds[-1].description.splitlines()), 3)
         self.assertIsNone(message.edit.call_args.kwargs['view'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])
@@ -180,7 +181,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                     for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'edit')
         submit = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'Details'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'on_submit')
-        scope = dict(humans=namespace['humans'],
+        scope = dict(menu_text=menu_text, language=language, humans=namespace['humans'],
                      is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'),
                      Details=lambda *args: object(), RecruitmentChoices=lambda *args: object())
         exec(compile(ast.Module(body=[edit, submit], type_ignores=[]), str(source), 'exec'), scope)
@@ -213,7 +214,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         parsed = ast.parse(source.read_text())
         method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'RecruitmentChoices'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'set_count')
-        scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        scope = dict(menu_text=menu_text, language=language, humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), scope)
         for kind, in_call, active, allowed in [
                 ('admin', False, True, True), ('helper', False, True, True),
@@ -245,7 +246,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        isinstance(n, ast.FunctionDef) and n.name == 'game_profile' or
                        isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in
                        ('GAME_LABELS', 'MODE_PRESETS') for a in n.targets)]
-        scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        scope = dict(menu_text=menu_text, language=language, humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), scope)
         method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'ModePicker'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'callback')

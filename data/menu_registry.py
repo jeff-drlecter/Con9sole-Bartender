@@ -397,7 +397,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_stats",
-        label="Stats",
+        label="使用統計",
         emoji="📊",
         style="primary",
         layer="admin",
@@ -409,7 +409,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_reload",
-        label="Reload",
+        label="重新載入",
         emoji="🔄",
         style="primary",
         layer="admin",
@@ -421,7 +421,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_roles",
-        label="Role Tools",
+        label="角色工具",
         emoji="🎭",
         style="primary",
         layer="admin",
@@ -433,7 +433,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_game_tools",
-        label="Game Tools",
+        label="遊戲工具",
         emoji="🎮",
         style="primary",
         layer="admin",
@@ -445,7 +445,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_update_publisher",
-        label="Update Publisher",
+        label="公告發佈",
         emoji="📣",
         style="success",
         layer="admin",
@@ -457,7 +457,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_ping",
-        label="Ping",
+        label="延遲測試",
         emoji="🏓",
         style="secondary",
         layer="admin",
@@ -469,7 +469,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_vc_teardown",
-        label="VC Teardown",
+        label="語音房清理",
         emoji="🧹",
         style="danger",
         layer="admin",

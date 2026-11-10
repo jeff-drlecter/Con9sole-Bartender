@@ -42,6 +42,39 @@ TW = {
 }
 
 
+# Exact Bot-owned copy only. Never translate arbitrary substrings or user names.
+TW.update({
+    "請喺伺服器文字頻道內使用。": "請在伺服器文字頻道內使用。",
+    "你未有喺呢度發言嘅權限，請換一個可以聊天嘅頻道。": "你沒有在此發言的權限，請改用可以聊天的頻道。",
+    "返回吧枱": "返回吧台", "吧枱返回快捷入口": "吧台快捷入口",
+    "幫助": "使用說明", "小隊 call 控制": "小隊語音管理",
+    "刪除小隊 call": "刪除小隊語音房", "改人數上限": "修改人數上限",
+    "自選頻道與身份": "自選頻道與身分組", "身份設定": "身分組設定",
+    "唔展示稱號": "不顯示稱號", "暫時讀取唔到，請稍後再試。": "暫時無法讀取，請稍後再試。",
+    "未定／唔填": "未定／不填", "下次叫我": "下次通知我", "每次都叫我": "每次通知我",
+    "暫時未有人登記。": "目前尚無人登記。",
+    "請由足跡卡開啟自己嘅名單。": "請從足跡卡開啟自己的名單。",
+    "請喺原本伺服器使用。": "請在原本的伺服器使用。",
+    "你未有查看呢個頻道嘅權限。": "你沒有查看此頻道的權限。",
+    "呢場已結束，或者你冇修改權限。": "此場次已結束，或你沒有修改權限。",
+    "只限呢個 call 嘅在場成員、Admin 或 Helper 修改。": "僅限此語音房內的成員、Admin 或 Helper 修改。",
+    "揀遊戲模式或快捷人數；全部選填，唔填都歡迎加入。": "選擇遊戲模式或缺少人數；皆為選填，未填也歡迎加入。",
+    "❌ 你目前嘅職責未獲授權使用呢項工具。": "❌ 你目前的職責未獲授權使用此工具。",
+    "❌ 呢個功能未設定 cog。": "❌ 此功能尚未設定，請通知管理員。",
+    "呢個功能暫時未準備好，請稍後再試。": "此功能暫時無法使用，請稍後再試。",
+    "暫時完成唔到呢個操作，請稍後再試；如持續出現，請通知管理員。": "暫時無法完成此操作，請稍後再試；若持續發生，請通知管理員。",
+    "❌ Bot 權限不足，暫時無法完成呢個操作。請通知管理員檢查 Bot 角色權限。": "❌ Bot 權限不足，暫時無法完成此操作。請通知管理員檢查 Bot 身分組權限。",
+    "❌ 你冇足夠權限使用呢個指令。": "❌ 你沒有足夠權限使用此指令。",
+    "❌ 指令參數格式唔正確，請檢查輸入後再試。": "❌ 指令參數格式不正確，請檢查輸入後再試。",
+    "❌ 你目前唔符合使用呢個指令嘅條件。": "❌ 你目前不符合使用此指令的條件。",
+})
+
+
+def wording(member, hk: str, tw: str, **values) -> str:
+    """Select the template before interpolating untrusted/dynamic values."""
+    return (tw if language(member) == "tw" else hk).format(**values)
+
+
 def menu_text(text: str, code: str) -> str:
     if code != "tw":
         return text
@@ -62,10 +95,22 @@ def localize_menu(member, embed=None, view=None):
             embed.title = menu_text(embed.title, code)
         if embed.description:
             embed.description = menu_text(embed.description, code)
+        for index, field in enumerate(embed.fields):
+            embed.set_field_at(index, name=menu_text(field.name, code),
+                               value=field.value, inline=field.inline)
+        if embed.footer.text:
+            embed.set_footer(text=menu_text(embed.footer.text, code), icon_url=embed.footer.icon_url)
     if view is not None:
         for child in view.children:
             if isinstance(child, discord.ui.Button) and child.label:
                 child.label = menu_text(child.label, code)
+            if isinstance(child, discord.ui.Select):
+                if child.placeholder:
+                    child.placeholder = menu_text(child.placeholder, code)
+                for option in child.options:
+                    option.label = menu_text(option.label, code)
+                    if option.description:
+                        option.description = menu_text(option.description, code)
     return embed, view
 
 

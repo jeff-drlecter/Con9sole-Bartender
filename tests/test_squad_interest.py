@@ -88,7 +88,7 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('embed', call.kwargs)
         self.assertNotIn('embeds', call.kwargs)
         self.assertNotIn('\n', call.args[0])
-        self.assertIn('[查看召人卡]', call.args[0])
+        self.assertIn('[查看招募卡]', call.args[0])
         self.assertEqual(len(call.kwargs['view'].children), 1)
         self.assertEqual(call.kwargs['view'].children[0].url, 'https://discord.com/channels/1/20')
         self.assertNotIn(10, storage.members(self.topic['id']))
@@ -163,13 +163,13 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         await view.show_roster(source)
         pages = source.followup.send.call_args.kwargs['view']
         once, always = pages.children[-2:]
-        self.assertEqual([once.label, always.label], ['🙋 下次叫我', '🔔 每次都叫我'])
+        self.assertEqual([once.label, always.label], ['🙋 下次通知我', '🔔 每次通知我'])
         click, _ = self.roster_interaction()
         click.message = types.SimpleNamespace(id=999)  # Private panel, never a public card.
         self.assertTrue(await pages.interaction_check(click))
         await once.callback(click)
         self.assertEqual(storage.preferences(self.topic['id']), {10: 'once'})
-        self.assertIn('下次叫我', pages.roster[0][1])
+        self.assertIn('下次通知我', pages.roster[0][1])
         self.assertEqual(storage.card_session(500), 'live-session')
         self.assertFalse(storage.card_session(999))
         self.assertEqual(click.response.defer.call_args.kwargs['thinking'], False)
@@ -177,7 +177,7 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         click.followup.send.assert_not_awaited()
         await always.callback(click)
         self.assertEqual(storage.preferences(self.topic['id']), {10: 'always'})
-        self.assertIn('每次都叫我', pages.roster[0][1])
+        self.assertIn('每次通知我', pages.roster[0][1])
         await always.callback(click)
         self.assertEqual(storage.preferences(self.topic['id']), {})
         self.assertEqual(pages.roster, [])
