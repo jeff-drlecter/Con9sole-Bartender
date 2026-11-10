@@ -1,7 +1,7 @@
 # Stage 4 — Bot functions, entries and responsibilities
 
 Started 10 November 2026 (Hong Kong). Base main `01c531a` (#107).
-Status: implementation prepared; CI/deployment/live acceptance pending.
+Status: closed for entry consolidation and documented service ownership on 10 November 2026 (Hong Kong). Implementation #108 and acceptance fix #109 are merged and deployed.
 Stages 1 and 3 are closed for their documented scope. Stage 2's alert-only baseline
 is closed with the limits in anti-scam-stage2.md; this stage does not change it.
 
@@ -46,3 +46,34 @@ Stage 4 is not a claim that every external Bot dashboard has been audited, nor
 that native mobile layout has been tested. External Bot removal and migration of
 Carl logs/reaction-role panels require a separate concrete dependency review.
 Stage 5 remains maintenance/health/permission-change monitoring.
+
+
+## Acceptance results — 10 November 2026, 20:28–20:34 Hong Kong
+
+- #108 passed 556 local tests and Python 3.11 CI. Fly deployment run
+  42815772615 completed successfully, including machine-status verification.
+- Live sandbox: new /menu displays both shortcuts; notification settings opens
+  the existing private empty state and returns to the quick bar. No subscription
+  was changed.
+- Social → confession opens the original form; cancelled without submitting.
+- Info → Help identifies Con9sole-Bartender and documents the new shortcut.
+  Management shows the existing permission-audit entry and capability-filtered
+  description. No permission or configuration write was performed.
+- Voice controls outside voice initially sent the correct notice followed by a
+  generic error. #109 fixes the helper passing view=None by using the existing
+  safe sender. 557 tests and Python 3.11 CI pass; Fly run 42816543631 completed
+  successfully with machine-status verification.
+- Post-fix voice-control retest sends only the expected no-current-room notice.
+  A pre-restart, still-valid Help-menu control button and notification shortcut
+  both respond after deployment. No room creation was needed for this entry test.
+- HK live wording and offline HK/TW labels, stable IDs, legacy registration,
+  capability filters and row limits pass. This is not new live TW-account or
+  native-mobile acceptance; Stage 3 evidence remains separately documented.
+- A several-hour-old ephemeral menu timed out. Fresh /menu works; private menus
+  are not promised indefinite lifetime. Historical public posted-menu callbacks
+  were not freshly clicked in this stage; persistence/legacy coverage is offline
+  plus Stage 3's documented live evidence.
+
+No external Bot dashboard was freshly audited or Bot removed. This closure covers
+the implemented entry consolidation and documented responsibilities; it does not
+certify every external Bot's enabled configuration. Stage 5 remains separate.
