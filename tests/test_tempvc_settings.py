@@ -21,7 +21,7 @@ class TempVCSettingsTests(unittest.TestCase):
         self.assertEqual(next_temp_channel_name(names, base="小隊call •"), "小隊call • 2")
 
     def test_mode_suffix_reserves_room_number(self):
-        self.assertEqual(next_temp_channel_name(["小隊call • 1 · REC", "小隊call • 3 · Park"], base="小隊call •"), "小隊call • 2")
+        self.assertEqual(next_temp_channel_name(["REC • 1", "Park • 3"], base="小隊call •"), "小隊call • 2")
 
     def test_next_name_escapes_regex_characters_in_base(self) -> None:
         names = ["Team [A] 1", "Team [A] 2"]

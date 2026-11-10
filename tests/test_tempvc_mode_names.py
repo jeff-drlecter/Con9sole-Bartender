@@ -31,12 +31,25 @@ class ModeNameTests(unittest.IsolatedAsyncioTestCase):
         self.cog.queue_mode_name(self.channel, 'REC')
         self.assertEqual(len(self.cog._mode_tasks), 1)
         await self.drain()
-        self.channel.edit.assert_awaited_once_with(name='小隊call • 1 · REC', reason='Sync small-team call game mode')
-        self.channel.name = '小隊call • 1 · REC'
+        self.channel.edit.assert_awaited_once_with(name='REC • 1', reason='Sync small-team call game mode')
+        self.channel.name = 'REC • 1'
         self.channel.edit.reset_mock()
         self.cog.queue_mode_name(self.channel, '')
         await self.drain()
         self.assertEqual(self.channel.edit.await_args.kwargs['name'], '小隊call • 1')
+
+    async def test_each_mode_numbers_independently_and_reserves_pending_names(self):
+        occupied = MagicMock(id=99)
+        occupied.name = 'REC • 1'
+        self.channel.guild.voice_channels = [occupied]
+        self.cog.queue_mode_name(self.channel, 'REC')
+        self.assertEqual(self.cog._mode_names[42], 'REC • 2')
+        self.cog.queue_mode_name(self.channel, 'CLUB')
+        self.assertEqual(self.cog._mode_names[42], 'CLUB • 1')
+        other = MagicMock(spec=discord.VoiceChannel)
+        other.id, other.name, other.guild = 43, '小隊call • 2', self.channel.guild
+        self.cog.queue_mode_name(other, 'CLUB')
+        self.assertEqual(self.cog._mode_names[43], 'CLUB • 2')
 
     async def test_custom_room_and_untracked_room_are_preserved(self):
         self.channel.name = 'Friends room'
@@ -69,4 +82,4 @@ class ModeNameTests(unittest.IsolatedAsyncioTestCase):
         cog.bot.get_cog.return_value = self.cog
         sync_mode_name(cog, self.channel, {'mode': 'REC'})
         await self.drain()
-        self.assertEqual(self.channel.edit.await_args.kwargs['name'], '小隊call • 1 · REC')
+        self.assertEqual(self.channel.edit.await_args.kwargs['name'], 'REC • 1')

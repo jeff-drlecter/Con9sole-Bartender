@@ -59,8 +59,8 @@ class TempVCOrderingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_renamed_rooms_keep_numeric_order(self):
         update = await self.order([voice(1, "開一個小隊 call", 1),
-            voice(2, "小隊call • 10 · Park", 2),
-            voice(3, "小隊call • 2 · REC", 3)], {2, 3})
+            voice(2, "Park • 10", 2),
+            voice(3, "REC • 2", 3)], {2, 3})
         self.assertEqual([x["id"] for x in update.await_args.args[1]], [3, 2, 1])
 
     async def test_permission_failure_does_not_break_creation(self):

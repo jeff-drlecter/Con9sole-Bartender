@@ -103,7 +103,10 @@ def format_seconds(seconds: float) -> str:
 def temp_channel_number(name: str, *, base: str | None = None) -> int | None:
     normalized_base = (base or get_temp_channel_base_name()).strip()
     match = re.fullmatch(rf"{re.escape(normalized_base)}\s+(\d+)(?: · .+)?", name.strip())
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1))
+    mode_match = re.fullmatch(r".+ • (\d+)", name.strip())
+    return int(mode_match.group(1)) if mode_match else None
 
 
 def next_temp_channel_name(existing_names: Iterable[str], *, base: str | None = None) -> str:

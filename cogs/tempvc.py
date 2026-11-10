@@ -600,9 +600,20 @@ class TempVC(commands.Cog):
         number = temp_channel_number(channel.name)
         if number is None:
             return  # Preserve manually named rooms and the creation hub.
-        base = f"{get_temp_channel_base_name()} {number}"
-        mode = " ".join(mode.split())
-        self._mode_names[channel.id] = (f"{base} · {mode}" if mode else base)[:100]
+        mode = " ".join(mode.split())[:90]
+        existing = {ch.name for ch in channel.guild.voice_channels if ch.id != channel.id}
+        existing.update(name for cid, name in self._mode_names.items() if cid != channel.id)
+        if mode:
+            prefix = f"{mode} • "
+            current_name = self._mode_names.get(channel.id, channel.name)
+            match = re.fullmatch(rf"{re.escape(prefix)}(\d+)", current_name)
+            number = int(match.group(1)) if match else 1
+            while f"{prefix}{number}" in existing:
+                number += 1
+            name = f"{prefix}{number}"
+        else:
+            name = next_temp_channel_name(existing)
+        self._mode_names[channel.id] = name
         if channel.id not in self._mode_tasks:
             self._mode_tasks[channel.id] = asyncio.create_task(self._apply_mode_name(channel))
 
@@ -610,12 +621,14 @@ class TempVC(commands.Cog):
         try:
             while channel.id in self._mode_names:
                 await asyncio.sleep(1)
-                name = self._mode_names.pop(channel.id)
+                name = self._mode_names[channel.id]
                 current = channel.guild.get_channel(channel.id)
                 if current is None or not is_temp_vc_id(channel.id) or temp_channel_number(current.name) is None:
                     return
                 if current.name != name:
                     channel = await current.edit(name=name, reason="Sync small-team call game mode")
+                if self._mode_names.get(channel.id) == name:
+                    self._mode_names.pop(channel.id, None)
         except discord.HTTPException:
             log.exception("Could not sync temp VC mode: channel=%s", channel.id)
         finally:
