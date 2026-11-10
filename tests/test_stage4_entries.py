@@ -52,3 +52,13 @@ class EntryTests(unittest.IsolatedAsyncioTestCase):
         inter.response.send_modal.assert_awaited_once()
         self.assertIsInstance(inter.response.send_modal.call_args.args[0], ConfessionModal)
         view.stop()
+
+    async def test_voice_notice_omits_absent_view_for_initial_and_followup(self):
+        from cogs.tempvc import _send_interaction_message
+        for done in (False, True):
+            inter = interaction()
+            inter.response.is_done.return_value = done
+            inter.followup.send = AsyncMock()
+            await _send_interaction_message(inter, 'voice notice')
+            sender = inter.followup.send if done else inter.response.send_message
+            sender.assert_awaited_once_with(content='voice notice', ephemeral=True)

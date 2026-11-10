@@ -99,10 +99,9 @@ async def _send_interaction_message(
     ephemeral: bool = True,
     view: discord.ui.View | None = None,
 ) -> None:
-    if _interaction_response_done(interaction):
-        await interaction.followup.send(content, ephemeral=ephemeral, view=wording_view(interaction.user, view))
-    else:
-        await interaction.response.send_message(content, ephemeral=ephemeral, view=wording_view(interaction.user, view))
+    await send_or_followup(
+        interaction, content=content, ephemeral=ephemeral, view=view,
+    )
 
 
 def user_can_run_tempvc(inter: discord.Interaction) -> bool:
