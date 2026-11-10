@@ -312,7 +312,9 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
     MenuItem("team", "搵人玩", "👥", "primary", "quick", 1, "Teams"),
     MenuItem("tempvc", "小隊 call", "🎧", "primary", "quick", 1, "TempVC"),
-    MenuItem("home_menu", "更多玩法", "🍸", "secondary", "quick", 3, "Menu", "open_home_menu_from_button"),
+    MenuItem("tempvc_control", "小隊 call 控制", "🎛️", "secondary", "quick", 3, "TempVC", "open_control_panel_from_menu"),
+    MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "quick", 3, "SquadCards"),
+    MenuItem("home_menu", "更多玩法", "🍸", "secondary", "quick", 4, "Menu", "open_home_menu_from_button"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "quick", 2, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 2, "CommunityLevels"),
 ]
@@ -361,6 +363,7 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "social", 1, "SquadCards"),
         MenuItem("cheers", "打氣", "🎉", "success", "social", 0, "Cheers"),
         MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
+        MenuItem("confession", "無名告白", "🕯️", "secondary", "social", 1, "Confession"),
     ],
     "info": [
         MenuItem("language", "語境設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
