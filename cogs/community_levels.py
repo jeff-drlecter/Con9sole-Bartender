@@ -1,5 +1,6 @@
 """Opt-in Con9sole leveling; read-only until the owner starts a preview."""
 from __future__ import annotations
+from features.wording import text as wording_text, view_copy as wording_view
 
 import asyncio
 import csv
@@ -84,7 +85,7 @@ class LevelsPanel(discord.ui.View):
 
     async def interaction_check(self,inter):
         if inter.user.id != self.owner or not self.cog.admin(inter):
-            await inter.response.send_message('只有開啟面板嘅管理員可以操作。',ephemeral=True)
+            await inter.response.send_message(wording_text(getattr(inter, "user", None), '只有開啟面板嘅管理員可以操作。'),ephemeral=True)
             return False
         return True
 
@@ -93,19 +94,19 @@ class LevelsPanel(discord.ui.View):
         await inter.response.defer(ephemeral=True)
         await self.cog.configure(mode='preview')
         self.cog.voice_clock.clear()
-        await inter.edit_original_response(embed=await self.cog.settings_embed(),view=self)
+        await inter.edit_original_response(embed=await self.cog.settings_embed(wording_member=inter.user),view=wording_view(inter.user, self))
 
     @discord.ui.button(label='暫停計分',style=discord.ButtonStyle.secondary)
     async def pause(self,inter,button):
         await inter.response.defer(ephemeral=True)
         await self.cog.configure(mode='off')
         self.cog.voice_clock.clear()
-        await inter.edit_original_response(embed=await self.cog.settings_embed(),view=self)
+        await inter.edit_original_response(embed=await self.cog.settings_embed(wording_member=inter.user),view=wording_view(inter.user, self))
 
     @discord.ui.button(label='重新整理',style=discord.ButtonStyle.secondary)
     async def refresh(self,inter,button):
         await inter.response.defer(ephemeral=True)
-        await inter.edit_original_response(embed=await self.cog.settings_embed(),view=self)
+        await inter.edit_original_response(embed=await self.cog.settings_embed(wording_member=inter.user),view=wording_view(inter.user, self))
 
 
 def original_bot_message(message):
@@ -170,11 +171,11 @@ class CommunityLevels(commands.Cog):
             await inter.response.defer(ephemeral=True)
         return True
 
-    async def settings_embed(self):
+    async def settings_embed(self, wording_member=None):
         cfg=self.cfg
         e=discord.Embed(title='🎖️ Con9sole 等級管理',color=0xe5b65b,
                        description=f"狀態：**{cfg['mode']}**\n"+({'active':'已正式計分及維護等級角色；公告按設定發送。','preview':'試行計分中，暫不派角色或發升級公告。','off':'計分已暫停，現有 XP 會保留。'}[cfg['mode']]))
-        cap_note=f"Bot 活動每日最多 {cfg['activity_daily_cap']} 次" if cfg['activity_daily_cap'] else 'Bot 活動冇額外每日上限'
+        cap_note=f"Bot 活動每日最多 {cfg['activity_daily_cap']} 次" if cfg['activity_daily_cap'] else wording_text(wording_member, 'Bot 活動冇額外每日上限')
         e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
         e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開清分 {cfg['clear_on_leave']}；每週一香港時間自動開始新榜",inline=False)
@@ -642,7 +643,7 @@ class CommunityLevels(commands.Cog):
         earned=p['total']-threshold(level)
         required=threshold(level+1)-threshold(level)
         filled=min(10,earned*10//required)
-        e=discord.Embed(title='🎖️ 我的會員卡' if target.id==inter.user.id else '🎖️ 會員卡',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
+        e=discord.Embed(title=wording_text(getattr(inter, "user", None), '🎖️ 我的會員卡') if target.id==inter.user.id else '🎖️ 會員卡',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
         e.add_field(name='總榜排名',value=str(position) if position else '未上榜')
         e.add_field(name='XP 來源',value=f"文字 {p['text']:,}｜互動 {p['activity']:,}｜語音 {p['voice']:,}\n匯入基準 {p['imported']:,}",inline=False)
         e.set_footer(text=f'模式：{self.cfg["mode"]}｜'+('已正式接管；管理調整另計' if self.cfg['mode']=='active' else '試行／暫停資料；管理調整另計'))
@@ -658,8 +659,8 @@ class CommunityLevels(commands.Cog):
                 e.add_field(name='🏅 展示稱號',value=discord.utils.escape_markdown(title)+'\n'+status,inline=False)
         except Exception:
             log.exception('Could not load member card collection')
-            e.add_field(name='🍾 酒吧收藏',value='暫時讀取唔到，請稍後再試。',inline=False)
-        await inter.followup.send(embed=e,view=MemberCardView(),allowed_mentions=discord.AllowedMentions.none())
+            e.add_field(name='🍾 酒吧收藏',value=wording_text(getattr(inter, "user", None), '暫時讀取唔到，請稍後再試。'),inline=False)
+        await inter.followup.send(embed=e,view=wording_view(inter.user, MemberCardView()),allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='leaderboard',description='查看總榜或香港時間每週榜')
     async def leaderboard(self,inter:discord.Interaction,weekly:bool=False,page:app_commands.Range[int,1,10000]=1,period:str|None=None):
@@ -672,13 +673,13 @@ class CommunityLevels(commands.Cog):
         from features.drink_views import LevelBoardView
         embed=discord.Embed(title='🏆 '+(f'期數 {week}' if week else '等級總榜'),description=text)
         embed.set_footer(text=f'第 {page} 頁｜會員經驗排名')
-        await inter.followup.send(embed=embed,view=LevelBoardView(self,week,page,len(rows)==10),allowed_mentions=discord.AllowedMentions.none())
+        await inter.followup.send(embed=embed,view=wording_view(inter.user, LevelBoardView(self,week,page,len(rows)==10)),allowed_mentions=discord.AllowedMentions.none())
 
     @levels.command(name='admin',description='管理等級設定及試行狀態')
     @app_commands.default_permissions(manage_guild=True)
     async def panel(self,inter:discord.Interaction):
         if await self.guard(inter):
-            await inter.followup.send(embed=await self.settings_embed(),view=LevelsPanel(self,inter.user.id))
+            await inter.followup.send(embed=await self.settings_embed(wording_member=inter.user),view=wording_view(inter.user, LevelsPanel(self,inter.user.id)))
 
     @levels.command(name='source',description='設定 Adventure Frontier 計分 Bot 及討論串白名單')
     @app_commands.default_permissions(manage_guild=True)
@@ -693,14 +694,14 @@ class CommunityLevels(commands.Cog):
                 if not remove: sources.append(entry)
                 self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
         await self.reconcile_sources()
-        await inter.followup.send('已更新來源白名單；只會識別支援嘅戰鬥卡格式。')
+        await inter.followup.send(wording_text(getattr(inter, "user", None), '已更新來源白名單；只會識別支援嘅戰鬥卡格式。'))
 
     @levels.command(name='exclude',description='排除或恢復頻道／分類／身份組計分')
     @app_commands.default_permissions(manage_guild=True)
     async def exclude(self,inter:discord.Interaction,channel:discord.TextChannel|discord.VoiceChannel|discord.CategoryChannel|discord.ForumChannel|None=None,role:discord.Role|None=None,remove:bool=False):
         if not await self.guard(inter): return
         if (channel is None)==(role is None):
-            await inter.followup.send('請揀一個頻道或一個身份組。'); return
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '請揀一個頻道或一個身份組。')); return
         key='excluded_roles' if role else 'excluded_channels'
         target=(role or channel).id
         async with self.role_lock:
@@ -717,7 +718,7 @@ class CommunityLevels(commands.Cog):
         if not await self.guard(inter): return
         await self.configure(text_cooldown=cooldown,activity_cooldown=cooldown,activity_daily_cap=activity_cap,voice_interval=voice_minutes*60,voice_xp=voice_xp)
         self.voice_clock.clear()
-        await inter.followup.send(embed=await self.settings_embed())
+        await inter.followup.send(embed=await self.settings_embed(wording_member=inter.user))
 
     @levels.command(name='reward',description='明確指定等級獎勵角色，避免自動猜測')
     @app_commands.default_permissions(manage_guild=True)
@@ -725,7 +726,7 @@ class CommunityLevels(commands.Cog):
         if not await self.guard(inter): return
         me=inter.guild.me
         if not remove and not reward_role_safe(role,me):
-            await inter.followup.send('角色唔適合自動派發；請檢查權限及角色排序。'); return
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '角色唔適合自動派發；請檢查權限及角色排序。')); return
         async with self.role_lock:
             async with self.lock:
                 rewards=dict(self.cfg['rewards'])
@@ -767,16 +768,16 @@ class CommunityLevels(commands.Cog):
         try:
             async with self.role_lock:
                 async with self.lock:
-                    if self.cfg['mode']=='active':raise ValueError('演練只可喺試行／暫停模式。')
+                    if self.cfg['mode']=='active':raise ValueError(wording_text(getattr(inter, "user", None), '演練只可喺試行／暫停模式。'))
                     if member.bot:raise ValueError('只可用真人測試帳號。')
                     mapping=replacement_preflight(inter.guild,self.cfg['rewards'])
                     current=await inter.guild.fetch_member(member.id)
                     original=[r for r in current.roles if r.id in set(mapping.values())]
                     if len(original)!=1:raise ValueError('演練帳號需有且只有一個已核對等級角色。')
                     if not run:
-                        await inter.followup.send(f'只讀預覽：<@{member.id}> 目前持有 <@&{original[0].id}>。演練只移除呢個既有等級角色再立即還原；不改XP或其他角色。',allowed_mentions=discord.AllowedMentions.none(),ephemeral=True);return
+                        await inter.followup.send('只讀預覽：<@{0}> 目前持有 <@&{1}{2}'.format(member.id, original[0].id, wording_text(getattr(inter, 'user', None), '>。演練只移除呢個既有等級角色再立即還原；不改XP或其他角色。')),allowed_mentions=discord.AllowedMentions.none(),ephemeral=True);return
                     prior=self.cfg.get('role_drill')
-                    if prior and prior['state'] in ('pending','rollback'):raise ValueError('上一次演練尚待還原；唔會開始另一批。')
+                    if prior and prior['state'] in ('pending','rollback'):raise ValueError(wording_text(getattr(inter, "user", None), '上一次演練尚待還原；唔會開始另一批。'))
                     if current.joined_at is None:raise ValueError('測試帳號加入時間未能核對。')
                     batch=uuid.uuid4().hex[:16];backup=DATA_DIR/'level_backups'/f'roles-{batch}.sqlite3'
                     marker=dict(id=batch,user=member.id,joined_at=current.joined_at.timestamp(),mapping={str(k):v for k,v in mapping.items()},roles=[r.id for r in original],state='pending',actor=inter.user.id,backup_path=str(backup),backup_sha=None,remove_succeeded=False,remove_observed=False)
@@ -793,7 +794,7 @@ class CommunityLevels(commands.Cog):
                     finally:
                         try:await restore_role_drill(inter.guild,self.ledger,marker,reward_role_safe)
                         finally:self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
-            await inter.followup.send('測試角色已移除及還原，現有角色核對一致；已備份，冇改XP／其他角色。',ephemeral=True)
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '測試角色已移除及還原，現有角色核對一致；已備份，冇改XP／其他角色。'),ephemeral=True)
         except (ValueError,discord.HTTPException,sqlite3.Error) as exc:
             await inter.followup.send(('演練未完成；如已移除會保留還原工作：'+str(exc))[:1500],ephemeral=True)
 
@@ -831,17 +832,17 @@ class CommunityLevels(commands.Cog):
         if not publish:
             await inter.followup.send(embed=embed,allowed_mentions=discord.AllowedMentions.none());return
         if self.cfg['mode']!='active':
-            await inter.followup.send('只可喺正式模式發佈；試行只提供預覽。');return
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '只可喺正式模式發佈；試行只提供預覽。'));return
         channel=inter.guild.get_channel(self.cfg['announcement_channel'])
         if not isinstance(channel,discord.TextChannel):
             await inter.followup.send('請先設定公告頻道。');return
         async with self.role_lock:
             if self.cfg['mode']!='active':
-                await inter.followup.send('模式已改變，今次冇發佈。');return
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '模式已改變，今次冇發佈。'));return
             publication=await asyncio.to_thread(self.ledger.begin_weekly_publication,inter.guild_id,period)
             if not publication['claimed']:
-                await inter.followup.send('呢個期數已發佈過。' if publication['state']=='sent' else
-                    '呢個期數送出結果未能確認；請管理員核對原頻道，暫時唔會自動重發。');return
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '呢個期數已發佈過。') if publication['state']=='sent' else
+                    wording_text(getattr(inter, "user", None), '呢個期數送出結果未能確認；請管理員核對原頻道，暫時唔會自動重發。'));return
             try:
                 message=await channel.send(embed=embed,allowed_mentions=discord.AllowedMentions.none())
             except (Exception,asyncio.CancelledError) as exc:
@@ -850,7 +851,7 @@ class CommunityLevels(commands.Cog):
                     publication['attempt'],'failed' if definite else 'uncertain'))
                 if isinstance(exc,asyncio.CancelledError):raise
                 await inter.followup.send('未能發佈，可以稍後再試。' if definite else
-                    '發佈結果未能確認；請先核對原頻道，暫時唔會自動重發。');return
+                    wording_text(getattr(inter, "user", None), '發佈結果未能確認；請先核對原頻道，暫時唔會自動重發。'));return
             mid=getattr(message,'id',None)
             await asyncio.to_thread(self.ledger.finish_weekly_publication,inter.guild_id,period,
                 publication['attempt'],'sent',mid if type(mid) is int else None)
@@ -883,7 +884,7 @@ class CommunityLevels(commands.Cog):
             members=[dict(user=m.id,roles=sorted(r.id for r in m.roles if r.id in managed)) for m in inter.guild.members if not m.bot]
             plan=await asyncio.to_thread(activation_role_plan,self.ledger,inter.guild_id,self.cfg['rewards'],members)
             counts=plan['counts']
-            await inter.followup.send(f'角色接管預覽：變更 {counts["change"]}｜保留 {counts["keep"]}｜未有profile保持不動 {counts["untouched"]}｜暫緩 {counts["hold"]}。\n摘要：{plan["digest"]}\n有暫緩項目唔會啟動；缺少積分唔會當0XP清除角色。',file=discord.File(io.BytesIO(json.dumps(plan,ensure_ascii=False,indent=2).encode()),filename='activation_roles_private.json'),allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
+            await inter.followup.send('角色接管預覽：變更 {0}｜保留 {1}｜未有profile保持不動 {2}｜暫緩 {3}。\n摘要：{4}{5}'.format(counts['change'], counts['keep'], counts['untouched'], counts['hold'], plan['digest'], wording_text(getattr(inter, 'user', None), '\n有暫緩項目唔會啟動；缺少積分唔會當0XP清除角色。')),file=discord.File(io.BytesIO(json.dumps(plan,ensure_ascii=False,indent=2).encode()),filename='activation_roles_private.json'),allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
         except ValueError as exc:await inter.followup.send(str(exc),ephemeral=True)
 
     @levels.command(name='activate',description='完成舊等級核對及停用 Amari 派角色後正式接管')
@@ -899,10 +900,10 @@ class CommunityLevels(commands.Cog):
             async with self.role_lock:
                 async with self.lock:
                     if self.cfg['mode']=='active':
-                        await inter.followup.send('已正式接管，唔會重複建立切換。');return
+                        await inter.followup.send(wording_text(getattr(inter, "user", None), '已正式接管，唔會重複建立切換。'));return
                     replacement_preflight(inter.guild,self.cfg['rewards'],announcement)
-                    if not self.gateway_confirmed or not self.bot.is_ready():raise ValueError('Gateway 未準備好，暫時唔接管。')
-                    if inter.guild.member_count and len(inter.guild.members)<inter.guild.member_count:raise ValueError('成員清單未齊，暫時唔接管。')
+                    if not self.gateway_confirmed or not self.bot.is_ready():raise ValueError(wording_text(getattr(inter, "user", None), 'Gateway 未準備好，暫時唔接管。'))
+                    if inter.guild.member_count and len(inter.guild.members)<inter.guild.member_count:raise ValueError(wording_text(getattr(inter, "user", None), '成員清單未齊，暫時唔接管。'))
                     now=time.time()
                     evidence=await asyncio.to_thread(activation_readiness,self.ledger,inter.guild_id,self.cfg,now)
                     managed=set(self.cfg['rewards'].values())
@@ -916,7 +917,7 @@ class CommunityLevels(commands.Cog):
                     replacement_preflight(inter.guild,self.cfg['rewards'],announcement)
                     current=[dict(user=m.id,roles=sorted(r.id for r in m.roles if r.id in managed)) for m in inter.guild.members if not m.bot]
                     current.sort(key=lambda row:row['user'])
-                    if current!=members:raise ValueError('成員角色喺備份期間改變，請重新核對。')
+                    if current!=members:raise ValueError(wording_text(getattr(inter, "user", None), '成員角色喺備份期間改變，請重新核對。'))
                     self.cfg=await asyncio.to_thread(activation_commit,self.ledger,inter.guild_id,changes,members,evidence,now,preview_digest)
         except (ValueError,sqlite3.Error) as exc:
             await inter.followup.send(str(exc));return
@@ -939,10 +940,10 @@ class CommunityLevels(commands.Cog):
     async def import_levels(self,inter:discord.Interaction,file:discord.Attachment,commit:bool=False):
         if not await self.guard(inter): return
         if commit:
-            await inter.followup.send('請用 baseline 混合搬遷流程：完整公開榜優先，其餘按最高等級角色起點；會先備份及封存試行重疊分數。舊 CSV 路徑唔直接提交。')
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '請用 baseline 混合搬遷流程：完整公開榜優先，其餘按最高等級角色起點；會先備份及封存試行重疊分數。舊 CSV 路徑唔直接提交。'))
             return
         if file.size>1_000_000 or not file.filename.lower().endswith('.csv'):
-            await inter.followup.send('請提供不超過 1MB 嘅 CSV。'); return
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '請提供不超過 1MB 嘅 CSV。')); return
         if self.cfg['mode']=='active':
             await inter.followup.send('正式模式不可匯入，請先暫停。'); return
         try:
@@ -957,20 +958,20 @@ class CommunityLevels(commands.Cog):
                 raise ValueError('名單有非現有真人成員，請先核對。')
             async with self.lock:
                 count=await asyncio.to_thread(self.ledger.import_levels,inter.guild_id,rows,time.time(),commit=commit)
-            await inter.followup.send(f'{"已匯入" if commit else "預覽通過"} {count} 人。保留等級基準及試行 XP；唔係 Amari 原始 XP 完整搬遷。')
+            await inter.followup.send('{0} {1}{2}'.format('已匯入' if commit else '預覽通過', count, wording_text(getattr(inter, 'user', None), ' 人。保留等級基準及試行 XP；唔係 Amari 原始 XP 完整搬遷。')))
         except (ValueError,UnicodeError,KeyError,TypeError,csv.Error) as exc:
             await inter.followup.send(discord.utils.escape_mentions(str(exc)))
 
     async def resolve_card_link(self,inter,link):
         match=re.fullmatch(r'https://discord\.com/channels/([0-9]+)/([0-9]+)/([0-9]+)/?',link.strip())
         if not match or int(match[1])!=config.GUILD_ID:
-            raise ValueError('請貼上本伺服器嘅 Discord 訊息連結。')
+            raise ValueError(wording_text(getattr(inter, "user", None), '請貼上本伺服器嘅 Discord 訊息連結。'))
         channel=self.bot.get_channel(int(match[2])) or await self.bot.fetch_channel(int(match[2]))
         if not isinstance(channel,discord.Thread) or channel.guild.id!=config.GUILD_ID:
-            raise ValueError('訊息必須位於本伺服器嘅討論串。')
+            raise ValueError(wording_text(getattr(inter, "user", None), '訊息必須位於本伺服器嘅討論串。'))
         perms=channel.permissions_for(inter.user)
         if not perms.view_channel or not perms.read_message_history:
-            raise ValueError('你未有查看或讀取討論串記錄嘅權限。')
+            raise ValueError(wording_text(getattr(inter, "user", None), '你未有查看或讀取討論串記錄嘅權限。'))
         message=await channel.fetch_message(int(match[3]))
         return channel,message
 
@@ -981,7 +982,7 @@ class CommunityLevels(commands.Cog):
         try:
             channel,message=await self.resolve_card_link(inter,message_link)
             if not original_bot_message(message) or message.author.id==self.bot.user.id:
-                raise ValueError(f'來源未加入：Bot={message.author.bot}；Webhook={bool(message.webhook_id)}；本 Bot={message.author.id==self.bot.user.id}。請選擇原始遊戲 Bot 嘅戰鬥訊息。')
+                raise ValueError('來源未加入：Bot={0}；Webhook={1}；本 Bot={2}{3}'.format(message.author.bot, bool(message.webhook_id), message.author.id == self.bot.user.id, wording_text(getattr(inter, 'user', None), '。請選擇原始遊戲 Bot 嘅戰鬥訊息。')))
             entry={'bot':message.author.id,'channel':channel.id}
             if not remove and not channel.archived:
                 await channel.join()
@@ -991,9 +992,9 @@ class CommunityLevels(commands.Cog):
                     if not remove:sources.append(entry)
                     self.cfg=await asyncio.to_thread(self.ledger.configure,inter.guild_id,sources=sources)
             parsed=battle_identity([e.to_dict() for e in message.embeds]) is not None
-            await inter.followup.send(f'已更新指定 Bot＋討論串來源；戰鬥格式可識別：{parsed}（未識別嘅卡片唔會計分）。模式冇改變，亦冇加分。')
+            await inter.followup.send('已更新指定 Bot＋討論串來源；戰鬥格式可識別：{0}{1}'.format(parsed, wording_text(getattr(inter, 'user', None), '（未識別嘅卡片唔會計分）。模式冇改變，亦冇加分。')))
         except (ValueError,discord.HTTPException) as exc:
-            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '讀唔到卡片，請核對 Bot 嘅查看及讀取記錄權限。')
+            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else wording_text(getattr(inter, "user", None), '讀唔到卡片，請核對 Bot 嘅查看及讀取記錄權限。'))
 
     @levels.command(name='inspect_link',description='直接貼戰鬥訊息連結做只讀格式驗證')
     @app_commands.default_permissions(manage_guild=True)
@@ -1007,7 +1008,7 @@ class CommunityLevels(commands.Cog):
             channel,message=await self.resolve_card_link(inter,message_link)
             await self.inspect.callback(self,inter,channel,str(message.id),raw_private=raw_private)
         except (ValueError,discord.HTTPException) as exc:
-            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else '讀唔到訊息，請核對 ID 同權限。')
+            await inter.followup.send(str(exc) if isinstance(exc,ValueError) else wording_text(getattr(inter, "user", None), '讀唔到訊息，請核對 ID 同權限。'))
 
     @levels.command(name='activity_check',description='只讀核對白名單近期戰鬥卡與實際加分，不補計')
     @app_commands.default_permissions(manage_guild=True)
@@ -1030,14 +1031,14 @@ class CommunityLevels(commands.Cog):
                         member=msg.guild.get_member(uid) if uid else None
                         if member and (member.bot or member.name!=name):member=None
                     proof=await asyncio.to_thread(self.ledger.event_proof,inter.guild_id,f'm:{msg.id}')
-                    outcome=f'已計 {proof[1]} XP → <@{proof[0]}>' if proof else '無加分紀錄（唔等於漏計；可能冷卻／上限／試行前）'
+                    outcome=f'已計 {proof[1]} XP → <@{proof[0]}>' if proof else wording_text(getattr(inter, "user", None), '無加分紀錄（唔等於漏計；可能冷卻／上限／試行前）')
                     edited=f'｜修改 <t:{int(msg.edited_at.timestamp())}:T>' if msg.edited_at else ''
                     lines.append(f'{msg.jump_url}\n<t:{int(msg.created_at.timestamp())}:T>{edited}｜格式 {bool(identity)}｜玩家 {member.mention if member else "未對應"}｜{outcome}')
                     if len(lines)>=10:break
             except discord.HTTPException:
                 lines.append('其中一個來源讀取失敗，請核對權限。')
             if len(lines)>=10:break
-        await inter.followup.send(('只讀核對；冇加分、綁定或改模式。最多 10 張／各來源最近 20 訊息。\n'+'\n'.join(lines) if lines else '未找到可讀取嘅來源卡片。')[:1950],allowed_mentions=discord.AllowedMentions.none())
+        await inter.followup.send((wording_text(getattr(inter, "user", None), '只讀核對；冇加分、綁定或改模式。最多 10 張／各來源最近 20 訊息。\n')+'\n'.join(lines) if lines else wording_text(getattr(inter, "user", None), '未找到可讀取嘅來源卡片。'))[:1950],allowed_mentions=discord.AllowedMentions.none())
 
     async def collect_history(self,job):
         """Restartable audit only. No live XP, roles, cooldowns or current bindings are written."""
@@ -1098,7 +1099,7 @@ class CommunityLevels(commands.Cog):
             channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
             perms=channel.permissions_for(inter.user)
             if not perms.view_channel or not perms.read_message_history:
-                await inter.followup.send('需要所有來源嘅查看及讀取記錄權限。');return
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '需要所有來源嘅查看及讀取記錄權限。'));return
         latest=await asyncio.to_thread(self.history_audit.latest,inter.guild_id)
         if status_only:
             if not latest:await inter.followup.send('未有歷史核數批次。');return
@@ -1112,17 +1113,14 @@ class CommunityLevels(commands.Cog):
             channel=self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
             perms=channel.permissions_for(inter.user)
             if not perms.view_channel or not perms.read_message_history:
-                await inter.followup.send('需要核數原始來源嘅查看及讀取記錄權限。');return
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '需要核數原始來源嘅查看及讀取記錄權限。'));return
         if not status_only and (job not in self.history_tasks or self.history_tasks[job].done()):
             self.history_tasks[job]=asyncio.create_task(self.collect_history(job))
         inventory=await asyncio.to_thread(self.ledger.engagement_inventory,inter.guild_id,scope['start']-60,scope['cutoff']+60)
         result=await asyncio.to_thread(self.history_audit.summary,job,inter.guild_id,inventory)
         counts='\n'.join(f'{key}: {value}' for key,value in sorted(result['reasons'].items())) or '尚未讀取卡片'
         users='\n'.join(f'<@{uid}>：{count} 次候選' for uid,count in sorted(result['potential'].items(),key=lambda row:-row[1])[:15])
-        await inter.followup.send((f'歷史核數 {job}｜{result["state"]}｜完成來源 {result["complete_channels"]}/{result["channels"]}\n'
-            f'範圍：<t:{int(result["start"])}:F> 至 <t:{int(result["cutoff"])}:F>\n{counts}\n'
-            f'遊戲內60秒重複：{result["cooldown"]}；目前仍保留得分：{result["preview"]}；已封存須重新對帳：{result["archived_candidates"]}\n{users}\n'
-            '以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。')[:1950],allowed_mentions=discord.AllowedMentions.none())
+        await inter.followup.send(('歷史核數 {0}｜{1}｜完成來源 {2}/{3}\n範圍：<t:{4}:F> 至 <t:{5}:F>\n{6}\n遊戲內60秒重複：{7}；目前仍保留得分：{8}；已封存須重新對帳：{9}\n{10}{11}'.format(job, result['state'], result['complete_channels'], result['channels'], int(result['start']), int(result['cutoff']), counts, result['cooldown'], result['preview'], result['archived_candidates'], users, wording_text(getattr(inter, 'user', None), '\n以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。')))[:1950],allowed_mentions=discord.AllowedMentions.none())
 
     async def collect_history_text(self,job):
         """Read-only, restartable text timing evidence; never store message bodies."""
@@ -1166,7 +1164,7 @@ class CommunityLevels(commands.Cog):
             job=latest[0];scope=await asyncio.to_thread(self.history_audit.job,job,inter.guild_id)
             if scope['state']!='complete':raise ValueError('遊戲核數未完成。')
             if not status_only:
-                if job in self.history_discovery:raise ValueError('呢個批次正在探索頻道；唔會重複開始。')
+                if job in self.history_discovery:raise ValueError(wording_text(getattr(inter, "user", None), '呢個批次正在探索頻道；唔會重複開始。'))
                 self.history_discovery.add(job);discovery_job=job
                 await inter.followup.send('已開始探索文字頻道及封存討論串；暫時未補分。完成範圍核對後會另行回報。',ephemeral=True)
                 with connect_sqlite(self.ledger.path) as db:
@@ -1192,7 +1190,7 @@ class CommunityLevels(commands.Cog):
                     perms=channel.permissions_for(inter.guild.me)
                     admin_perms=channel.permissions_for(inter.user)
                     if not (perms.view_channel and perms.read_message_history and admin_perms.view_channel and admin_perms.read_message_history):
-                        raise ValueError('部分文字頻道／討論串未能完整讀取，唔會聲稱CD核對完成。')
+                        raise ValueError(wording_text(getattr(inter, "user", None), '部分文字頻道／討論串未能完整讀取，唔會聲稱CD核對完成。'))
                     selected.append(channel.id)
                 policy=dict(baseline=plan,cutoff=min(scope['cutoff'],baseline['cutover']),users=users,
                     cooldown=max(self.cfg['text_cooldown'],self.cfg['activity_cooldown']),
@@ -1204,15 +1202,15 @@ class CommunityLevels(commands.Cog):
             text=await asyncio.to_thread(self.history_audit.text_scope,job)
             if text['state']!='complete':
                 complete=sum(bool(c[2]) for c in text['cursors'])
-                await inter.followup.send(f'文字CD核數 {text["state"]}｜已完成 {complete}/{len(text["cursors"])} 個範圍；未有私人核數結果，冇補分。',ephemeral=True)
+                await inter.followup.send('文字CD核數 {0}｜已完成 {1}/{2}{3}'.format(text['state'], complete, len(text['cursors']), wording_text(getattr(inter, 'user', None), ' 個範圍；未有私人核數結果，冇補分。')),ephemeral=True)
                 return
             await self.check_history_scope(inter,text)
             complete=sum(bool(c[2]) for c in text['cursors'])
-            message=f'文字CD核數 {job}｜{text["state"]}｜完成頻道／討論串 {complete}/{len(text["cursors"])}。只保留用家ID及時間，冇保存訊息內容。'
+            message='文字CD核數 {0}｜{1}｜完成頻道／討論串 {2}/{3}{4}'.format(job, text['state'], complete, len(text['cursors']), wording_text(getattr(inter, 'user', None), '。只保留用家ID及時間，冇保存訊息內容。'))
             if text['state']=='complete':
                 replay=await asyncio.to_thread(self.history_audit.text_replay,job,inter.guild_id)
                 message+='\n'+'\n'.join(f'<@{uid}>：合併後 {row["combined"]} − 原文字 {row["text_only"]} = {row["base_xp"]} 基礎XP候選' for uid,row in list(replay['users'].items())[:10])
-                message+='\n只反映保留中嘅歷史；已刪訊息及歷史Booster倍數未知。未補分。'
+                message+=wording_text(getattr(inter, "user", None), '\n只反映保留中嘅歷史；已刪訊息及歷史Booster倍數未知。未補分。')
                 await inter.followup.send(message,file=discord.File(io.BytesIO(json.dumps(replay,ensure_ascii=False,indent=2).encode()),filename='history_cd_private.json'),allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
             else:await inter.followup.send(message,allowed_mentions=discord.AllowedMentions.none(),ephemeral=True)
         except (ValueError,discord.HTTPException,sqlite3.OperationalError) as exc:
@@ -1228,10 +1226,10 @@ class CommunityLevels(commands.Cog):
             return  # Discord Administrator bypasses channel overwrites and private-thread membership.
         for cid,_,_ in text['cursors']:
             channel=self.bot.get_channel(cid) or self.history_channels.get(cid) or await self.bot.fetch_channel(cid)
-            if channel.guild.id!=inter.guild_id:raise ValueError('核數頻道不屬於呢個伺服器。')
+            if channel.guild.id!=inter.guild_id:raise ValueError(wording_text(getattr(inter, "user", None), '核數頻道不屬於呢個伺服器。'))
             for viewer in (inter.user,inter.guild.me):
                 perms=channel.permissions_for(viewer)
-                if not (perms.view_channel and perms.read_message_history):raise ValueError('需要所有原始文字核數頻道嘅查看及讀取權限。')
+                if not (perms.view_channel and perms.read_message_history):raise ValueError(wording_text(getattr(inter, "user", None), '需要所有原始文字核數頻道嘅查看及讀取權限。'))
 
     @levels.command(name='history_bonus',description='預覽歷史基礎XP補償；接受估算政策後按核對摘要一次性提交')
     @app_commands.default_permissions(manage_guild=True)
@@ -1249,7 +1247,7 @@ class CommunityLevels(commands.Cog):
             sha=manifest_digest(manifest)
             existing=self.cfg.get('historical_bonus')
             if existing:
-                await inter.followup.send('歷史補償已完成；呢個基線唔會重複加分。');return
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '歷史補償已完成；呢個基線唔會重複加分。'));return
             if not commit:
                 lines=[]
                 for row in manifest['users']:
@@ -1258,7 +1256,7 @@ class CommunityLevels(commands.Cog):
                 await inter.followup.send('歷史補分預覽，未改分。\n'+'\n'.join(lines[:10])+f'\n摘要：{sha}\n政策：按現存記錄重播共用CD，補普通基礎XP；不推斷已刪訊息及歷史Booster倍數。舊週榜不補造。',file=discord.File(io.BytesIO(json.dumps(manifest,ensure_ascii=False,indent=2).encode()),filename='history_bonus_private.json'),allowed_mentions=discord.AllowedMentions.none())
                 return
             if not HISTORICAL_BASE_POLICY_ACCEPTED:raise ValueError('歷史估算政策未選定；目前只提供補分預覽。')
-            if not base_only or digest!=sha:raise ValueError('提交需接受普通基礎XP估算政策，並提供完全相同嘅預覽摘要。')
+            if not base_only or digest!=sha:raise ValueError(wording_text(getattr(inter, "user", None), '提交需接受普通基礎XP估算政策，並提供完全相同嘅預覽摘要。'))
             for row in manifest['users']:
                 member=await inter.guild.fetch_member(row['user'])
                 if member.bot:raise ValueError('補分對象必須係現有真人。')
@@ -1272,7 +1270,7 @@ class CommunityLevels(commands.Cog):
                     result=await asyncio.to_thread(apply_bonus,self.ledger,manifest,backup,time.time(),actor=inter.user.id,current_users=current,accept_base_only=True)
                     self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
             self.voice_clock.clear()
-            await inter.followup.send(f'歷史補償已完成（同批次不重複）：{result["count"]} 人；已備份。現時OFF，冇改週榜／冷卻／角色；可用管理面板恢復試行。')
+            await inter.followup.send('歷史補償已完成（同批次不重複）：{0}{1}'.format(result['count'], wording_text(getattr(inter, 'user', None), ' 人；已備份。現時OFF，冇改週榜／冷卻／角色；可用管理面板恢復試行。')))
         except (ValueError,discord.HTTPException,sqlite3.Error) as exc:await inter.followup.send(str(exc)[:1500])
 
     @staticmethod
@@ -1289,11 +1287,11 @@ class CommunityLevels(commands.Cog):
             guild=inter.guild
             if guild.member_count and len(guild.members)<guild.member_count:
                 await guild.chunk(cache=True)
-            if guild.member_count and len(guild.members)<guild.member_count:raise ValueError('成員清單未齊，唔會建立搬遷。')
+            if guild.member_count and len(guild.members)<guild.member_count:raise ValueError(wording_text(getattr(inter, "user", None), '成員清單未齊，唔會建立搬遷。'))
             members=self.baseline_roster(guild)
             roles=[dict(id=r.id,name=r.name) for r in guild.roles]
             if commit:
-                if not plan or data is not None:raise ValueError('提交只需已核對嘅 plan ID。')
+                if not plan or data is not None:raise ValueError(wording_text(getattr(inter, "user", None), '提交只需已核對嘅 plan ID。'))
                 backup=DATA_DIR/'level_backups'/f'hybrid-{plan}.sqlite3'
                 async with self.role_lock:
                     async with self.lock:
@@ -1302,7 +1300,7 @@ class CommunityLevels(commands.Cog):
                             plan=plan,members=self.baseline_roster(guild),roles=[dict(id=r.id,name=r.name) for r in guild.roles],backup_path=backup,now=time.time())
                         self.cfg=await asyncio.to_thread(self.ledger.settings,inter.guild_id)
                 self.voice_clock.clear()
-                await inter.followup.send(f'基線已搬入（或同批次已完成）：{result["count"]} 人。已備份；原有試行重疊記錄已封存。現時 OFF，冇派角色／發公告；舊 Amari 週榜未搬遷，歷史補分未套用。')
+                await inter.followup.send('基線已搬入（或同批次已完成）：{0}{1}'.format(result['count'], wording_text(getattr(inter, 'user', None), ' 人。已備份；原有試行重疊記錄已封存。現時 OFF，冇派角色／發公告；舊 Amari 週榜未搬遷，歷史補分未套用。')))
                 return
             if data is None:raise ValueError('請提供完整公開榜分頁資料，或用 plan＋commit 提交已核對預覽。')
             async with self.lock:
@@ -1317,10 +1315,7 @@ class CommunityLevels(commands.Cog):
             floor=sum(r['kind']=='role_floor' for r in manifest['rows'])
             top=sorted(manifest['rows'],key=lambda r:-r['baseline'])[:12]
             detail='\n'.join(f'<@{r["user_id"]}>：{r["baseline"]:,} XP（{r["kind"]}）' for r in top)
-            text=(f'基線預覽 {token}\n公開榜 {len(capture["rows"])} 行；榜單對應 {exact} 人；角色起點 {floor} 人。'
-                f'\nUnknown已離開 {manifest["unknown_departed"]}；未能唯一對應榜單 {len(manifest["unresolved_ranks"])}；'
-                f'衝突暫緩 {len(manifest["conflicts"])}；無基線證據 {len(manifest["skipped"])}。\n{detail}'
-                '\n未改積分。提交會替換基線，封存舊試行總分，保留榜單觀察時間後嘅新版事件；歷史補分另計，舊週XP未知。')
+            text=('基線預覽 {0}\n公開榜 {1} 行；榜單對應 {2} 人；角色起點 {3} 人。\nUnknown已離開 {4}；未能唯一對應榜單 {5}；衝突暫緩 {6}；無基線證據 {7}。\n{8}{9}'.format(token, len(capture['rows']), exact, floor, manifest['unknown_departed'], len(manifest['unresolved_ranks']), len(manifest['conflicts']), len(manifest['skipped']), detail, wording_text(getattr(inter, 'user', None), '\n未改積分。提交會替換基線，封存舊試行總分，保留榜單觀察時間後嘅新版事件；歷史補分另計，舊週XP未知。')))
             await inter.followup.send(text[:1950],allowed_mentions=discord.AllowedMentions.none(),
                 file=discord.File(io.BytesIO(json.dumps(manifest,ensure_ascii=False,indent=2).encode()),filename='baseline_preview_private.json'))
         except (ValueError,discord.HTTPException) as exc:
@@ -1341,7 +1336,7 @@ class CommunityLevels(commands.Cog):
             if not trusted:
                 shape=[dict(index=i,has_title=bool(e.title),has_author=bool(e.author.name),
                     has_description=bool(e.description),field_count=len(e.fields)) for i,e in enumerate(msg.embeds)]
-                await inter.followup.send(f'來源未獲信任，冇匯出內容或加分。Bot={msg.author.bot}；Webhook={bool(msg.webhook_id)}。\n```json\n'+json.dumps(shape)+'\n```');return
+                await inter.followup.send('{0}{1}；Webhook={2}。\n```json\n'.format(wording_text(getattr(inter, 'user', None), '來源未獲信任，冇匯出內容或加分。Bot='), msg.author.bot, bool(msg.webhook_id))+json.dumps(shape)+'\n```');return
             payload=[e.to_dict() for e in msg.embeds]
             if raw_private:
                 if not inter.user.guild_permissions.administrator:
@@ -1353,14 +1348,14 @@ class CommunityLevels(commands.Cog):
                     projection.append(fields)
                 compact=re.sub(r'<a?:[A-Za-z0-9_]+:[0-9]+>','',json.dumps(projection,ensure_ascii=False,separators=(',',':')))
                 preview=('\n```json\n'+compact+'\n```') if len(compact)<1600 else ''
-                await inter.followup.send('私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。'+preview,
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '私人原始 Bot 格式樣本，可能包含玩家 ID／名稱；只讀，冇加分。')+preview,
                     file=discord.File(io.BytesIO(json.dumps(dict(embeds=payload),ensure_ascii=False,indent=2).encode()),filename='battle_raw_private.json'))
                 return
             identity=battle_identity(payload)
             if not identity:
                 shape=[dict(index=i,has_title='title' in e,has_author='author' in e,
                     has_description='description' in e,field_count=len(e.get('fields',[]))) for i,e in enumerate(payload)]
-                await inter.followup.send('未識別格式，只回傳結構，冇匯出文字或玩家 ID。\n```json\n'+json.dumps(shape)+'\n```');return
+                await inter.followup.send(wording_text(getattr(inter, "user", None), '未識別格式，只回傳結構，冇匯出文字或玩家 ID。\n```json\n')+json.dumps(shape)+'\n```');return
             uid,name=identity if identity else (None,None)
             resolved=msg.guild.get_member(uid) if uid else None
             if identity and not uid:
@@ -1381,10 +1376,10 @@ class CommunityLevels(commands.Cog):
             proof=json.dumps(dict(embeds=fixtures),ensure_ascii=False,indent=2).encode()
             compact=json.dumps(fixtures,ensure_ascii=False,separators=(',',':'))
             preview=('\n```json\n'+compact+'\n```') if len(compact)<1600 else ''
-            await inter.followup.send(f'白名單來源：{trusted}\n可識別格式：{identity is not None}\n玩家可對應：{resolved is not None}\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。'+preview,
+            await inter.followup.send('白名單來源：{0}\n可識別格式：{1}\n玩家可對應：{2}{3}'.format(trusted, identity is not None, resolved is not None, wording_text(getattr(inter, 'user', None), '\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。'))+preview,
                 file=discord.File(io.BytesIO(proof),filename='battle_fixture.json'))
         except discord.HTTPException:
-            await inter.followup.send('讀唔到訊息，請檢查 ID 同權限。')
+            await inter.followup.send(wording_text(getattr(inter, "user", None), '讀唔到訊息，請檢查 ID 同權限。'))
 
 
 async def setup(bot):

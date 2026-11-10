@@ -1,4 +1,5 @@
 from __future__ import annotations
+from features.wording import text as wording_text
 
 import logging
 
@@ -15,7 +16,7 @@ async def report_ui_error(interaction: discord.Interaction, error: Exception) ->
         interaction.id,
         exc_info=(type(error), error, error.__traceback__),
     )
-    content = "暫時完成唔到呢個操作，請稍後再試；如持續出現，請通知管理員。"
+    content = wording_text(interaction.user, "暫時完成唔到呢個操作，請稍後再試；如持續出現，請通知管理員。")
     try:
         if (
             interaction.response.type

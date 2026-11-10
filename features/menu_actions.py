@@ -86,10 +86,11 @@ async def open_help_menu(cog: object, interaction: discord.Interaction) -> None:
 
 async def open_admin_tool_menu(cog: object, interaction: discord.Interaction) -> None:
     await record_usage("admin_tool", interaction.user.id, interaction.guild_id)
+    embed, view = localize_menu(interaction.user, build_admin_tool_embed(interaction.user), AdminToolView(cog, member=interaction.user))
     await send_or_followup(
         interaction,
-        embed=build_admin_tool_embed(interaction.user),
-        view=AdminToolView(cog, member=interaction.user),
+        embed=embed,
+        view=view,
         ephemeral=True,
     )
 
@@ -119,9 +120,10 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
     await record_usage("mention_menu", message.author.id, message.guild.id if message.guild else None)
 
     try:
+        embed, view = localize_menu(message.author, build_quick_bar_embed(message.author), QuickBarView(cog))
         kwargs = safe_message_kwargs(
-            embed=build_quick_bar_embed(message.author),
-            view=QuickBarView(cog),
+            embed=embed,
+            view=view,
         )
         kwargs["mention_author"] = False
         await message.reply(**kwargs)

@@ -93,6 +93,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         for arg in setup_method.args.args:
             arg.annotation = None
         scope = {}
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[setup_method], type_ignores=[]), str(source), 'exec'), scope)
         cog = types.SimpleNamespace(state={'settings': {'category': 20, 'destination': 30}, 'sessions': {}},
                                     lock=asyncio.Lock(), save=lambda: None, last_error=None,
@@ -132,6 +133,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             NotFound=type('NotFound', (Exception,), {}))
         scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None,
                      game_profile=lambda *a: '', GAME_LABELS={}, interest_topic=lambda *a: None)
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[render_method], type_ignores=[]), str(source), 'exec'), scope)
         message = types.SimpleNamespace(id=99, content='<@1> prompt', edit=AsyncMock())
         destination = types.SimpleNamespace(send=AsyncMock(return_value=message),
@@ -145,7 +147,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        started=1000, ended=2000)
         await scope['render'](cog, channel, session)
         sent = destination.send.call_args.kwargs
-        self.assertEqual(sent['embed'].title, '🟢 開緊團 · 歡迎加入')
+        self.assertEqual(sent['embed'].title, '🟢 組隊中 · 歡迎加入')
         self.assertIn('<@1>', sent['content'])
         self.assertNotIn('<@2>', sent['content'])
         self.assertEqual([u.id for u in sent['allowed_mentions'].users], [1])
@@ -154,20 +156,20 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.edit.call_args.kwargs['allowed_mentions'].users, [])
         session['missing'] = 2
         await scope['render'](cog, channel, session)
-        self.assertEqual(embeds[-1].title, '🙌 缺 2 人，一齊玩！')
+        self.assertEqual(embeds[-1].title, '🙌 缺 2 人，歡迎加入！')
         session['missing'] = 0
         await scope['render'](cog, channel, session)
-        self.assertEqual(embeds[-1].title, '🟢 開緊團 · 歡迎加入')
+        self.assertEqual(embeds[-1].title, '🟢 組隊中 · 歡迎加入')
         session['mode'] = 'Clubs Rush'
         await scope['render'](cog, channel, session)
         self.assertIn('🎮 Clubs Rush', embeds[-1].description)
         self.assertEqual(embeds[-1].fields, [])
         await scope['render'](cog, channel, session, ended=True)
-        self.assertEqual(embeds[-1].title, '🏁 今晚收工，下次再戰！')
+        self.assertEqual(embeds[-1].title, '🏁 本局已結束，下次再戰！')
         self.assertIn('🎮 Clubs Rush', embeds[-1].description)
         self.assertEqual(embeds[-1].fields, [])
         self.assertIn('16 分鐘', embeds[-1].description)
-        self.assertIn('一齊玩過 · A、B', embeds[-1].description)
+        self.assertIn('參與成員 · A、B', embeds[-1].description)
         self.assertLessEqual(len(embeds[-1].description.splitlines()), 3)
         self.assertIsNone(message.edit.call_args.kwargs['view'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])
@@ -183,6 +185,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         scope = dict(humans=namespace['humans'],
                      is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'),
                      Details=lambda *args: object(), RecruitmentChoices=lambda *args: object())
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[edit, submit], type_ignores=[]), str(source), 'exec'), scope)
         for kind, in_call, active, allowed in [
                 ('admin', False, True, True), ('helper', False, True, True),
@@ -214,6 +217,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'RecruitmentChoices'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'set_count')
         scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), scope)
         for kind, in_call, active, allowed in [
                 ('admin', False, True, True), ('helper', False, True, True),
@@ -246,9 +250,11 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                        isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in
                        ('GAME_LABELS', 'MODE_PRESETS') for a in n.targets)]
         scope = dict(humans=namespace['humans'], is_admin_or_helper=lambda u: u.kind in ('admin', 'helper'))
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), scope)
         method = next(n for c in parsed.body if isinstance(c, ast.ClassDef) and c.name == 'ModePicker'
                       for n in c.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'callback')
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), scope)
         self.assertNotIn('Crew HQ', scope['MODE_PRESETS']['2k'])
         self.assertIn('Crew HQ', scope['MODE_PRESETS']['2k27'])
@@ -286,6 +292,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                  isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in
                  ('GAME_LABELS', 'MODE_PRESETS') for a in n.targets)]
         scope = dict(discord=discord)
+        scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
         channel = types.SimpleNamespace(category=types.SimpleNamespace(name='NBA 2K'))
         cog = types.SimpleNamespace(bot=types.SimpleNamespace(get_channel=lambda _: channel))

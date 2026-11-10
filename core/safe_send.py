@@ -40,6 +40,8 @@ async def send_or_followup(
     file: discord.File | None = None,
     ephemeral: bool = False,
 ) -> None:
+    from features.wording import view_copy
+    view = view_copy(interaction.user, view)
     kwargs = safe_message_kwargs(
         content=content,
         embed=embed,
