@@ -196,15 +196,22 @@ class PermissionAudit(commands.Cog):
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.command(name='stage1_permissions',description='第1階段：預覽／分批套用附件預覽權限及驗收')
-    @app_commands.choices(action=[app_commands.Choice(name='預覽',value='preview'),app_commands.Choice(name='套用指定預覽',value='apply'),app_commands.Choice(name='復原指定計劃',value='restore'),app_commands.Choice(name='驗收目前設定',value='verify')])
+    @app_commands.choices(action=[app_commands.Choice(name='預覽',value='preview'),app_commands.Choice(name='套用指定預覽',value='apply'),app_commands.Choice(name='復原指定計劃',value='restore'),app_commands.Choice(name='驗收目前設定',value='verify'),app_commands.Choice(name='查詢計劃進度',value='status'),app_commands.Choice(name='核對中斷結果',value='reconcile')])
     async def stage1(self,inter:discord.Interaction,action:str='preview',plan_id:str=''):
         await inter.response.defer(ephemeral=True,thinking=True)
         if not await self.authorized(inter):
             await inter.followup.send('只限本伺服器管理員。',ephemeral=True);return
-        if self.lock.locked():
-            await inter.followup.send('另一項權限操作進行中，請稍後。',ephemeral=True);return
         from features import stage1_permissions as policy, anti_scam_fix as journal
         import io,json
+        if action=='status':
+            try:
+                result=await asyncio.to_thread(journal.load,plan_id,inter.guild_id,inter.user.id)
+                if result.get('scope')!='stage1_caps':raise ValueError('計劃不屬於第1階段。')
+                await inter.followup.send(journal.summary(result)+'\n操作鎖：'+('使用中；此狀態不代表仍有進展。' if self.lock.locked() else '空閒。'),ephemeral=True)
+            except ValueError as exc:await inter.followup.send(str(exc),ephemeral=True)
+            return
+        if self.lock.locked():
+            await inter.followup.send('另一項權限操作進行中；可用「查詢計劃進度」及 plan_id 讀取已保存進度。',ephemeral=True);return
         async with self.lock:
             try:
                 snapshot=await collect(inter.guild,config.VERIFIED_ROLE_ID)
@@ -224,25 +231,49 @@ class PermissionAudit(commands.Cog):
                     await asyncio.to_thread(journal.save,result)
                     text=journal.summary(result)+'\n只改附件及連結預覽；4個VIP例外保留。\n套用：/stage1_permissions action:套用指定預覽 plan_id:'+result['id']
                     text+='\n階段未結案：'+('；'.join(result['blockers']) or '仍需套用後驗收及Bot功能實測。')
-                elif action in ('apply','restore'):
+                elif action in ('apply','restore','reconcile'):
                     result=await asyncio.to_thread(journal.load,plan_id,inter.guild_id,inter.user.id)
                     if result.get('scope')!='stage1_caps':raise ValueError('計劃不屬於第1階段。')
                     if action=='apply' and policy.fingerprint(snapshot)!=result['fingerprint']:
                         raise ValueError('角色／頻道設定已變更，請重新預覽；未套用。')
-                    await policy.execute(inter.guild,result,lambda:self.authorized(inter),restore=action=='restore')
+                    if action=='reconcile':
+                        # Read only: never replay an ambiguous write.
+                        for op in result['ops']:
+                            if op['state'] not in ('applying','uncertain'):continue
+                            async with asyncio.timeout(30):
+                                observed,_,_=await journal.current(inter.guild,op)
+                            op['state']='verified' if observed==op['after'] else 'conflict'
+                            await asyncio.to_thread(journal.save,result)
+                    else:
+                        async def heartbeat():
+                            while True:
+                                await asyncio.sleep(10)
+                                try:
+                                    await inter.edit_original_response(content=journal.summary(result)+'\n批次執行中；每批最多20項／150秒。')
+                                except discord.HTTPException:pass
+                        ticker=asyncio.create_task(heartbeat())
+                        try:
+                            await policy.execute(inter.guild,result,lambda:self.authorized(inter),restore=action=='restore')
+                        finally:
+                            ticker.cancel()
+                            try:await ticker
+                            except asyncio.CancelledError:pass
                     if action=='apply':
-                        result['live_verification']=await asyncio.to_thread(policy.verify,await collect(inter.guild,config.VERIFIED_ROLE_ID),config.VERIFIED_ROLE_ID)
+                        async with asyncio.timeout(45):
+                            result['live_verification']=await asyncio.to_thread(policy.verify,await collect(inter.guild,config.VERIFIED_ROLE_ID),config.VERIFIED_ROLE_ID)
                         await asyncio.to_thread(journal.save,result)
-                    text=journal.summary(result)+'\n已停止於第一個衝突／未知結果；詳見附件。階段是否完成仍以驗收及Bot最小權限核對為準。'
+                    text=journal.summary(result)+'\n本批已停止。prepared：重新預覽剩餘設定後再套用；applying／uncertain：先核對中斷結果，禁止盲目重試。舊計劃保留供復原。階段是否完成仍以驗收及Bot最小權限核對為準。'
                 elif action=='verify':
                     result=await asyncio.to_thread(policy.verify,snapshot,config.VERIFIED_ROLE_ID)
                     text='目前附件／預覽驗收：非例外殘留 '+str(len(result['unexpected_unverified_caps']))+' 個。\n此結果不代表Bot降權或實際成員功能已驗收完成。'
                 else:raise ValueError('未知操作。')
                 if not await self.authorized(inter):return
+                if action in ('apply','restore'):
+                    await inter.edit_original_response(content=text)
                 payload=json.dumps(result,ensure_ascii=False,indent=2).encode()
                 if len(payload)>inter.guild.filesize_limit:raise ValueError('報告超出附件限制。')
                 await inter.followup.send(text,file=discord.File(io.BytesIO(payload),filename='stage1-permissions.json'),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
-            except (ValueError,discord.HTTPException) as exc:
+            except (ValueError,discord.HTTPException,TimeoutError) as exc:
                 text=str(exc) if isinstance(exc,ValueError) else 'Discord結果需核對；停止後續修改，不自動重試。'
                 await inter.followup.send(text,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 

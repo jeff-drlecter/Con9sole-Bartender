@@ -3,6 +3,7 @@
 No bot/staff privilege changes are inferred from role names. Such changes remain
 explicit blockers until a service-specific permission inventory is approved.
 """
+import asyncio
 import copy
 import hashlib
 import json
@@ -185,4 +186,10 @@ async def execute(guild,plan,authorize,*,restore=False):
             if str(role.id) not in {str(guild.id),str(plan['verified'])} and not op.get('preserve_service'):
                 if role.is_bot_managed() or any(getattr(role.permissions,p) for p in STAFF_POWERS):
                     raise ValueError('目標角色已成為 Bot／管理角色，停止。')
-    return await journal.execute(guild,plan,authorize,restore=restore,validate=validate)
+    # Bound each command; receipts remain durable for audit and restoration.
+    try:
+        async with asyncio.timeout(150):
+            return await journal.execute(guild,plan,authorize,restore=restore,validate=validate,max_ops=20,max_seconds=90)
+    except TimeoutError:
+        journal.save(plan)
+        return plan

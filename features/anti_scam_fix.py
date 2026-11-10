@@ -63,13 +63,17 @@ async def current(guild,op):
     return [p.value for p in channel.overwrites_for(role).pair()],role,channel
 
 
-async def execute(guild,plan,authorize,*,restore=False,validate=None):
+async def execute(guild,plan,authorize,*,restore=False,validate=None,max_ops=None,max_seconds=None):
     if not restore and time.time()-plan['stamp']>1800:raise ValueError('預覽已超過30分鐘，請重新預覽。')
     if not restore and any(o['state'] in ('applying','uncertain','conflict') for o in plan['ops']):
         raise ValueError('計劃有未核對結果／衝突，禁止繼續套用；先復原或核對。')
+    started=time.monotonic(); completed=0
     for op in reversed(plan['ops']) if restore else plan['ops']:
         if restore and (not op.get('attempted') or op['state'] not in ('applying','verified','uncertain','conflict')):continue
         if not restore and op['state'] not in ('prepared',):continue
+        if (max_ops is not None and completed>=max_ops) or (max_seconds is not None and time.monotonic()-started>=max_seconds):
+            break
+        completed+=1
         if not await authorize():raise ValueError('管理員權限已改變，停止。')
         value,role,channel=await current(guild,op)
         if validate is not None:validate(op,role,channel)
@@ -89,7 +93,7 @@ async def execute(guild,plan,authorize,*,restore=False,validate=None):
                 await channel.set_permissions(role,overwrite=None if ow.is_empty() else ow,reason=reason)
             observed,_,_=await current(guild,op)
             op['state']=('restored' if restore else 'verified') if observed==desired else 'uncertain'
-        except Exception:
+        except BaseException:
             op['state']='uncertain';save(plan);raise
         save(plan)
         if op['state']=='uncertain':break

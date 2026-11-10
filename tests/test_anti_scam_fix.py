@@ -77,3 +77,22 @@ class FixTests(unittest.IsolatedAsyncioTestCase):
             await f.execute(NS(),p,AsyncMock(return_value=True),restore=True)
         self.assertEqual(read.await_count,1)
         role.edit.assert_not_awaited()
+
+
+    async def test_batch_limit_leaves_remaining_prepared(self):
+        p=self.plan();p['ops']*=3
+        p['ops']=[dict(op) for op in p['ops']]
+        role=NS(edit=AsyncMock())
+        with patch.object(f,'current',AsyncMock(return_value=(1,role,None))):
+            await f.execute(NS(),p,AsyncMock(return_value=True),max_ops=1)
+        self.assertEqual([o['state'] for o in p['ops']],['verified','prepared','prepared'])
+
+    async def test_cancelled_write_keeps_uncertain_receipt(self):
+        import asyncio
+        p=self.plan();role=NS(edit=AsyncMock(side_effect=asyncio.CancelledError()))
+        with patch.object(f,'current',AsyncMock(return_value=(0,role,None))):
+            with self.assertRaises(asyncio.CancelledError):
+                await f.execute(NS(),p,AsyncMock(return_value=True))
+        self.assertEqual(f.load('test',1,7)['ops'][0]['state'],'uncertain')
+        with self.assertRaises(ValueError):
+            await f.execute(NS(),p,AsyncMock(return_value=True))
