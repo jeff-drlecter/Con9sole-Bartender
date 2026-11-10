@@ -89,6 +89,10 @@ class BotHealth(commands.Cog):
         health=await asyncio.to_thread(storage_health,levels.ledger.path if levels else DATA_DIR / 'community_levels.sqlite3',interaction.guild_id)
         for name,values in health.items():
             embed.add_field(name=name,value='｜'.join(f'{key}：{value}' for key,value in values.items()),inline=False)
+        if is_server_admin(interaction.guild.get_member(interaction.user.id)):
+            maintenance = self.bot.get_cog('Maintenance')
+            status = await asyncio.to_thread(maintenance.summary, interaction.guild_id) if maintenance else '維護監察未載入'
+            embed.add_field(name='維護監察', value=status[:1000] + '\n管理員可用 /maintenance 核對。', inline=False)
         embed.timestamp=discord.utils.utcnow()
         embed.set_footer(text=wording_text(interaction.user, '最近檢查｜循環運行唔代表每項工作已成功；待查通知需逐項核對。'))
         embed.add_field(name='異常處理', value=wording_text(interaction.user, '角色同步：進入等級／稱號管理核對。\n通知：進入待查通知逐項處理，保留操作紀錄。\n召人卡結果不明：先核對原頻道，再用 /squad_recover 配對實際卡片；唔會自動補發。\n收尾通知由背景工作重試；持續積壓請查管理日誌。'), inline=False)
