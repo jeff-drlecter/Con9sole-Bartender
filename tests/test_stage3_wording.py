@@ -29,6 +29,13 @@ class CopyTests(unittest.TestCase):
         self.assertEqual(language(both), 'hk')
         self.assertEqual(text(both, '搵唔到房間。'), '搵唔到房間。')
 
+    def test_taiwan_catalog_has_no_remaining_cantonese_particles(self):
+        from features.wording import TW
+        for authored, translated in TW.items():
+            with self.subTest(authored=authored):
+                self.assertFalse(any(token in translated for token in ('唔', '嘅', '咗', '撳', '揀', '喺', '冇', '佢', '傾下', '嘢', '只係', '已經係', '不再係')))
+
+
 
 class ViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_ids_values_disabled_state_and_callbacks_preserved(self):
