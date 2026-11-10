@@ -1,6 +1,6 @@
 # Anti-scam Update — Stage 1 acceptance record
 
-Status: implementation prepared; NOT applied and NOT closed.
+Status: applied and Bot least-privilege migration verified on 2026-11-10; human-account functional acceptance remains open.
 
 ## Fixed decisions
 
@@ -20,11 +20,11 @@ Categories update synced children; no duplicate direct child writes are planned.
 
 - [x] Four historical VIP exceptions reviewed and decision recorded.
 - [x] Planner, rollback journal integration, precondition checks and offline regression tests prepared.
-- [ ] Fresh live preview and inspect diff; historical snapshot is not authority to apply.
-- [ ] Apply attachment/embed policy and read back each change.
-- [ ] Post-apply zero non-exception ordinary grants; no Bot/staff capability loss.
+- [x] Fresh live preview and inspect diff; historical snapshot is not authority to apply.
+- [x] Apply attachment/embed policy and read back each change.
+- [x] Post-apply zero non-exception ordinary grants; no Bot/staff capability loss.
 - [ ] Live ordinary/Verified/Mod/Helpers and Bot functional acceptance.
-- [ ] Service-specific least-privilege configuration for Carl-bot, Dyno, Bartender. Administrator remains an explicit blocker; it is not removed by this capability gate.
+- [x] Service-specific least-privilege configuration for Carl-bot, Dyno, Bartender. Administrator removed through Discord role settings after scoped channel preparation and functional checks.
 
 Do not close Stage 1 until every item is done. Do not re-open completed items unless configuration changes, a regression or an unresolved verification result gives a concrete reason.
 
@@ -41,3 +41,13 @@ verified if the observed value equals the intended result, otherwise conflict.
 It never replays a write. Keep all old plan IDs for restoration. For remaining
 prepared entries create a fresh preview of current settings before the next batch.
 The original fingerprint check and all per-write scope/authority checks remain.
+
+## Live evidence — 2026-11-10
+
+Original plan `3b2486ccb0dc`: 853 verified receipts, mutation lock idle. Final live attachment/embed audit at 12:08 Hong Kong checked 65 ordinary roles and 131 eligible channels with zero unexpected grants (including the temporary test room while present). Four VIP exceptions retained.
+
+PR #97 fixed bounded progress/recovery. PR #98 deployed service preparation; 539 tests and Fly deployment passed. Carl and Bartender each completed 85 verified overwrite writes. Post-removal audit checked 158 channels per service: Administrator false, missing capabilities zero. Carl role mask `1374658358470`; Bartender `326704163953`. Dyno management/Admin powers removed; basic message profile retained.
+
+Actual smoke checks after removal: Dyno `?dinfo` embed; Carl `/ping` and message-edit log with before/after content; Bartender existing Hong Kong language role verification, main menu, membership card, temporary voice-room creation, and `/bot_health`. Health reports loaded systems, running loops, ledger OK, and zero pending/uncertain notification work. The empty test voice room no longer appears in the sidebar after its cleanup interval.
+
+Still open: ordinary/Verified/Mod/Helpers actual-account chat, voice, attachment/embed and private-thread acceptance. Permission proof and administrator-account Bot smoke checks do not substitute for those tests. No live member was kicked, banned or timed out for testing.
