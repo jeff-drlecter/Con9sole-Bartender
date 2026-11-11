@@ -16,7 +16,7 @@ from discord.ext import commands, tasks
 import config
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
-from core.twitch_alerts import AlertStore, AUDIENCE_ROLE, normalize_login, transition
+from core.twitch_alerts import AlertStore, AUDIENCE_ROLE, default_state, normalize_login, transition
 from core.ui import SafeView, SafeModal
 
 log = logging.getLogger(__name__)
@@ -509,6 +509,22 @@ class StreamAlerts(commands.Cog):
             return
         await inter.response.send_message(embed=self.embed(), view=StreamAdmin(self), ephemeral=True, allowed_mentions=NONE)
 
+    @app_commands.command(name='stream_demo', description='在測試公告示範直播開台、去重及收台更新原卡')
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(manage_guild=True)
+    async def demo(self, inter: discord.Interaction):
+        if not await authorized(inter):
+            return
+        if inter.channel_id != STREAM_SANDBOX_CHANNEL:
+            return await inter.response.send_message(f'請在 <#{STREAM_SANDBOX_CHANNEL}> 執行；示範只會發到沙盤。', ephemeral=True)
+        await inter.response.defer(ephemeral=True)
+        session = StreamDemoSession(self.bot, inter.channel, inter.id)
+        async with session.lock:
+            await session.check()
+        view = StreamDemoView(session)
+        message = await inter.channel.send(session.summary(), view=view, allowed_mentions=NONE, silent=True)
+        await inter.followup.send(f'沙盤示範已建立：{message.jump_url}', ephemeral=True)
+
     @app_commands.command(name='stream_admin', description='管理直播名單、檢查頻率及通知狀態')
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)
@@ -545,6 +561,103 @@ class StreamAlerts(commands.Cog):
         message = await channel.send('📺 **直播通知管理**\n成員 5 分鐘／友台 30 分鐘起；每場一張卡，收台更新原卡。\n按鈕只限管理員；名單及設定只會向操作者顯示。',
                                      view=StreamPanel(self), allowed_mentions=NONE)
         await inter.followup.send(message.jump_url, ephemeral=True)
+
+
+STREAM_SANDBOX_CHANNEL = 1564479766013149286
+
+
+class DemoStore:
+    def __init__(self):
+        self.state = default_state()
+        self.state['member_ping'] = False
+
+    def save(self):
+        pass  # Deliberately isolated in memory; never touches the production database.
+
+
+class DemoAPI:
+    async def get(self, *args, **kwargs):
+        return {'data': []}  # No Twitch network calls, including optional VOD lookups.
+
+
+class StreamDemoSession(StreamAlerts):
+    """Exercises real send_live/end_card paths with a fixed sandbox-only route."""
+    def __init__(self, bot, channel, session_id):
+        if channel.id != STREAM_SANDBOX_CHANNEL or channel.guild.id != config.GUILD_ID:
+            raise ValueError('Stream demo is restricted to the sandbox')
+        self.bot, self.sandbox, self.lock = bot, channel, asyncio.Lock()
+        self.store, self.api = DemoStore(), DemoAPI()
+        self.ended, self.checks = False, 0
+        self.sent_ids = []
+        started = datetime.now(timezone.utc).isoformat()
+        self.streams = {}
+        for login, group, display in [('jeff_con9sole', 'member', '成員台（模擬）'),
+                                      ('fatboychiu', 'partner', '友台（模擬）')]:
+            self.store.state['entries'][login] = {
+                'group': group, 'enabled': True, 'initialized': True, 'last_check': 0,
+                'stream_id': None, 'started_at': None, 'message_id': None,
+                'message_channel': None, 'pending': None}
+            self.streams[login] = {'id': f'demo-{session_id}-{login}', 'user_login': login,
+                'user_name': display, 'user_id': 'demo', 'started_at': started,
+                'title': '【沙盤模擬】一齊打機，測試直播通知', 'game_name': '測試遊戲（模擬資料）'}
+
+    def channel(self, group):
+        return self.sandbox
+
+    def card(self, login, stream, *, ended=False, vod=None):
+        embed, view = super().card(login, stream, ended=ended, vod=vod)
+        embed.title = ('【沙盤模擬・成員】' if self.store.state['entries'][login]['group'] == 'member'
+                       else '【沙盤模擬・友台】') + ('已收台' if ended else '開台通知')
+        embed.description = '🧪 **模擬資料，並非實際開台；此測試唔會 tag 人。**\n' + embed.description
+        embed.set_image(url=None)
+        embed.add_field(name='檢查頻率', value='每 5 分鐘' if self.store.state['entries'][login]['group'] == 'member' else '每 30 分鐘', inline=True)
+        return embed, view
+
+    async def check(self, *, close=False):
+        if close:
+            self.ended = True
+        actions = []
+        for login, e in self.store.state['entries'].items():
+            stream = None if self.ended else self.streams[login]
+            action = transition(e, stream)
+            if action == 'live':
+                await self.send_live(login, e, stream)
+                self.sent_ids.append(e['message_id'])
+            elif action == 'offline':
+                await self.end_card(login, e)
+            actions.append(action)
+        self.checks += 1
+        return actions
+
+    def summary(self):
+        links = '｜'.join(f'[第 {i} 張卡](https://discord.com/channels/{config.GUILD_ID}/{self.sandbox.id}/{mid})'
+                         for i, mid in enumerate(self.sent_ids, 1))
+        return ('🧪 **直播通知沙盤示範**\n'
+                f"狀態：{'已收台（原卡已更新）' if self.ended else '模擬直播中'}｜直播卡 {len(self.sent_ids)} 張｜檢查 {self.checks} 輪\n"
+                '成員 5 分鐘／友台 30 分鐘；沙盤兩類都唔 tag。\n'
+                '「重複檢查」應保持原有卡數；「模擬收台」會改原卡，唔另發收台通知。\n'
+                '正式名單／狀態不變；Twitch API 呼叫 0。按鈕有效 20 分鐘。\n' + links)
+
+
+class StreamDemoView(AdminView):
+    def __init__(self, session):
+        super().__init__(timeout=1200)
+        self.session = session
+
+    @discord.ui.button(label='重複檢查（唔新增卡）', style=discord.ButtonStyle.secondary)
+    async def repeat(self, inter, button):
+        await inter.response.defer()
+        async with self.session.lock:
+            await self.session.check()
+            await inter.edit_original_response(content=self.session.summary(), view=self, allowed_mentions=NONE)
+
+    @discord.ui.button(label='模擬收台（更新原卡）', style=discord.ButtonStyle.primary)
+    async def close(self, inter, button):
+        await inter.response.defer()
+        async with self.session.lock:
+            await self.session.check(close=True)
+            button.disabled = True
+            await inter.edit_original_response(content=self.session.summary(), view=self, allowed_mentions=NONE)
 
 
 async def setup(bot):
