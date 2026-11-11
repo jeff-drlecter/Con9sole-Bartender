@@ -42,3 +42,11 @@ SQLite `/data/twitch_alerts.sqlite3` 保存名單、頻率、啟用狀態、直�
 保留舊 Script 及 Sheet 作參考，不再作現行名單來源。
 
 檢查：`python scripts/verify_stream_alerts.py`（在 Fly 容器內執行，只讀，不派送）。
+
+## 沙盤示範
+
+在「測試公告」執行 `/stream_demo`，會建立成員／友台兩張明確標示模擬資料的卡及一個控制面板。
+按「重複檢查」驗證不新增卡；按「模擬收台」驗證更新原來兩張卡，再檢查亦不新增。
+示範沿用正式 send_live/end_card/transition 路徑，但名單、狀態只在獨立記憶體，目的地鎖定測試公告。
+兩類示範均禁止 tag 並 silent，Twitch API 呼叫為零，圖片不載入真實直播預覽。
+測試按鈕有效 20 分鐘；Bot 重啟後可重新執行指令。示範不驗證正式觀眾 Role 是否實際收到推送。
