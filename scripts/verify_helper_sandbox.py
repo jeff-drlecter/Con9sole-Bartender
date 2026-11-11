@@ -31,12 +31,25 @@ def main():
     for role in [settings['tester_role'],'1279071042249162856']:
         allowed=int(overwrites[role]['allow'])
         assert allowed & 1024 and allowed & 65536, 'Helper/Tester view/history missing'
-    message=get(f"channels/{settings['channel']}/messages/{settings['panel']}")
+    for _ in range(24):
+        message=get(f"channels/{settings['channel']}/messages/{settings['panel']}")
+        if message.get('embeds') and '自動偵測求助' in message['embeds'][0].get('title',''): break
+        time.sleep(5)
+    else: raise RuntimeError('Automatic detection panel was not refreshed')
     ids={c.get('custom_id') for row in message.get('components',[]) for c in row.get('components',[])}
     expected={f'helper:sandbox:{key}:v1' for key in ('live','create','manage','duty','history')}
     assert expected<=ids, 'Missing helper sandbox controls'
-    assert '虛構示範' in message['embeds'][0]['title'], 'Demo must be clearly labeled'
+    assert '自動偵測求助' in message['embeds'][0]['title'], 'Automatic detection panel missing'
+    with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+        version=db.execute("SELECT value FROM settings WHERE key='detector_version'").fetchone()
+    assert version and version[0]=='1', 'Detector not enabled'
     print(f"Verified helper sandbox https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{message['id']}")
+    with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+        scan=db.execute("SELECT value FROM settings WHERE key='detector_scan'").fetchone()
+    print('Initial detection scan:',scan[0] if scan else 'still running')
+    with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+        count=db.execute("SELECT COUNT(*) FROM detected_help WHERE state IN ('open','claimed','handoff')").fetchone()[0]
+    print('Stored automatic help candidates:',count)
     print('Verified Helpers and Tester view/history permissions; everyone denied; five controls present.')
 
 
