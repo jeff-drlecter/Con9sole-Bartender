@@ -314,6 +314,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("tempvc", "小隊 call", "🎧", "primary", "quick", 1, "TempVC"),
     MenuItem("tempvc_control", "小隊 call 控制", "🎛️", "secondary", "quick", 3, "TempVC", "open_control_panel_from_menu"),
     MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "quick", 3, "SquadCards"),
+    MenuItem("invite", "邀請朋友", "🔗", "primary", "quick", 3, "Invites"),
     MenuItem("home_menu", "更多玩法", "🍸", "secondary", "quick", 4, "Menu", "open_home_menu_from_button"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "quick", 2, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 2, "CommunityLevels"),
@@ -339,6 +340,7 @@ PREVIOUS_HOME_MENU_ITEMS: list[MenuItem] = [
 LEGACY_HOME_MENU_ITEMS += PREVIOUS_HOME_MENU_ITEMS
 
 HOME_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("invite", "邀請朋友", "🔗", "primary", "home", 0, "Invites"),
     MenuItem("records", "我的紀錄", "🎖️", "primary", "home", 0, "Menu", "open_records_menu"),
     MenuItem("rankings", "社群排行", "🏆", "secondary", "home", 0, "Menu", "open_rankings_menu"),
     MenuItem("social", "社群互動", "🙌", "secondary", "home", 1, "Menu", "open_social_menu"),
@@ -355,6 +357,9 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("titles", "我的稱號", "🏅", "secondary", "records", 1, "TitleRoles"),
     ],
     "rankings": [
+        MenuItem("invite", "邀請朋友", "🔗", "primary", "rankings", 0, "Invites"),
+        MenuItem("invite_leaderboard", "邀請排行榜", "🤝", "secondary", "rankings", 1, "Invites", "leaderboard_entry"),
+        MenuItem("invite_mine", "我的邀請成果", "🔗", "secondary", "rankings", 1, "Invites", "mine_entry"),
         MenuItem("community_leaderboard", "等級總榜", "🏆", "secondary", "rankings", 0, "CommunityLevels", "leaderboard_entry"),
         MenuItem("community_weekly", "本週排名", "📅", "secondary", "rankings", 0, "CommunityLevels", "weekly_entry"),
         MenuItem("drink_leaderboard", "酒吧排行榜", "🍸", "secondary", "rankings", 1, "Drink", "leaderboard_entry"),
@@ -383,6 +388,7 @@ for section, items in SECTION_MENU_ITEMS.items():
 
 
 ADMIN_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("platform_invites", "平台邀請連結", "🔗", "secondary", "admin", 3, "Invites", "platform_entry", admin_only=True),
     MenuItem("permission_audit", "權限審核", "🔍", "secondary", "admin", 2, "PermissionAudit", admin_only=True),
     MenuItem("title_roles_admin", "稱號管理", "🏅", "secondary", "admin", 2, "TitleRoles", "admin_entry", admin_only=True),
     MenuItem("bot_health", "系統狀態", "🩺", "secondary", "admin", 2, "BotHealth", admin_only=True),
