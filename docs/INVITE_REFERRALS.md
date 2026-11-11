@@ -6,8 +6,8 @@ Personal links are generated lazily against the existing public `INVITE_CHANNEL_
 
 Management tools:
 
-- Admin menu → 平台邀請連結: private source selector discovered from the live invite list and existing source channel names, excluding tracked personal codes. Live status and usage are fetched before returning a link. No automatic replacement for missing platform links.
-- `/invite_sources [member] [days]`: admin-only, private tracked join history or aggregate sources (omit days for all tracked history; use 7/30 for those windows). Platform names reflect the existing source channel names; publication locations remain unverified.
+- Admin menu → 平台邀請連結: private source selector discovered from the live invite list and explicit invite-code labels (when configured) and existing source channel names, excluding tracked personal codes. Live status and usage are fetched before returning a link. No automatic replacement for missing platform links.
+- `/invite_sources [member] [days]`: admin-only, private tracked join history or aggregate sources (omit days for all tracked history; use 7/30 for those windows). Platform names use explicit invite-code labels first, then existing source channel names. Labels describe the intended publication source, not proof of where a visitor clicked.
 - `/invite_panel channel:<channel> platforms:<true|false>`: admin-only placement of a persistent platform selector entry or member invite/results/leaderboard card. Platform entry still checks administrator/manage-server permissions on every interaction, even if posted in a public channel.
 
 ## Attribution and limits
@@ -28,4 +28,6 @@ Leaderboards show rewarded invite counts and awarded EXP, with Hong Kong calenda
 
 Needs existing Guild Members intent and Manage Server (list invites), plus View Channel/Create Invite on the configured public entry. No new role permissions are granted by this change. Verify a personal link can be retrieved twice, old platform link selection returns the exact existing URL, verification credits once, a leave/rejoin does not credit again, and buttons remain functional after restart. Add persistent cards to the existing guide/Admin archive using `/invite_panel` after deployment.
 
-Invite codes are never embedded in the new source/configuration: platform choices are read live from Discord; personal codes and attribution remain only in the runtime SQLite database.
+Platform links are validated against the live Discord invite list. Explicit public campaign labels are configured in `SOURCE_INVITE_LABELS`; personal codes and attribution remain only in the runtime SQLite database.
+
+- LIHKG: `rg7xz8gnJp`, dedicated link requested on 2026-11-12; landing channel: 👋新成員-加入-打招呼👋. Never expires; unlimited uses. This does not relabel the generic rules invite or other invites on the same landing channel.
