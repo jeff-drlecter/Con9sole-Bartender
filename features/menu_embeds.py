@@ -118,7 +118,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
 def build_section_embed(section: str) -> discord.Embed:
     title, description = {
         "records": ("🎖️ 我的紀錄", "查看會員卡、收藏進度、酒吧紀錄及已解鎖稱號。\n收藏內可查看里程碑同主題酒單。"),
-        "rankings": ("🏆 社群排行", "等級總榜、本週參與同酒吧收藏，各有一份紀錄。"),
+        "rankings": ("🏆 社群排行", "等級、每週參與、邀請朋友同酒吧收藏排行榜。"),
         "social": ("🙌 社群互動", "送句打氣，或者去公海傾下遊戲以外嘅話題。"),
         "info": ("ℹ️ 資訊與設定", "揀選想睇嘅內容、邀請朋友，或者查看社群資訊同使用說明。"),
     }[section]
