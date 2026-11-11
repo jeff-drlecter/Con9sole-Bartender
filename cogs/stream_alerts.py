@@ -173,10 +173,11 @@ class RemoveStream(AdminView):
 
     @discord.ui.button(label='確認移除直播主', style=discord.ButtonStyle.danger)
     async def confirm(self, inter, button):
+        await inter.response.defer()
         async with self.cog.lock:
             self.cog.store.state['entries'].pop(self.login, None)
             self.cog.store.save()
-        await inter.response.edit_message(content=f'已移除 {self.login}；現有通知卡保留。', view=None)
+        await inter.edit_original_response(content=f'已移除 {self.login}；現有通知卡保留。', view=None)
 
 
 class Cadence(discord.ui.Select):
@@ -186,6 +187,7 @@ class Cadence(discord.ui.Select):
             value=str(n), default=cog.store.state['partner_minutes'] == n) for n in (30, 60, 120)])
 
     async def callback(self, inter):
+        await inter.response.defer()
         async with self.cog.lock:
             self.cog.store.state['partner_minutes'] = int(self.values[0])
             self.cog.store.save()
@@ -210,6 +212,7 @@ class StreamAdmin(AdminView):
 
     @discord.ui.button(label='啟用／停用帳號', custom_id='stream:toggle', row=2)
     async def toggle(self, inter, button):
+        await inter.response.defer()
         async with self.cog.lock:
             e = self.cog.store.state['entries'].get(self.selected)
             if e:
@@ -221,6 +224,7 @@ class StreamAdmin(AdminView):
 
     @discord.ui.button(label='轉換成員／友台', custom_id='stream:group', row=2)
     async def group(self, inter, button):
+        await inter.response.defer()
         async with self.cog.lock:
             e = self.cog.store.state['entries'].get(self.selected)
             if e:
@@ -238,10 +242,11 @@ class StreamAdmin(AdminView):
 
     @discord.ui.button(label='暫停／恢復通知', row=3)
     async def delivery(self, inter, button):
+        await inter.response.defer()
         async with self.cog.lock:
             s = self.cog.store.state
             if not s['enabled'] and not self.cog.api:
-                await inter.response.send_message('Twitch 憑證未準備好，未啟用。', ephemeral=True)
+                await inter.followup.send('Twitch 憑證未準備好，未啟用。', ephemeral=True)
                 return
             s['enabled'] = not s['enabled']
             for e in s['entries'].values():
@@ -251,6 +256,7 @@ class StreamAdmin(AdminView):
 
     @discord.ui.button(label='成員開台 tag：開／關', row=3)
     async def ping(self, inter, button):
+        await inter.response.defer()
         async with self.cog.lock:
             s = self.cog.store.state
             s['member_ping'] = not s['member_ping']
@@ -480,7 +486,10 @@ class StreamAlerts(commands.Cog):
             return
         kwargs = dict(embed=self.embed(selected), view=StreamAdmin(self, selected, page), allowed_mentions=NONE)
         if inter.response.is_done():
-            await inter.followup.send(**kwargs, ephemeral=True)
+            if inter.response.type == discord.InteractionResponseType.deferred_message_update:
+                await inter.edit_original_response(**kwargs)
+            else:
+                await inter.followup.send(**kwargs, ephemeral=True)
         elif inter.type == discord.InteractionType.component:
             await inter.response.edit_message(**kwargs)
         else:
@@ -509,6 +518,7 @@ class StreamAlerts(commands.Cog):
             perms = channel.permissions_for(inter.guild.me)
             if not all((perms.view_channel, perms.send_messages, perms.embed_links, perms.read_message_history)):
                 return await inter.response.send_message('Bot 需要查看、發送、嵌入連結及讀取歷史權限。', ephemeral=True)
+        await inter.response.defer(ephemeral=True)
         async with self.lock:
             self.store.state.update(member_channel=member.id, partner_channel=partner.id)
             self.store.save()
