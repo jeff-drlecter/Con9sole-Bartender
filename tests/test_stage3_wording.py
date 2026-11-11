@@ -24,10 +24,10 @@ class CopyTests(unittest.TestCase):
 
     def test_arbitrary_input_and_default_not_inferred(self):
         self.assertEqual(text(member(), 'Jeff：搵唔到房間。'), 'Jeff：搵唔到房間。')
-        self.assertEqual(text(NS(roles=[]), '搵唔到房間。'), '搵唔到房間。')
+        self.assertEqual(text(NS(roles=[]), '搵唔到房間。'), '找不到房間。')
         both=member(); both.roles += member('hk').roles
-        self.assertEqual(language(both), 'hk')
-        self.assertEqual(text(both, '搵唔到房間。'), '搵唔到房間。')
+        self.assertEqual(language(both), 'neutral')
+        self.assertEqual(text(both, '搵唔到房間。'), '找不到房間。')
 
     def test_taiwan_catalog_has_no_remaining_cantonese_particles(self):
         from features.wording import TW

@@ -11,10 +11,10 @@ def role(code, value=0, managed=False):
 
 class LanguageTests(unittest.TestCase):
     def test_default_and_conflict(self):
-        self.assertEqual(language(NS(roles=[])), 'hk')
+        self.assertEqual(language(NS(roles=[])), 'neutral')
         self.assertEqual(language(NS(roles=[role('tw')])), 'tw')
-        self.assertEqual(language(NS(roles=[role('tw'), role('hk')])), 'hk')
-        self.assertEqual(language(NS(roles=[role('tw', 8)])), 'hk')
+        self.assertEqual(language(NS(roles=[role('tw'), role('hk')])), 'neutral')
+        self.assertEqual(language(NS(roles=[role('tw', 8)])), 'neutral')
 
     def test_role_safety(self):
         self.assertEqual(set(preference_roles([role('hk'), role('tw')])), {'hk', 'tw'})
@@ -101,3 +101,33 @@ class LanguageAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(member.remove_roles.await_args.args, (hk,))
         self.assertIn(unrelated, fresh.roles)
         self.assertEqual(interaction.followup.send.await_args.args[0], '已切換為台灣用語。')
+
+    async def test_neutral_removes_only_preference_roles(self):
+        import asyncio
+        import config
+        from features.language_preferences import LanguageView
+        from unittest.mock import AsyncMock
+        class R:
+            managed = False
+            permissions = discord.Permissions.none()
+            def __init__(self, code):
+                self.id = 1 if code == 'hk' else 2
+                self.name = ROLE_NAMES[code]
+            def __ge__(self, other):
+                return False
+        hk, tw = R('hk'), R('tw')
+        unrelated = NS(id=99, name='member', managed=False, permissions=discord.Permissions.none())
+        member = NS(id=10, roles=[hk, unrelated], add_roles=AsyncMock(), remove_roles=AsyncMock())
+        fresh = NS(id=10, roles=[unrelated])
+        guild = NS(fetch_roles=AsyncMock(return_value=[hk,tw]), fetch_channels=AsyncMock(return_value=[]),
+                   fetch_member=AsyncMock(side_effect=[member, NS(top_role=object()), fresh]))
+        cog = NS(lock=asyncio.Lock())
+        interaction = NS(user=NS(id=10), guild=guild, guild_id=config.GUILD_ID,
+                         response=NS(defer=AsyncMock()), followup=NS(send=AsyncMock()),
+                         client=NS(user=NS(id=50), get_cog=lambda name: cog if name == 'LanguagePreferences' else NS()))
+        await LanguageView(10).choose(interaction, 'neutral')
+        member.add_roles.assert_not_awaited()
+        self.assertEqual(member.remove_roles.await_args.args, (hk, tw))
+        self.assertEqual(fresh.roles, [unrelated])
+        self.assertEqual(language(fresh), 'neutral')
+        self.assertEqual(interaction.followup.send.await_args.args[0], '已切換為通用繁體中文。')

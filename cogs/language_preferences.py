@@ -17,12 +17,12 @@ class LanguagePreferences(commands.Cog):
 
     async def menu_entry(self, interaction):
         from features.language_preferences import language
-        current = "台灣" if language(interaction.user) == "tw" else "香港"
+        current = {"neutral": "通用繁體中文", "hk": "香港用語", "tw": "台灣用語"}[language(interaction.user)]
         await interaction.response.send_message(
-            f"目前語境：{current}。\n香港語境／台灣語境：影響個人選單、會員卡、組隊通知設定及語音房操作等回覆；多人共用卡片使用中性繁體中文。與所在地無關。\n切換後請使用新選單；舊訊息不會自動改寫。",
+            f"目前用語：{current}。\n未選擇偏好時使用通用繁體中文；也可選擇香港或台灣用語，影響個人選單及操作回覆。公共內容使用通用繁體中文，偏好不代表所在地。\n切換後請重新開啟選單；舊訊息不會自動改寫。",
             view=LanguageView(interaction.user.id), ephemeral=True)
 
-    @app_commands.command(name="language", description="切換香港／台灣 Bot 用語")
+    @app_commands.command(name="language", description="選擇通用繁體中文、香港或台灣 Bot 用語")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def language_command(self, interaction: discord.Interaction):
         await self.menu_entry(interaction)

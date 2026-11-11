@@ -19,7 +19,7 @@ class UnifiedMenuTests(unittest.IsolatedAsyncioTestCase):
         for section in SECTION_MENU_ITEMS:
             view = SectionMenuView(cog, section)
             self.assertTrue(view.is_persistent())
-            self.assertTrue({'返回上一頁', '返回吧枱'} <= {b.label for b in view.children})
+            self.assertTrue({'返回上一頁', '返回酒吧'} <= {b.label for b in view.children})
             for row in range(5):
                 self.assertLessEqual(sum(b.row == row for b in view.children), 3)
             view.stop()

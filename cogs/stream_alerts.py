@@ -165,13 +165,13 @@ class AddStream(SafeModal, title='新增 Twitch 直播主'):
             async with self.cog.lock:
                 result = await self.cog.api.get('users', [('login', login)])
                 if not any(u.get('login', '').lower() == login for u in result['data']):
-                    raise ValueError('Twitch 未搵到呢個帳號。')
+                    raise ValueError('Twitch 找不到這個帳號。')
                 self.cog.store.add(login, group)
         except (ValueError, RuntimeError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             text = str(exc) if isinstance(exc, ValueError) else '暫時無法核對 Twitch，未新增帳號。'
             await inter.followup.send(text, ephemeral=True, allowed_mentions=NONE)
             return
-        await inter.followup.send(f'已新增 **{login}**；首次檢查只建立基準，唔補發現有直播。', ephemeral=True)
+        await inter.followup.send(f'已新增 **{login}**；首次檢查只建立基準，不補發目前的直播。', ephemeral=True)
         await self.cog.show(inter, login)
 
 
@@ -263,7 +263,7 @@ class StreamAdmin(AdminView):
             self.cog.store.save()
         await self.cog.show(inter, self.selected, self.page)
 
-    @discord.ui.button(label='成員開台 tag：開／關', row=3)
+    @discord.ui.button(label='成員直播提及：開／關', row=3)
     async def ping(self, inter, button):
         await inter.response.defer()
         async with self.cog.lock:
@@ -331,15 +331,15 @@ class StreamAlerts(commands.Cog):
     def card(self, login, stream, *, ended=False, vod=None):
         display = discord.utils.escape_markdown(stream.get('user_name', login))
         url = 'https://www.twitch.tv/' + login
-        embed = discord.Embed(title=(f'{display} 已收台' if ended else (stream.get('title') or '直播中'))[:256],
+        embed = discord.Embed(title=(f'{display} 直播已結束' if ended else (stream.get('title') or '直播中'))[:256],
             url=url, color=0x95a5a6 if ended else 0x9146ff,
             description=(f'📺 [重溫 VOD]({vod})' if vod else '直播已結束；VOD 暫未提供。') if ended else
-                        f'**{display} 開台啦！**\n🎥 [觀看直播]({url})', timestamp=datetime.now(timezone.utc))
+                        f'**{display} 開始直播了！**\n🎥 [觀看直播]({url})', timestamp=datetime.now(timezone.utc))
         started = int(datetime.fromisoformat(stream['started_at'].replace('Z', '+00:00')).timestamp())
         embed.add_field(name='遊戲', value=(stream.get('game_name') or '未知')[:1024], inline=True)
         embed.add_field(name='開始時間', value=f'<t:{started}:f>', inline=True)
         if ended:
-            embed.add_field(name='收台狀態', value='於今次檢查確認收台；非精確結束時間。', inline=False)
+            embed.add_field(name='結束狀態', value='在本次檢查確認直播結束；非精確結束時間。', inline=False)
         else:
             embed.set_image(url=f'https://static-cdn.jtvnw.net/previews-ttv/live_user_{login}-640x360.jpg')
         embed.set_footer(text=f"Twitch • {login} • stream:{stream['id']}")
@@ -461,7 +461,7 @@ class StreamAlerts(commands.Cog):
                                                'roster': len(self.store.state['entries'])}
                 self.store.save()
         except Exception as exc:
-            self.last_error = f'直播檢查失敗：{type(exc).__name__}（未改為收台）'
+            self.last_error = f'直播檢查失敗：{type(exc).__name__}（未改為已結束）'
             log.warning('Stream check failed: %s', type(exc).__name__)
             await asyncio.sleep(30)  # A failing API is never polled more frequently than once per minute.
 
@@ -476,10 +476,10 @@ class StreamAlerts(commands.Cog):
         lines = [f"狀態：{'運行中' if s['enabled'] else '已暫停'}｜Twitch：{'已設定' if self.api else '未設定'}",
                  f"名單：{member} 位成員／{len(rows) - member} 位友台",
                  f"成員每 5 分鐘｜友台每 {s['partner_minutes']} 分鐘",
-                 f"成員 tag：{'開' if s['member_ping'] else '關'}｜友台唔 tag",
+                 f"成員提及：{'開' if s['member_ping'] else '關'}｜友台不提及成員",
                  f"成員：<#{s['member_channel']}>｜友台：<#{s['partner_channel']}>",
-                 '每場一張卡；收台更新原卡，刪除咗嘅卡唔補發。',
-                 '新增／恢復／切換首次檢查只建立基準，唔補發已開台直播。']
+                 '每場一張卡；直播結束時更新原卡，已刪除的卡片不補發。',
+                 '新增／恢復／切換首次檢查只建立基準，不補發已開始的直播。']
         if selected in rows:
             e = rows[selected]
             lines.append(f"\n已選：**{selected}**｜{'成員' if e['group'] == 'member' else '友台'}｜{'啟用' if e['enabled'] else '停用'}")
@@ -509,7 +509,7 @@ class StreamAlerts(commands.Cog):
             return
         await inter.response.send_message(embed=self.embed(), view=StreamAdmin(self), ephemeral=True, allowed_mentions=NONE)
 
-    @app_commands.command(name='stream_demo', description='在測試公告示範直播開台、去重及收台更新原卡')
+    @app_commands.command(name='stream_demo', description='在測試公告示範直播開始、去重及結束時更新原卡')
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)
     async def demo(self, inter: discord.Interaction):
@@ -558,7 +558,7 @@ class StreamAlerts(commands.Cog):
         if channel.guild.id != config.GUILD_ID or channel.permissions_for(inter.guild.default_role).view_channel:
             return await inter.response.send_message('請選擇管理員專用頻道。', ephemeral=True)
         await inter.response.defer(ephemeral=True)
-        message = await channel.send('📺 **直播通知管理**\n成員 5 分鐘／友台 30 分鐘起；每場一張卡，收台更新原卡。\n按鈕只限管理員；名單及設定只會向操作者顯示。',
+        message = await channel.send('📺 **直播通知管理**\n成員 5 分鐘／友台 30 分鐘起；每場一張卡，直播結束時更新原卡。\n按鈕只限管理員；名單及設定只會向操作者顯示。',
                                      view=StreamPanel(self), allowed_mentions=NONE)
         await inter.followup.send(message.jump_url, ephemeral=True)
 
@@ -607,8 +607,8 @@ class StreamDemoSession(StreamAlerts):
     def card(self, login, stream, *, ended=False, vod=None):
         embed, view = super().card(login, stream, ended=ended, vod=vod)
         embed.title = ('【沙盤模擬・成員】' if self.store.state['entries'][login]['group'] == 'member'
-                       else '【沙盤模擬・友台】') + ('已收台' if ended else '開台通知')
-        embed.description = '🧪 **模擬資料，並非實際開台；此測試唔會 tag 人。**\n' + embed.description
+                       else '【沙盤模擬・友台】') + ('直播已結束' if ended else '直播通知')
+        embed.description = '🧪 **模擬資料，並非實際直播；此測試不會提及成員。**\n' + embed.description
         embed.set_image(url=None)
         embed.add_field(name='檢查頻率', value='每 5 分鐘' if self.store.state['entries'][login]['group'] == 'member' else '每 30 分鐘', inline=True)
         return embed, view
@@ -633,9 +633,9 @@ class StreamDemoSession(StreamAlerts):
         links = '｜'.join(f'[第 {i} 張卡](https://discord.com/channels/{config.GUILD_ID}/{self.sandbox.id}/{mid})'
                          for i, mid in enumerate(self.sent_ids, 1))
         return ('🧪 **直播通知沙盤示範**\n'
-                f"狀態：{'已收台（原卡已更新）' if self.ended else '模擬直播中'}｜直播卡 {len(self.sent_ids)} 張｜檢查 {self.checks} 輪\n"
-                '成員 5 分鐘／友台 30 分鐘；沙盤兩類都唔 tag。\n'
-                '「重複檢查」應保持原有卡數；「模擬收台」會改原卡，唔另發收台通知。\n'
+                f"狀態：{'直播已結束（原卡已更新）' if self.ended else '模擬直播中'}｜直播卡 {len(self.sent_ids)} 張｜檢查 {self.checks} 輪\n"
+                '成員 5 分鐘／友台 30 分鐘；兩類模擬通知都不提及成員。\n'
+                '「重複檢查」應保持原有卡數；「模擬直播結束」會改原卡，不另發結束通知。\n'
                 '正式名單／狀態不變；Twitch API 呼叫 0。按鈕有效 20 分鐘。\n' + links)
 
 
@@ -644,14 +644,14 @@ class StreamDemoView(AdminView):
         super().__init__(timeout=1200)
         self.session = session
 
-    @discord.ui.button(label='重複檢查（唔新增卡）', style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label='重複檢查（不新增卡）', style=discord.ButtonStyle.secondary)
     async def repeat(self, inter, button):
         await inter.response.defer()
         async with self.session.lock:
             await self.session.check()
             await inter.edit_original_response(content=self.session.summary(), view=self, allowed_mentions=NONE)
 
-    @discord.ui.button(label='模擬收台（更新原卡）', style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='模擬直播結束（更新原卡）', style=discord.ButtonStyle.primary)
     async def close(self, inter, button):
         await inter.response.defer()
         async with self.session.lock:
