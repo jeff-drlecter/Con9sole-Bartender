@@ -3,6 +3,7 @@ import asyncio
 import time
 import discord
 from core.rss_preferences import OPTIONS, keywords, matches, fixtures, personal_preview
+from core.rss_featured_ui import show_featured
 
 
 class PersonalPanel(discord.ui.View):
@@ -21,6 +22,19 @@ class PersonalPanel(discord.ui.View):
     async def preferences(self,interaction,button):
         pref=await asyncio.to_thread(self.cog.preferences.get,interaction.user.id)
         await interaction.response.send_message('揀完會自動儲存。關鍵字可留空；只影響你嘅私人摘要。',view=PreferencesView(self.cog,interaction.user.id,pref),ephemeral=True)
+
+
+    @discord.ui.button(label='是日精選',custom_id='rss:sandbox:today:v1',row=1)
+    async def today(self,interaction,button):
+        await show_featured(self.cog,interaction,'today')
+
+    @discord.ui.button(label='今個月精選',custom_id='rss:sandbox:month:v1',row=1)
+    async def month(self,interaction,button):
+        await show_featured(self.cog,interaction,'month')
+
+    @discord.ui.button(label='最近熱門',custom_id='rss:sandbox:hot:v1',row=1)
+    async def hot(self,interaction,button):
+        await show_featured(self.cog,interaction,'hot')
 
 
 async def show_news(cog,interaction,demo=False):

@@ -20,6 +20,8 @@ from datetime import datetime
 from core.rss_simulation import scenarios
 from core.rss_preferences import PreferenceStore
 from core.rss_personal_ui import PersonalPanel
+from core.rss_featured import CHART_URL, parse_chart, verified_game
+from core.rss_featured_ui import sections, render_featured
 from core.rss_trial import MAX_BYTES, SOURCES, parse_feed
 from core.storage_paths import DATA_DIR
 
@@ -41,6 +43,8 @@ class RSSDelivery(commands.Cog):
         self.preferences = None
         self.personal_panel = None
         self.panel_checked = False
+        self.chart_ready = False
+        self.feed_ready = False
         self.store = None
         self.session = None
         self.errors = {}
@@ -58,12 +62,15 @@ class RSSDelivery(commands.Cog):
             self.preferences = PreferenceStore(DATA_DIR / 'rss_sandbox_preferences.sqlite3')
             self.personal_panel = PersonalPanel(self)
             self.bot.add_view(self.personal_panel)
+        if self.preferences:
+            self.chart_poll.start()
         self.poll.start()
         self.deliver.start()
 
     async def cog_unload(self):
         if self.personal_panel:
             self.personal_panel.stop()
+        self.chart_poll.cancel()
         self.poll.cancel()
         self.deliver.cancel()
         if self.session:
@@ -88,6 +95,41 @@ class RSSDelivery(commands.Cog):
             except Exception as exc:
                 self.errors[source] = type(exc).__name__ + ": " + str(exc)[:180]
                 log.warning("RSS delivery poll %s: %s", source, self.errors[source])
+
+        self.feed_ready = True
+
+    async def fetch_chart_json(self,url):
+        async with self.session.get(url,max_redirects=3) as response:
+            response.raise_for_status()
+            data=bytearray()
+            async for chunk in response.content.iter_chunked(16384):
+                data.extend(chunk)
+                if len(data)>MAX_BYTES: raise ValueError('chart response too large')
+        return json.loads(data)
+
+    @tasks.loop(hours=6)
+    async def chart_poll(self):
+        try:
+            cached=await asyncio.to_thread(self.preferences.get_chart)
+            now=time.time()
+            if cached and now-cached['fetched']<6*3600: return
+            asof,ranks=parse_chart(await self.fetch_chart_json(CHART_URL),now)
+            rows=[]
+            for row in ranks:
+                app=await self.fetch_chart_json(f"https://store.steampowered.com/api/appdetails?appids={row['appid']}&l=tchinese&cc=hk")
+                item=app.get(str(row['appid']),{})
+                data=item.get('data',{})
+                if item.get('success') and verified_game(data):
+                    rows.append(dict(row,name=data['name'][:200]))
+                if len(rows)==5: break
+            if not rows: raise ValueError('no verified game names in chart')
+            await asyncio.to_thread(self.preferences.put_chart,dict(asof=asof,fetched=now,rows=rows))
+            self.errors.pop('steam_chart',None)
+        except Exception as exc:
+            self.errors['steam_chart']=type(exc).__name__
+            log.warning('Steam chart refresh failed: %s',type(exc).__name__)
+        finally:
+            self.chart_ready=True
 
     @staticmethod
     def render(batch, now, label=""):
@@ -130,6 +172,11 @@ class RSSDelivery(commands.Cog):
             self.errors['digest'] = 'target unavailable, wrong simulation room, public room or missing permissions'
             return
         await self.ensure_personal_panel(channel)
+        if self.preferences and self.digest_config.simulation:
+            await self.publish_featured(channel)
+            local=datetime.fromtimestamp(time.time(),HK)
+            # The three-section digest replaces the old long evening card in sandbox.
+            if local.hour==19 and local.minute<15: return
         try:
             batch = await asyncio.to_thread(self.store.claim_batch, self.digest_config, self.sources, time.time())
         except Exception:
@@ -152,6 +199,7 @@ class RSSDelivery(commands.Cog):
         except Exception:
             log.exception('RSS digest finalization failed; reserved batch will not be resent')
 
+    @chart_poll.before_loop
     @poll.before_loop
     @deliver.before_loop
     async def before_loop(self):
@@ -160,19 +208,45 @@ class RSSDelivery(commands.Cog):
     def personal_panel_text(self):
         return ('🧪 個人情報沙盤\n按「調整偏好」揀平台、商店、內容類型及關鍵字，再按「我的情報」。\n'
                 '結果只畀你睇；偏好會保存。可用「虛構資料試篩選」測試限免／會員／試玩分流。\n'
-                '目前不發個人通知、不改正式訂閱。歡迎直接喺呢度留言回報。')
+                '另有「是日精選」「今個月精選」「最近熱門」；熱門先採用 Steam 官方榜單。\n'
+                '公共精選保留歷史；按鈕結果只畀你睇。目前不發個人通知、不改正式訂閱。')
 
     async def ensure_personal_panel(self,channel):
         if self.panel_checked or not self.preferences or not self.digest_config.simulation: return
         self.panel_checked = True
         try:
-            if not await asyncio.to_thread(self.preferences.claim_panel,channel.id): return
+            if not await asyncio.to_thread(self.preferences.claim_panel,channel.id):
+                status=await asyncio.to_thread(self.preferences.panel_status,channel.id)
+                if status and status[0]=='posted':
+                    message=await channel.fetch_message(status[1])
+                    await message.edit(content=self.personal_panel_text(),view=PersonalPanel(self),allowed_mentions=discord.AllowedMentions.none())
+                return
             message = await channel.send(self.personal_panel_text(),view=PersonalPanel(self),allowed_mentions=discord.AllowedMentions.none())
             await asyncio.to_thread(self.preferences.finish_panel,channel.id,message.id)
             log.info('RSS personal sandbox panel posted: channel=%s message=%s',channel.id,message.id)
         except Exception:
             # Reserve before sending: ambiguous failures must not create repeated panels.
             log.exception('RSS personal panel requires manual verification; admin command can repost')
+
+    async def publish_featured(self,channel):
+        if not self.chart_ready or not self.feed_ready: return
+        now=time.time()
+        local=datetime.fromtimestamp(now,HK)
+        previous=await asyncio.to_thread(self.preferences.latest_featured)
+        if previous and not (local.hour==19 and local.minute<15): return
+        slot=local.date().isoformat()
+        try:
+            results,snapshot=await sections(self,now)
+            if not any(results.values()): return
+            if not await asyncio.to_thread(self.preferences.claim_featured,slot): return
+            # Keep shared historical snapshots; private button previews never post to chat.
+            embeds=[render_featured(kind,rows[:3],now,snapshot,compact=True) for kind,rows in results.items()]
+            message=await channel.send('🧪 精選速覽｜是日・今個月・最近熱門',embeds=embeds,
+                view=PersonalPanel(self),allowed_mentions=discord.AllowedMentions.none())
+            await asyncio.to_thread(self.preferences.finish_featured,slot,message.id)
+            log.info('RSS featured sandbox posted: channel=%s message=%s',channel.id,message.id)
+        except Exception:
+            log.exception('Featured post requires verification; reserved posts are not automatically resent')
 
     async def personal_access(self, interaction):
         channel = self.target_channel()
@@ -201,9 +275,10 @@ class RSSDelivery(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         lines = ["RSS 摘要：" + ("模擬區運行中" if self.sources and self.digest_config.enabled and self.digest_config.simulation else "已啟用" if self.sources and self.digest_config.enabled else "公開派送關閉"),
                  "來源：" + (", ".join(sorted(self.sources)) or "未啟用收集"),
-                 "19:00 每日摘要（最多 8 條）；12:30 只提醒晚間前到期嘅已核實優惠。"]
+                 "19:00 沙盤精選速覽；12:30 只提醒晚間前到期嘅已核實優惠。" if self.digest_config.simulation else "19:00 每日摘要（最多 8 條）；12:30 已核實到期提醒。"]
         if self.preferences:
             lines.append('個人入口：'+str(await asyncio.to_thread(self.preferences.panel_status,self.digest_config.channel_id)))
+            lines.append('共用精選：'+str(await asyncio.to_thread(self.preferences.latest_featured)))
         if self.store:
             for source, state, count in await asyncio.to_thread(self.store.report):
                 lines.append(f"{source} · {state}: {count}")
