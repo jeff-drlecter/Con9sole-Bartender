@@ -43,6 +43,13 @@ def main():
     titles=[embed.get('title','') for embed in message.get('embeds',[])]
     assert all(any(label in title for title in titles) for label in ('是日精選','今個月精選','最近熱門')), 'Missing featured sections'
     print(f"Verified featured snapshot https://discord.com/channels/626378673523785731/{config['channel_id']}/{featured[0]}")
+    with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+        chart=db.execute("SELECT payload FROM featured_cache WHERE name='steam'").fetchone()
+    assert chart, 'No live Steam chart cache'
+    chart=json.loads(chart[0])
+    assert chart['rows'] and time.time()-chart['fetched']<86400, 'Steam chart unavailable or stale'
+    print('Verified live Steam chart games:',[(r['rank'],r['name']) for r in chart['rows']])
+
 
 
 if __name__=='__main__': main()
