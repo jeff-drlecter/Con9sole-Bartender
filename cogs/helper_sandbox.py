@@ -13,6 +13,8 @@ from core.helper_sandbox import ActivityWindow
 from core.helper_detection import DetectionStore,detect_help
 from core.helper_detection_ui import show_pending
 from core.helper_overview import show_overview,example_overview,BackToOverview
+from core.helper_pulse import PulseStore,summarize,fragments
+from zoneinfo import ZoneInfo
 
 log=logging.getLogger(__name__)
 ROOM='helper-模擬區'
@@ -28,15 +30,15 @@ class HelperPanel(discord.ui.View):
 
     async def interaction_check(self,i): return await self.cog.access(i)
 
-    @discord.ui.button(label='開啟 Overview',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary,row=0)
+    @discord.ui.button(label='活動詳情',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary,row=0)
     async def live(self,i,button):
         await show_overview(self.cog,i)
 
     @discord.ui.button(label='睇示例',custom_id='helper:sandbox:create:v1',row=2)
     async def create(self,i,button):
-        await i.response.send_message(embed=example_overview(time.time()),view=BackToOverview(self.cog,i.user.id),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+        await i.response.send_message('【虛構 log 示例】\n20:10 · MH｜💬 3 人、12 則 · 🆘 1 則疑似求助\n20:12 · FC｜🎙️ 1 個 call、4 人\n20:14 · GTA｜🤝 1 則搵隊友',ephemeral=True)
 
-    @discord.ui.button(label='跟進求助',custom_id='helper:sandbox:manage:v1',style=discord.ButtonStyle.success,row=0)
+    @discord.ui.button(label='待接應',custom_id='helper:sandbox:manage:v1',style=discord.ButtonStyle.success,row=0)
     async def manage(self,i,button):
         await show_pending(self.cog,i)
 
@@ -97,6 +99,7 @@ class HelperSandbox(commands.Cog):
         self.bot=bot
         self.enabled=os.getenv('HELPER_SANDBOX','')=='1'
         self.store=None
+        self.pulse=None
         self.channel=None
         self.panel=None
         self.tester_id=None
@@ -106,14 +109,18 @@ class HelperSandbox(commands.Cog):
     async def cog_load(self):
         if not self.enabled: return
         self.store=DetectionStore(DATA_DIR/'helper_sandbox.sqlite3')
+        self.pulse=PulseStore(DATA_DIR/'helper_pulse.sqlite3')
+        await asyncio.to_thread(self.store.set,'pulse_version','1')
         await asyncio.to_thread(self.store.set,'detector_version','1')
         await asyncio.to_thread(self.store.set,'overview_version','1')
         self.panel=HelperPanel(self)
         self.bot.add_view(self.panel)
         self.tick.start()
         self.backfill.start()
+        self.pulse_tick.start()
 
     async def cog_unload(self):
+        self.pulse_tick.cancel()
         self.backfill.cancel()
         self.tick.cancel()
         if self.panel: self.panel.stop()
@@ -145,13 +152,37 @@ class HelperSandbox(commands.Cog):
         title=message.channel.name+'\n' if isinstance(message.channel,discord.Thread) and message.id==message.channel.id else ''
         return title+(message.content or '')
 
-    async def observe_help(self,message):
+    async def observe_help(self,message,emit=True):
         if not self.enabled or not self.store or not message.guild or message.author.bot or not self.help_source(message.channel): return
         if message.reference and message.reference.message_id:
             await asyncio.to_thread(self.store.reply,message.reference.message_id,message.author.id)
         if isinstance(message.channel,discord.Thread) and message.id!=message.channel.id:
             await asyncio.to_thread(self.store.reply,message.channel.id,message.author.id)
         await asyncio.to_thread(self.store.observe,message.id,message.channel.id,message.author.id,message.created_at.timestamp(),detect_help(self.help_text(message)),time.time())
+        if emit and self.pulse and detect_help(self.help_text(message)):
+            row=await asyncio.to_thread(self.store.detection,message.id)
+            if row and row['state'] in {'open','claimed','handoff'}:
+                await self.record_pulse(message,'help')
+
+    def pulse_source(self,channel):
+        if not self.help_source(channel): return False
+        parent=channel.parent if isinstance(channel,discord.Thread) else channel
+        if parent.category is None: return False
+        name=(parent.category.name+' '+parent.name).casefold()
+        return not any(word in name for word in ('admin','管理','hidden','archive','封存','金主','staff','private','私密'))
+
+    async def record_pulse(self,message,kind):
+        if not self.pulse or not self.pulse_source(message.channel): return
+        parent=message.channel.parent if isinstance(message.channel,discord.Thread) else message.channel
+        key=f'{kind}:{message.id}'
+        if kind=='newcomer': key=f'newcomer:{message.author.id}:{int(time.time()//86400)}'
+        await asyncio.to_thread(self.pulse.record,key,time.time(),parent.category_id,message.channel.id,kind,message.author.id,message.id)
+
+    async def record_attention_pulse(self,message):
+        if not self.pulse or not self.pulse_source(message.channel): return
+        for kind in {'lfg','newcomer'}:
+            if any(r['message']==message.id and r['kind']==kind and not (kind=='lfg' and r['replied']) for r in self.window.attention):
+                await self.record_pulse(message,kind)
 
     def observe_attention(self,message):
         if not self.help_source(message.channel) or message.author.bot: return
@@ -188,6 +219,8 @@ class HelperSandbox(commands.Cog):
         if isinstance(message.channel,discord.TextChannel) and self.is_game(message.channel):
             self.window.add(message.channel.id,message.author.id,time.time())
         self.observe_attention(message)
+        await self.record_pulse(message,'chat')
+        await self.record_attention_pulse(message)
         await self.observe_help(message)
 
     @commands.Cog.listener()
@@ -205,6 +238,7 @@ class HelperSandbox(commands.Cog):
     async def on_raw_message_delete(self,payload):
         if self.enabled and self.store and payload.guild_id==config.GUILD_ID:
             self.window.attention_delete(payload.message_id)
+            if self.pulse: await asyncio.to_thread(self.pulse.withdraw,payload.message_id)
             await asyncio.to_thread(self.store.withdraw,payload.message_id,time.time())
 
     @commands.Cog.listener()
@@ -212,6 +246,7 @@ class HelperSandbox(commands.Cog):
         if self.enabled and self.store and payload.guild_id==config.GUILD_ID:
             for message_id in payload.message_ids:
                 self.window.attention_delete(message_id)
+                if self.pulse: await asyncio.to_thread(self.pulse.withdraw,message_id)
                 await asyncio.to_thread(self.store.withdraw,message_id,time.time())
 
     @tasks.loop(count=1)
@@ -225,7 +260,7 @@ class HelperSandbox(commands.Cog):
             if not self.can_read_source(channel,guild.me): continue
             try:
                 messages=[m async for m in channel.history(limit=30,after=after)]
-                for message in reversed(messages): await self.observe_help(message)
+                for message in reversed(messages): await self.observe_help(message,emit=False)
                 scanned+=1
             except discord.HTTPException: continue
         await asyncio.to_thread(self.store.set,'detector_scan',f'{scanned} channels; last 6h / max 30 per channel; active public threads only')
@@ -238,6 +273,17 @@ class HelperSandbox(commands.Cog):
         if before.channel and not any(not m.bot for m in before.channel.members): self.window.voice_started.pop(before.channel.id,None)
         if after.channel and self.is_game(after.channel) and sum(not m.bot for m in after.channel.members)==1:
             self.window.voice_started.setdefault(after.channel.id,now)
+        for category_id in {c.category_id for c in (before.channel,after.channel) if c and c.name!=config.TEMP_VC_HUB_NAME}:
+            await self.record_voice_pulse(member.guild,category_id)
+
+    async def record_voice_pulse(self,guild,category_id):
+        if not self.pulse or category_id not in self.game_categories(guild): return
+        category=guild.get_channel(category_id)
+        if not category or any(w in category.name.casefold() for w in ('admin','管理','hidden','archive','封存','金主','staff')): return
+        occupied=[c for c in guild.voice_channels if c.category_id==category_id and c.name!=config.TEMP_VC_HUB_NAME and any(not m.bot for m in c.members)]
+        people={m.id for c in occupied for m in c.members if not m.bot}
+        now=time.time()
+        await asyncio.to_thread(self.pulse.record,f'voice:{category_id}:{int(now*1000000)}',now,category_id,0,'voice',0,0,dict(rooms=len(occupied),people=len(people)))
 
     async def access(self,i):
         valid=(self.enabled and self.channel is not None and i.guild_id==config.GUILD_ID and i.channel_id==self.channel.id
@@ -290,11 +336,60 @@ class HelperSandbox(commands.Cog):
         else: await self.refresh()
 
     async def demo_embed(self):
-        embed=discord.Embed(title='🧭 Helper Overview｜沙盤',description='一個畫面睇求助、傾計、開 call 同值得接應嘅成員。')
-        embed.add_field(name='開啟 Overview',value='先顯示需要接應，再列最近活動。按「刷新」更新同一個畫面。',inline=False)
-        embed.add_field(name='跟進求助',value='自動留意吹水／討論區訊息，按原訊息入去幫手；毋須成員開單。',inline=False)
-        embed.set_footer(text='Helpers / Tester 可用 · 按原有權限顯示 · 未啟用通知')
+        embed=discord.Embed(title='🧭 Helper 活動 log｜沙盤',description='活動會直接貼喺下面，睇未讀就知邊區有人。')
+        embed.add_field(name='簡單睇脈膊',value='約每 2 分鐘合併：傾計、疑似求助、搵隊友、新加入成員發言、call 人數。\n冇活動就唔出；想跟進先按「待接應」。',inline=False)
+        embed.set_footer(text='只列遊戲區／類型／人數 · 唔轉貼聊天原文 · 無 ping')
         return embed
+
+    async def publish_pulse(self):
+        if not self.pulse or not self.channel: return
+        guild=self.channel.guild
+        if self.channel.permissions_for(guild.default_role).view_channel: return
+        batch=await asyncio.to_thread(self.pulse.claim,time.time())
+        if not batch: return
+        try:
+            valid=[]
+            for event in batch['events']:
+                category=guild.get_channel(event['category'])
+                if not category or event['category'] not in self.game_categories(guild): continue
+                if any(w in category.name.casefold() for w in ('admin','管理','hidden','archive','封存','金主','staff')): continue
+                if event['kind']!='voice':
+                    source=self.bot.get_channel(event['channel']) or guild.get_thread(event['channel'])
+                    if not self.pulse_source(source): continue
+                    if event['kind']=='help':
+                        row=await asyncio.to_thread(self.store.detection,event['message'])
+                        if not row or row['state'] not in {'open','claimed','handoff'}: continue
+                valid.append(event)
+            lines=[]
+            groups=summarize(valid)
+            for category_id,group in groups:
+                category=guild.get_channel(category_id)
+                label=discord.utils.escape_markdown(category.name[:40])
+                at=datetime.fromtimestamp(group['at'],ZoneInfo('Asia/Hong_Kong')).strftime('%H:%M')
+                line=f'{at} · **{label}**｜'+' · '.join(fragments(group))
+                if len('\n'.join(lines+[line]))>1750: break
+                lines.append(line)
+            if len(lines)<len(groups): lines.append(f'另有 {len(groups)-len(lines)} 個遊戲區有活動。')
+            if not lines:
+                await asyncio.to_thread(self.pulse.finish,batch['bucket'],'skipped')
+                return
+            message=await self.channel.send('\n'.join(lines),allowed_mentions=discord.AllowedMentions.none())
+            await asyncio.to_thread(self.pulse.finish,batch['bucket'],'sent',message.id)
+            await asyncio.to_thread(self.store.set,'pulse_latest',message.id)
+            log.info('Helper pulse log posted: channel=%s message=%s',self.channel.id,message.id)
+        except Exception as exc:
+            await asyncio.to_thread(self.pulse.finish,batch['bucket'],'uncertain',0,type(exc).__name__)
+            log.exception('Helper pulse send uncertain; not automatically resent')
+
+    @tasks.loop(minutes=1)
+    async def pulse_tick(self):
+        try:
+            if not self.channel: return
+            if await asyncio.to_thread(self.store.reserve,'pulse_intro_v1'):
+                message=await self.channel.send('🟢 **Helper 活動 log 開始試行**\n之後有新活動會直接貼喺呢度；約每 2 分鐘合併，冇活動唔出。\n只記錄已納入遊戲區嘅活動概況，唔轉貼聊天原文。',allowed_mentions=discord.AllowedMentions.none())
+                await asyncio.to_thread(self.store.set,'pulse_intro_v1',message.id)
+            await self.publish_pulse()
+        except Exception: log.exception('Helper pulse loop needs inspection')
 
     def live_embed(self,member):
         guild=member.guild
@@ -351,6 +446,7 @@ class HelperSandbox(commands.Cog):
             else: await self.refresh()
         except Exception: log.exception('Helper sandbox needs inspection')
 
+    @pulse_tick.before_loop
     @backfill.before_loop
     @tick.before_loop
     async def ready(self): await self.bot.wait_until_ready()
