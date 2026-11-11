@@ -388,6 +388,7 @@ for section, items in SECTION_MENU_ITEMS.items():
 
 
 ADMIN_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("stream_admin", "直播名單", "📺", "secondary", "admin", 3, "StreamAlerts", admin_only=True),
     MenuItem("platform_invites", "平台邀請連結", "🔗", "secondary", "admin", 3, "Invites", "platform_entry", admin_only=True),
     MenuItem("permission_audit", "權限審核", "🔍", "secondary", "admin", 2, "PermissionAudit", admin_only=True),
     MenuItem("title_roles_admin", "稱號管理", "🏅", "secondary", "admin", 2, "TitleRoles", "admin_entry", admin_only=True),
