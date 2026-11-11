@@ -1,6 +1,6 @@
 # RSS digest preparation (PR #118)
 
-Draft, not deployed or enabled. MonitoRSS remains the production publisher.
+Private simulation deployment is configured; MonitoRSS remains the production publisher.
 This replaces the draft's per-article delivery loop with one combined digest.
 
 ## Reader experience
@@ -22,6 +22,10 @@ This replaces the draft's per-article delivery loop with one combined digest.
   browsing are future extensions, not implemented features.
 
 ## Configuration and preview
+
+`simulation: true` (the default) uses a separate `rss_simulation.sqlite3` database,
+labels every scheduled post as simulation and requires a private channel named
+`rss-模擬區`. Production delivery requires an explicit future configuration change.
 
 `RSS_DELIVERY_SOURCES` selects the existing collectors: `ps,xbox,4gamers`.
 Empty means no collection or publishing. Steam and Epic adapters are not yet built.
@@ -132,3 +136,24 @@ Rollback: set `enabled:false`, restart and verify no public delivery, then resto
 original MonitoRSS connections. Retain both SQLite databases. Before resuming a
 future cutover, reconcile pending articles against MonitoRSS output; do not delete
 state to force retries. This is a prepared draft, not automatic failover.
+
+## Private simulation workspace
+
+Channel: https://discord.com/channels/626378673523785731/1570054214850183289
+Only administrators and the existing Bartender bot were admitted. The channel is
+inside the existing test category, retaining its own private permission overrides.
+`fly.toml` selects `docs/rss_simulation.json`, which enables scheduled output only
+in this private destination. No MonitoRSS connection is disabled.
+
+`/rss_simulate` is administrator-only and must be invoked in the configured private
+channel. It posts a read-only real-news snapshot (including the initial baseline),
+then fictional digest/reminder examples and a six-check report. Fixtures use a
+disposable database, do not seed real offer metadata, and do not consume the
+scheduled queue. Repeated manual runs are limited to once per minute. Scheduled
+simulation remains 19:00 digest / qualifying 12:30 reminder; there is no automatic
+production promotion after tests pass.
+
+Acceptance before replacement: inspect actual rendering; verify source fetching,
+keyword outcomes, deduplication, deadline classification, scheduled runs and restart
+behavior. Steam/Epic automated offer collectors and a real destination decision
+remain open. Passing synthetic checks alone is not full migration acceptance.

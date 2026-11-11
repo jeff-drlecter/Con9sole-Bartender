@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "simulation": true,
+  "channel_id": 1570054214850183289,
+  "max_items": 8,
+  "include_any": [],
+  "exclude_any": ["手遊", "周邊商品"],
+  "boost_any": ["限免", "免費領取", "Game Pass", "PlayStation Plus", "跨平台", "EA SPORTS FC", "NBA 2K"],
+  "offers": {}
+}

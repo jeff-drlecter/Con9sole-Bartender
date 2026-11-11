@@ -40,6 +40,7 @@ def identity(article):
 class DigestConfig:
     channel_id: int = 0
     enabled: bool = False
+    simulation: bool = True
     max_items: int = 8
     include_any: list[str] = field(default_factory=list)
     exclude_any: list[str] = field(default_factory=list)
@@ -51,7 +52,7 @@ class DigestConfig:
         if not isinstance(data, dict) or set(data) - set(cls.__dataclass_fields__):
             raise ValueError('unknown digest configuration fields')
         c = cls(**data)
-        if type(c.enabled) is not bool or type(c.channel_id) is not int or c.channel_id < 0:
+        if type(c.simulation) is not bool or type(c.enabled) is not bool or type(c.channel_id) is not int or c.channel_id < 0:
             raise ValueError('invalid enabled/channel_id')
         if c.enabled and not c.channel_id:
             raise ValueError('enabled digest requires a destination channel')
@@ -134,14 +135,15 @@ class DigestStore(DeliveryStore):
             db.execute('INSERT OR IGNORE INTO baseline VALUES (?)',(source,))
         return added
 
-    def select(self,db,kind,config,sources,now):
+    def select(self,db,kind,config,sources,now,snapshot=False):
         if kind == 'digest':
-            rows = [dict(r) for r in db.execute("SELECT * FROM articles WHERE state='pending' AND published>=? AND published<=? ORDER BY published DESC,source,key",(now-86400,now+300))]
+            states = "('pending','baseline','sent')" if snapshot else "('pending')"
+            rows = [dict(r) for r in db.execute("SELECT * FROM articles WHERE state IN "+states+" AND published>=? AND published<=? ORDER BY published DESC,source,key",(now-86400,now+300))]
         else:
             if not config.offers: return []
             marks = ','.join('?' for _ in config.offers)
             rows = [dict(r) for r in db.execute("SELECT * FROM articles WHERE state IN ('pending','sent') AND link IN ("+marks+") ORDER BY published DESC,source,key",tuple(config.offers))]
-        seen = {r[0] for r in db.execute('SELECT identity FROM digest_seen')} if kind=='digest' else set()
+        seen = {r[0] for r in db.execute('SELECT identity FROM digest_seen')} if kind=='digest' and not snapshot else set()
         reminded = {r[0] for r in db.execute('SELECT url FROM digest_reminded')}
         if kind=='reminder': seen.update(reminded)
         ranked = []
@@ -153,7 +155,7 @@ class DigestStore(DeliveryStore):
             offer=config.offers.get(canonical_url(a['link']))
             if offer and offer['deadline'] <= now: continue
             if kind=='digest':
-                if a['state'] != 'pending' or a['published'] < now-86400 or a['published'] > now+300: continue
+                if (not snapshot and a['state'] != 'pending') or a['published'] < now-86400 or a['published'] > now+300: continue
             else:
                 if not offer or offer['kind']=='f2p' or not now < offer['deadline'] <= evening: continue
                 if canonical_url(a['link']) in reminded: continue
@@ -185,9 +187,9 @@ class DigestStore(DeliveryStore):
             if len(selected)>=min(config.max_items,4 if kind=='reminder' else 8): break
         return selected
 
-    def preview(self, config, sources, now, kind='digest'):
+    def preview(self, config, sources, now, kind='digest', snapshot=False):
         with self.connect() as db:
-            return self.select(db,kind,config,sources,now)
+            return self.select(db,kind,config,sources,now,snapshot=snapshot)
 
     def claim_batch(self, config, sources, now):
         current=slot(now)

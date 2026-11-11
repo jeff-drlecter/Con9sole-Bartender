@@ -22,6 +22,23 @@ class DigestTests(unittest.TestCase):
     def a(self,key,**changes):
         return dict(dict(key=key,title='Important gaming news '+key,summary='PC gameplay update',link='https://example.com/'+key,published=ts(hour=11)),**changes)
 
+    def test_snapshot_is_readonly_and_includes_baseline(self):
+        store=DigestStore(Path(self.tmp.name)/'fresh.db')
+        store.ingest('ps',[self.a('baseline')],ts(hour=11))
+        self.assertEqual(store.preview(self.config,{'ps'},ts()),[])
+        snap=store.preview(self.config,{'ps'},ts(),snapshot=True)
+        self.assertEqual(len(snap),1)
+        self.assertEqual(store.batch_report(),[])
+        self.assertEqual(store.report(),[('ps','baseline',1)])
+
+    def test_fictional_scenarios_are_isolated_and_pass(self):
+        from core.rss_simulation import scenarios
+        before=self.store.report()
+        result=scenarios(ts())
+        self.assertTrue(all(result['checks'].values()),result['checks'])
+        self.assertEqual(self.store.report(),before)
+        self.assertTrue(all('虛構' in a['title'] for a in result['digest']['articles']))
+
     def test_schedule_and_no_catchup(self):
         self.assertEqual(slot(ts())[1],'digest')
         self.assertEqual(slot(ts(hour=12,minute=30))[1],'reminder')

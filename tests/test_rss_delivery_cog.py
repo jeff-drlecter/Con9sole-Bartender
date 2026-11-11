@@ -18,15 +18,18 @@ from core.rss_digest import DigestStore, DigestConfig, HK
 from datetime import datetime
 
 class Channel:
-    guild = SimpleNamespace(id=config.GUILD_ID, me=object())
+    guild = SimpleNamespace(id=config.GUILD_ID, me=object(), default_role=object())
+    name = "rss-模擬區"
+    public = False
     error = None
     sent = 0
     def permissions_for(self, member):
-        return SimpleNamespace(view_channel=True, send_messages=True, embed_links=True)
-    async def send(self, **kwargs):
+        return SimpleNamespace(view_channel=self.public if member is self.guild.default_role else True, send_messages=True, embed_links=True)
+    async def send(self, *args, **kwargs):
         assert kwargs['allowed_mentions'].everyone is False
-        assert len(kwargs['embed']) <= 6000
-        assert all(len(f.value)<=1024 for f in kwargs['embed'].fields)
+        if 'embed' in kwargs:
+            assert len(kwargs['embed']) <= 6000
+            assert all(len(f.value)<=1024 for f in kwargs['embed'].fields)
         if self.error: raise self.error
         self.sent += 1
         return SimpleNamespace(id=123)
@@ -55,6 +58,13 @@ async def main():
         cog.store.ingest('ps',[],now)
         def article(key): return dict(key=key,title='news',summary='body',link='https://example.com/'+key,published=now)
         with patch('cogs.rss_delivery.discord.TextChannel', Channel), patch('cogs.rss_delivery.time.time', return_value=now) as clock:
+            channel.public = True
+            assert cog.target_channel() is None
+            channel.public = False
+            channel.name = 'production-news'
+            assert cog.target_channel() is None
+            channel.name = 'rss-模擬區'
+            assert cog.target_channel() is channel
             cog.store.ingest('ps',[article('one')],now)
             await cog.deliver.coro(cog)
             assert ('ps','sent',1) in cog.store.report()
@@ -74,6 +84,16 @@ async def main():
             channel.error = discord.HTTPException(SimpleNamespace(status=429,reason='rate limit'), 'slow down')
             await cog.deliver.coro(cog)
             assert cog.store.batch_report()[0][1] == 'retry'
+            channel.error = None
+            async def noop(*args, **kwargs): pass
+            interaction = SimpleNamespace(channel_id=123,response=SimpleNamespace(defer=noop),followup=SimpleNamespace(send=noop))
+            before = channel.sent
+            await RSSDelivery.simulate.callback(cog,interaction)
+            assert channel.sent >= before+3
+            before = channel.sent
+            await RSSDelivery.simulate.callback(cog,interaction)
+            assert channel.sent == before  # manual command cooldown
+
 asyncio.run(main())
 '''], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

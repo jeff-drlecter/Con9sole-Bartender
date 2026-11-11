@@ -17,6 +17,7 @@ import config
 from core.rss_delivery import enabled_sources
 from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, excerpt, display_link
 from datetime import datetime
+from core.rss_simulation import scenarios
 from core.rss_trial import MAX_BYTES, SOURCES, parse_feed
 from core.storage_paths import DATA_DIR
 
@@ -38,11 +39,13 @@ class RSSDelivery(commands.Cog):
         self.store = None
         self.session = None
         self.errors = {}
+        self.last_simulation = 0
+        self.simulation_lock = asyncio.Lock()
 
     async def cog_load(self):
         if not self.sources:
             return
-        self.store = DigestStore(DATA_DIR / "rss_delivery.sqlite3")
+        self.store = DigestStore(DATA_DIR / ("rss_simulation.sqlite3" if self.digest_config.simulation else "rss_delivery.sqlite3"))
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25),
                                             headers={"User-Agent": "Con9sole-Bartender RSS/1.0"},
                                             cookie_jar=aiohttp.DummyCookieJar(), trust_env=False)
@@ -76,9 +79,10 @@ class RSSDelivery(commands.Cog):
                 log.warning("RSS delivery poll %s: %s", source, self.errors[source])
 
     @staticmethod
-    def render(batch, now):
+    def render(batch, now, label=""):
         reminder = batch['kind'] == 'reminder'
         title = ('⏰ 今日到期提醒' if reminder else '🎮 今日遊戲情報')
+        title = (label + '｜' if label else '') + title
         title += '｜' + datetime.fromtimestamp(now, HK).strftime('%m/%d')
         embed = discord.Embed(title=title)
         for article in batch['articles']:
@@ -96,17 +100,23 @@ class RSSDelivery(commands.Cog):
         embed.set_footer(text='來源內容節錄 · 香港時間 · 非即時逐篇推送')
         return embed
 
+    def target_channel(self):
+        channel = self.bot.get_channel(self.digest_config.channel_id)
+        if channel is None or not isinstance(channel, discord.TextChannel) or channel.guild.id != config.GUILD_ID or channel.guild.me is None:
+            return None
+        if self.digest_config.simulation:
+            if channel.name != 'rss-模擬區' or channel.permissions_for(channel.guild.default_role).view_channel:
+                return None
+        permissions = channel.permissions_for(channel.guild.me)
+        return channel if permissions.view_channel and permissions.send_messages and permissions.embed_links else None
+
     @tasks.loop(minutes=1)
     async def deliver(self):
         if not self.digest_config.enabled:
             return
-        channel = self.bot.get_channel(self.digest_config.channel_id)
-        if channel is None or not isinstance(channel, discord.TextChannel) or channel.guild.id != config.GUILD_ID or channel.guild.me is None:
-            self.errors['digest'] = 'target channel unavailable'
-            return
-        permissions = channel.permissions_for(channel.guild.me)
-        if not (permissions.view_channel and permissions.send_messages and permissions.embed_links):
-            self.errors['digest'] = 'missing View Channel / Send Messages / Embed Links'
+        channel = self.target_channel()
+        if channel is None:
+            self.errors['digest'] = 'target unavailable, wrong simulation room, public room or missing permissions'
             return
         try:
             batch = await asyncio.to_thread(self.store.claim_batch, self.digest_config, self.sources, time.time())
@@ -117,7 +127,7 @@ class RSSDelivery(commands.Cog):
             return
         outcome, detail = 'sent', ''
         try:
-            message = await channel.send(embed=self.render(batch, time.time()), allowed_mentions=discord.AllowedMentions.none())
+            message = await channel.send(embed=self.render(batch, time.time(), '🧪 模擬' if self.digest_config.simulation else ''), allowed_mentions=discord.AllowedMentions.none())
             detail = str(message.id)
         except discord.HTTPException as exc:
             outcome = 'retry' if exc.status == 429 else 'uncertain' if exc.status >= 500 else 'failed'
@@ -141,7 +151,7 @@ class RSSDelivery(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def status(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        lines = ["RSS 摘要：" + ("已啟用" if self.sources and self.digest_config.enabled else "公開派送關閉"),
+        lines = ["RSS 摘要：" + ("模擬區運行中" if self.sources and self.digest_config.enabled and self.digest_config.simulation else "已啟用" if self.sources and self.digest_config.enabled else "公開派送關閉"),
                  "來源：" + (", ".join(sorted(self.sources)) or "未啟用收集"),
                  "19:00 每日摘要（最多 8 條）；12:30 只提醒晚間前到期嘅已核實優惠。"]
         if self.store:
@@ -171,6 +181,35 @@ class RSSDelivery(commands.Cog):
             return
         await interaction.followup.send(embed=self.render({'kind':'digest','articles':articles}, now),
                                         ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name="rss_simulate", description="在私人 RSS 模擬區測試真實新聞版面、篩選及到期提醒")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def simulate(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        channel = self.target_channel()
+        if not self.digest_config.simulation or channel is None or interaction.channel_id != self.digest_config.channel_id or not self.store:
+            await interaction.followup.send("只可喺已設定嘅私人 rss-模擬區使用。",ephemeral=True)
+            return
+        async with self.simulation_lock:
+            now = time.time()
+            if now-self.last_simulation < 60:
+                await interaction.followup.send("請等一分鐘先再試。",ephemeral=True)
+                return
+            self.last_simulation = now
+            articles = await asyncio.to_thread(self.store.preview,self.digest_config,self.sources,now,snapshot=True)
+            if articles:
+                await channel.send(embed=self.render({'kind':'digest','articles':articles},now,'🧪 模擬・真實新聞快照'),allowed_mentions=discord.AllowedMentions.none())
+            result = await asyncio.to_thread(scenarios,now)
+            for kind, at in (('digest',result['evening']),('reminder',result['midday'])):
+                await channel.send(embed=self.render(result[kind],at,'🧪 虛構範例・'+('19:00' if kind=='digest' else '12:30')),allowed_mentions=discord.AllowedMentions.none())
+            lines = ['🧪 模擬測試結果（虛構資料）']
+            lines += [('✅ ' if passed else '❌ ')+name for name,passed in result['checks'].items()]
+            lines.append('真實新聞快照：'+str(len(articles))+' 條；模擬不會消耗正式佇列。')
+            lines.append('MonitoRSS 繼續派送；未正式取代。')
+            await channel.send('\n'.join(lines),allowed_mentions=discord.AllowedMentions.none())
+            await interaction.followup.send('模擬完成，結果已貼喺呢個私人頻道。',ephemeral=True)
 
 
 async def setup(bot):
