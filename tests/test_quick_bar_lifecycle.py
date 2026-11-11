@@ -72,6 +72,7 @@ asyncio.run(run())
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "RSS_TRIAL_STOP": "1",
                     "RSS_DELIVERY_SOURCES": "",
+                    "RSS_DIGEST_CONFIG": "",
                 }
             )
             result = subprocess.run(
@@ -88,4 +89,4 @@ asyncio.run(run())
         self.assertEqual(report["missing"], [])
         self.assertTrue(report["sweeper_restarted"])
         self.assertTrue(report["maintenance_restarted"])
-        self.assertEqual(report["command_count"], 43)
+        self.assertEqual(report["command_count"], 44)
