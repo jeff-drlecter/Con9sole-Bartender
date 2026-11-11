@@ -123,6 +123,14 @@ async def main():
         assert await cog.personal_access(i)
         panel=PersonalPanel(cog)
         assert panel.is_persistent()
+        assert len(panel.children)==5
+        from core.rss_featured_ui import render_featured
+        import time
+        worst=[dict(title='*'*1000,link='https://example.com/'+('x'*470),published=time.time(),reason='更新',offer=None)]*5
+        cards=[render_featured(kind,worst,time.time(),compact=True) for kind in ('today','month')]
+        cards.append(render_featured('hot',[],time.time(),compact=True))
+        assert sum(len(c) for c in cards)<6000
+        assert all(len(c.description)<=1500 for c in cards)
         view=PreferencesView(cog,1,DEFAULT)
         assert len(view.children)==6
         assert await view.interaction_check(i)
@@ -144,6 +152,16 @@ async def main():
         await show_news(cog,i)
         assert i.followup.send.call_args.kwargs['embed'] is None
         KeywordModal(cog,1,DEFAULT)
+        cog.chart_ready=cog.feed_ready=True
+        now=time.time()
+        cog.preferences.put_chart(dict(asof=now,fetched=now,rows=[dict(rank=1,appid=730,name='Counter-Strike 2')]))
+        channel.id=123
+        channel.send=AsyncMock(return_value=SimpleNamespace(id=456))
+        await cog.publish_featured(channel)
+        await cog.publish_featured(channel)
+        assert channel.send.await_count==1
+        assert len(channel.send.call_args.kwargs['embeds'])==3
+        assert cog.preferences.latest_featured()[1:] == ('posted',456)
 asyncio.run(main())
 '''],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

@@ -189,3 +189,40 @@ Acceptance: two testers save different preferences, reopen after restart, confir
 private independent results, check PC+Epic+keep yields only the fictional Epic
 claim, verify exclusion takes precedence, and confirm live preview leaves delivery
 state unchanged. No automatic production promotion.
+
+## Calendar highlights and recent popular games (sandbox)
+
+The persistent panel now includes 是日精選 / 今個月精選 / 最近熱門.
+Button results are private and respect member preferences. Shared short snapshots
+remain in channel history for future testers. One initial snapshot is posted once
+feeds and the chart refresh have finished; subsequent snapshots are posted in the
+19:00–19:14 HKT window, at most once per calendar date. These replace the old long
+19:00 card in simulation only. The 12:30 verified-offer reminder is unchanged.
+Reservations prevent automatic duplicate posts after an ambiguous send failure.
+
+Today uses Hong Kong midnight through now; month uses the first day of the current
+Hong Kong month through now. Month selection can include older collected items
+without admitting them into the normal daily delivery queue. The UI explicitly
+says coverage is only the collected portion of the month. Exact URL/title aliases
+are merged, administrator exclusions still apply, and verified expired offers are
+removed. Selection favors verified offers, membership updates, updates/co-op and
+configured interest keywords; it is an editorial rule, not popularity measurement.
+No positive score means no highlight filler. Public cards show at most three rows
+per section; private views show at most five. Known dates and deadlines are shown.
+
+Recent popular games use Valve's official Most Played chart service:
+https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/
+with title/type verification through Steam's appdetails endpoint. Top entries of
+type `game` retain their original chart ranks; identified modeling/design/photo
+editing/utility genres are omitted even when Steam labels them as games. This is
+explicitly Steam/PC coverage, not a PS/Xbox or all-industry ranking. It is not a
+free-games list. The rollup date and retrieval time are displayed along with
+https://store.steampowered.com/charts/mostplayed . Valve explains the chart views at
+https://store.steampowered.com/news/posts/?enddate=1666727642&feed=steam_blog .
+
+Chart refresh is every six hours, responses are bounded to 2 MiB, only the first
+ten ranked app records are looked up, and the first five verified games are kept.
+The last successful cache survives restart; retrieval older than 24h or source
+rollups older than seven days are not presented as current. Source failure never
+falls back to newest RSS articles as a fabricated popularity ranking. These
+public Steam endpoints are schema-validated but not guaranteed stable.

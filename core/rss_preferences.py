@@ -33,6 +33,30 @@ class PreferenceStore(DeliveryStore):
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS preferences (user_id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS panels (channel_id INTEGER PRIMARY KEY, state TEXT, message_id INTEGER)')
+            db.execute('CREATE TABLE IF NOT EXISTS featured_posts (slot TEXT PRIMARY KEY, state TEXT, message_id INTEGER)')
+            db.execute('CREATE TABLE IF NOT EXISTS featured_cache (name TEXT PRIMARY KEY, payload TEXT)')
+
+    def get_chart(self):
+        with self.connect() as db:
+            row=db.execute("SELECT payload FROM featured_cache WHERE name='steam'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put_chart(self,snapshot):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO featured_cache VALUES ('steam',?)",(json.dumps(snapshot),))
+
+    def latest_featured(self):
+        with self.connect() as db:
+            row=db.execute('SELECT slot,state,message_id FROM featured_posts ORDER BY slot DESC LIMIT 1').fetchone()
+        return tuple(row) if row else None
+
+    def claim_featured(self,slot):
+        with self.connect() as db:
+            return db.execute("INSERT OR IGNORE INTO featured_posts VALUES (?, 'reserved', NULL)",(slot,)).rowcount==1
+
+    def finish_featured(self,slot,message_id):
+        with self.connect() as db:
+            db.execute("UPDATE featured_posts SET state='posted',message_id=? WHERE slot=?",(message_id,slot))
 
     def claim_panel(self,channel_id):
         with self.connect() as db:
