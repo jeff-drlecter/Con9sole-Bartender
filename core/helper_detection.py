@@ -13,9 +13,9 @@ def detect_help(content):
     resolved=r'已經?解決|已解決|搞掂(?!未)|解決咗|唔使幫|不用幫|唔洗幫|問題解決|fixed it|solved it|never mind|nvm'
     if re.search(resolved,text): return None
     if re.search(r'有咩(?:可以)?幫(?:手|到)|有什麼(?:可以)?幫|我(?:可以|嚟|來)幫|let me help|happy to help|can i help',text): return None
-    if re.search(r'求助|求救|救命|幫幫手|幫下手|幫吓手|幫我|幫忙|請教|求教|need (?:some )?help|can (?:anyone|someone|you) help',text): return '明確求助用語'
-    if re.search(r'點樣|點先可以|點解|點搞|點整|有[冇無沒]人(?:識|知|知道)|想問|請問|如何|怎[麼樣]|how (?:do|can|to)|anyone know',text): return '詢問方法／原因'
-    if re.search(r'搞唔掂|唔識|唔知點|入唔到|連唔到|開唔到|玩唔到|登入唔到|連線失敗|閃退|卡住|無法(?:登入|連線|啟動)|can.t (?:connect|launch|login|log in)|keeps? crashing',text): return '遇到操作／連線困難'
+    if re.search(r'求助|求救|求帶|救命|有[冇無沒]人.{0,12}(?:幫|救)|可[唔不]可以.{0,12}幫|help (?:me|please|pls)|(?:pls|please) help|幫幫手|幫下手|幫吓手|幫我|幫忙|請教|求教|need (?:some )?help|can (?:anyone|someone|you) help',text): return '明確求助用語'
+    if re.search(r'點樣|點先可以|點解|點搞|點整|點(?:升|加|入|用|打|拎|攞|開|配|連|玩)|有[冇無沒]人(?:識|知|知道)|想問|請問|如何|怎[麼樣]|how (?:do|can|to)|anyone know',text): return '詢問方法／原因'
+    if re.search(r'搞唔掂|打唔過|打唔贏|過唔到|卡關|唔識|唔知點|入唔到|連唔到|開唔到|玩唔到|登入唔到|連線失敗|閃退|卡住|無法(?:登入|連線|啟動)|can.t (?:connect|launch|login|log in)|keeps? crashing',text): return '遇到操作／連線困難'
     return None
 
 

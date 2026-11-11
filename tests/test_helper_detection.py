@@ -8,7 +8,7 @@ from core.helper_detection import detect_help,DetectionStore
 
 class DetectionTests(unittest.TestCase):
     def test_cantonese_english_help_vs_chatter_and_quotes(self):
-        for text in ['MH 連唔到朋友個場，有冇人知點搞？','請問點樣配裝？','求助 PS5 開唔到','need help with this boss','How do I join my friend?','唔識搞，幫幫手','個game不停閃退']:
+        for text in ['MH 連唔到朋友個場，有冇人知點搞？','請問點樣配裝？','求助 PS5 開唔到','need help with this boss','How do I join my friend?','唔識搞，幫幫手','個game不停閃退','點配裝？','有冇人可以幫手？','help pls','隻boss打唔過']:
             self.assertIsNotNone(detect_help(text),text)
         for text in ['有冇人今晚打機？','有人開call嗎？','我可以幫你','搞掂咗，唔使幫啦','fixed it thanks','> 求助 點樣配裝\n我可以幫你','```need help```','https://example.com/how-to-play','呢個好好玩？']:
             self.assertIsNone(detect_help(text),text)
