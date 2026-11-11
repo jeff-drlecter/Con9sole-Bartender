@@ -18,6 +18,19 @@ class RSSTrialTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_feed(bad)
 
+    def test_html_response_does_not_establish_baseline(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = TrialStore(Path(d) / "trial.db")
+            with self.assertRaises(ValueError):
+                parse_feed(b'<!DOCTYPE html><html><title>4Gamers</title></html>')
+            store.record("4gamers", [], status="ValueError: prohibited XML declaration")
+            store.record("4gamers", [self.article()])
+            self.assertIn(("4gamers", "baseline", 1), store.report()["decisions"])
+            store.record("4gamers", [], status="TimeoutError")
+            self.assertEqual(store.report()["last_errors"], [("4gamers", "TimeoutError")])
+            store = TrialStore(Path(d) / "trial.db")
+            self.assertEqual(store.record("4gamers", [self.article()]), 0)
+
     def test_filters_are_any_and_case_sensitive(self):
         a = self.article()
         self.assertEqual(decision("4gamers", a, 100001), "filtered")
