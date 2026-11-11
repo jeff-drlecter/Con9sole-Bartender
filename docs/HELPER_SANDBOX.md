@@ -87,3 +87,34 @@ bounded observation and does not establish that nobody responded elsewhere.
 The `睇示例` button opens a clearly fictional four-section card, never inserts
 fake requests/activity into the live queue, and allows returning to the real
 Overview. This supports mobile layout testing even when the server is quiet.
+
+## Primary experience: server pulse log
+
+The shared sandbox now publishes short chronological activity logs automatically,
+so Helpers can scan unread messages without opening a dashboard. Existing private
+Overview and source-permission-filtered help actions are secondary controls.
+The public entry is retitled `Helper 活動 log`; its previous message/history remain.
+
+Approximately two-minute event windows (dispatched by a one-minute loop) combine
+chat participants/message counts, suspected-help counts, explicit LFG counts,
+recently joined speakers, and latest occupied call/participant counts per game
+category. Multiple joins/leaves are folded into the latest category occupancy;
+entering a hub alone does not create a false call-ended event. Human messages only,
+no mentions, and no empty digests. Startup posts one clearly labeled launch note.
+Old detection backfill does not generate activity logs. Unsent activity older than
+15 minutes is dropped rather than dumped after downtime. Reserved sends are not
+automatically replayed if their delivery outcome is uncertain.
+
+This shared log intentionally gives Helpers/Testers aggregate awareness across
+eligible community game areas independently of which game roles they selected.
+It contains category names, activity kinds and counts, **no usernames, message
+excerpts, private-thread content, or audio**. Private/staff/admin/hidden/archive/
+patron channel/category names are excluded. Help source links/content remain in
+the private, per-viewer permission-checked interface. No original access permissions
+are expanded. The shared metadata visibility is different from the private Overview.
+
+Events contain IDs/count metadata only in `helper_pulse.sqlite3`, capped at 10,000
+records and 24 hours; batch reservations last seven days. Posted Discord logs stay
+in channel history for late-joining testers. Source deletion removes unsent event
+references. Maximum output length is bounded; very large windows summarize any
+remaining active categories rather than flooding the room.

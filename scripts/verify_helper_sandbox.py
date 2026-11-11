@@ -33,21 +33,31 @@ def main():
         assert allowed & 1024 and allowed & 65536, 'Helper/Tester view/history missing'
     for _ in range(24):
         message=get(f"channels/{settings['channel']}/messages/{settings['panel']}")
-        if message.get('embeds') and 'Helper Overview' in message['embeds'][0].get('title',''): break
+        if message.get('embeds') and 'Helper 活動 log' in message['embeds'][0].get('title',''): break
         time.sleep(5)
     else: raise RuntimeError('Automatic detection panel was not refreshed')
     ids={c.get('custom_id') for row in message.get('components',[]) for c in row.get('components',[])}
     expected={f'helper:sandbox:{key}:v1' for key in ('live','create','manage','duty','history')}
     assert expected<=ids, 'Missing helper sandbox controls'
-    assert 'Helper Overview' in message['embeds'][0]['title'], 'Overview panel missing'
+    assert 'Helper 活動 log' in message['embeds'][0]['title'], 'Pulse log entry missing'
     labels={c.get('label') for row in message.get('components',[]) for c in row.get('components',[])}
-    assert '開啟 Overview' in labels and '跟進求助' in labels, 'Overview controls missing'
+    assert '活動詳情' in labels and '待接應' in labels, 'Pulse controls missing'
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         version=db.execute("SELECT value FROM settings WHERE key='detector_version'").fetchone()
     assert version and version[0]=='1', 'Detector not enabled'
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         overview=db.execute("SELECT value FROM settings WHERE key='overview_version'").fetchone()
     assert overview and overview[0]=='1', 'Overview not enabled'
+    for _ in range(24):
+        with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+            intro=db.execute("SELECT value FROM settings WHERE key='pulse_intro_v1'").fetchone()
+        if intro and intro[0].isdigit(): break
+        time.sleep(5)
+    else: raise RuntimeError('Pulse intro not confirmed posted')
+    intro_message=get(f"channels/{settings['channel']}/messages/{intro[0]}")
+    assert 'Helper 活動 log 開始試行' in intro_message['content'], 'Missing pulse intro'
+    print(f"Verified pulse log intro https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{intro[0]}")
+
     print(f"Verified helper sandbox https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{message['id']}")
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         scan=db.execute("SELECT value FROM settings WHERE key='detector_scan'").fetchone()
