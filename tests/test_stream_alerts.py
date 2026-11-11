@@ -117,7 +117,17 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
         api.get.return_value = {'data': [{}]}
         with self.assertRaises(RuntimeError):
             await api.streams(['alice'])
-        api.get.return_value = {'data': [], 'pagination': {'cursor': 'next'}}
+        api.get.side_effect = [{'data': [STREAM], 'pagination': {'cursor': 'next'}}, {'data': []}]
+        self.assertEqual(await api.streams(['alice']), {'alice': STREAM})
+        self.assertIn(('after', 'next'), api.get.await_args.args[1])
+
+    async def test_incomplete_or_looping_pagination_never_returns_partial_live_map(self):
+        api = TwitchAPI(None, 'client', 'secret')
+        api.get = AsyncMock(side_effect=[{'data': [STREAM], 'pagination': {'cursor': 'next'}},
+                                        RuntimeError('page two failed')])
+        with self.assertRaises(RuntimeError):
+            await api.streams(['alice'])
+        api.get = AsyncMock(return_value={'data': [STREAM], 'pagination': {'cursor': 'same'}})
         with self.assertRaises(RuntimeError):
             await api.streams(['alice'])
 

@@ -92,19 +92,28 @@ class TwitchAPI:
 
     async def streams(self, logins):
         # Explicit first=100 prevents a truncated first page being mistaken for offline.
-        result = await self.get('streams', [('first', '100')] + [('user_login', x) for x in logins])
-        if result.get('pagination', {}).get('cursor'):
-            raise RuntimeError('Unexpected Twitch pagination')
         streams = {}
-        for stream in result['data']:
-            if not all(stream.get(key) for key in ('id', 'user_login', 'started_at')):
-                raise RuntimeError('Incomplete Twitch stream')
-            name = stream['user_login'].lower()
-            if name not in logins or name in streams:
-                raise RuntimeError('Unexpected Twitch stream')
-            datetime.fromisoformat(stream['started_at'].replace('Z', '+00:00'))
-            streams[name] = stream
-        return streams
+        cursor, seen = None, set()
+        for _ in range(5):
+            params = [('first', '100')] + [('user_login', x) for x in logins]
+            if cursor:
+                params.append(('after', cursor))
+            result = await self.get('streams', params)
+            for stream in result['data']:
+                if not all(stream.get(key) for key in ('id', 'user_login', 'started_at')):
+                    raise RuntimeError('Incomplete Twitch stream')
+                name = stream['user_login'].lower()
+                if name not in logins:
+                    raise RuntimeError('Unexpected Twitch stream')
+                datetime.fromisoformat(stream['started_at'].replace('Z', '+00:00'))
+                streams[name] = stream  # Live rankings can repeat a stream between pages.
+            cursor = result.get('pagination', {}).get('cursor')
+            if not result['data'] or not cursor:
+                return streams
+            if cursor in seen:
+                raise RuntimeError('Repeated Twitch pagination cursor')
+            seen.add(cursor)
+        raise RuntimeError('Twitch pagination safety limit exceeded')
 
 
 async def authorized(inter):
