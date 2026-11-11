@@ -18,6 +18,8 @@ from core.rss_delivery import enabled_sources
 from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, excerpt, display_link
 from datetime import datetime
 from core.rss_simulation import scenarios
+from core.rss_preferences import PreferenceStore
+from core.rss_personal_ui import PersonalPanel
 from core.rss_trial import MAX_BYTES, SOURCES, parse_feed
 from core.storage_paths import DATA_DIR
 
@@ -36,6 +38,9 @@ class RSSDelivery(commands.Cog):
                 raise ValueError("digest config exceeds 64 KiB")
             data = json.loads(raw)
         self.digest_config = DigestConfig.from_dict(data)
+        self.preferences = None
+        self.personal_panel = None
+        self.panel_checked = False
         self.store = None
         self.session = None
         self.errors = {}
@@ -49,10 +54,16 @@ class RSSDelivery(commands.Cog):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25),
                                             headers={"User-Agent": "Con9sole-Bartender RSS/1.0"},
                                             cookie_jar=aiohttp.DummyCookieJar(), trust_env=False)
+        if self.digest_config.simulation:
+            self.preferences = PreferenceStore(DATA_DIR / 'rss_sandbox_preferences.sqlite3')
+            self.personal_panel = PersonalPanel(self)
+            self.bot.add_view(self.personal_panel)
         self.poll.start()
         self.deliver.start()
 
     async def cog_unload(self):
+        if self.personal_panel:
+            self.personal_panel.stop()
         self.poll.cancel()
         self.deliver.cancel()
         if self.session:
@@ -118,6 +129,7 @@ class RSSDelivery(commands.Cog):
         if channel is None:
             self.errors['digest'] = 'target unavailable, wrong simulation room, public room or missing permissions'
             return
+        await self.ensure_personal_panel(channel)
         try:
             batch = await asyncio.to_thread(self.store.claim_batch, self.digest_config, self.sources, time.time())
         except Exception:
@@ -145,6 +157,42 @@ class RSSDelivery(commands.Cog):
     async def before_loop(self):
         await self.bot.wait_until_ready()
 
+    def personal_panel_text(self):
+        return ('🧪 個人情報沙盤\n按「調整偏好」揀平台、商店、內容類型及關鍵字，再按「我的情報」。\n'
+                '結果只畀你睇；偏好會保存。可用「虛構資料試篩選」測試限免／會員／試玩分流。\n'
+                '目前不發個人通知、不改正式訂閱。歡迎直接喺呢度留言回報。')
+
+    async def ensure_personal_panel(self,channel):
+        if self.panel_checked or not self.preferences or not self.digest_config.simulation: return
+        self.panel_checked = True
+        try:
+            if not await asyncio.to_thread(self.preferences.claim_panel,channel.id): return
+            message = await channel.send(self.personal_panel_text(),view=PersonalPanel(self),allowed_mentions=discord.AllowedMentions.none())
+            await asyncio.to_thread(self.preferences.finish_panel,channel.id,message.id)
+            log.info('RSS personal sandbox panel posted: channel=%s message=%s',channel.id,message.id)
+        except Exception:
+            # Reserve before sending: ambiguous failures must not create repeated panels.
+            log.exception('RSS personal panel requires manual verification; admin command can repost')
+
+    async def personal_access(self, interaction):
+        channel = self.target_channel()
+        allowed = (self.digest_config.simulation and self.preferences is not None and self.store is not None
+                   and channel is not None and interaction.guild_id == config.GUILD_ID
+                   and interaction.channel_id == self.digest_config.channel_id
+                   and channel.permissions_for(interaction.user).view_channel)
+        if not allowed:
+            await interaction.response.send_message('只限有權進入 RSS 沙盤嘅成員使用。', ephemeral=True)
+        return bool(allowed)
+
+    @app_commands.command(name="rss_personal_panel", description="在 RSS 沙盤張貼個人情報測試入口（管理員）")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def personal_entry(self, interaction: discord.Interaction):
+        if not await self.personal_access(interaction): return
+        await interaction.response.send_message(self.personal_panel_text(),
+            view=PersonalPanel(self), allowed_mentions=discord.AllowedMentions.none())
+
     @app_commands.command(name="rss_delivery_status", description="查看 RSS 正式派送狀態（管理員）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(administrator=True)
@@ -154,6 +202,8 @@ class RSSDelivery(commands.Cog):
         lines = ["RSS 摘要：" + ("模擬區運行中" if self.sources and self.digest_config.enabled and self.digest_config.simulation else "已啟用" if self.sources and self.digest_config.enabled else "公開派送關閉"),
                  "來源：" + (", ".join(sorted(self.sources)) or "未啟用收集"),
                  "19:00 每日摘要（最多 8 條）；12:30 只提醒晚間前到期嘅已核實優惠。"]
+        if self.preferences:
+            lines.append('個人入口：'+str(await asyncio.to_thread(self.preferences.panel_status,self.digest_config.channel_id)))
         if self.store:
             for source, state, count in await asyncio.to_thread(self.store.report):
                 lines.append(f"{source} · {state}: {count}")

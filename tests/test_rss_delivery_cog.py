@@ -97,3 +97,53 @@ async def main():
 asyncio.run(main())
 '''], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_personal_panel_controls_and_guards(self):
+        result = subprocess.run([sys.executable, '-c', r'''
+import asyncio,tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch,AsyncMock
+import config
+from cogs.rss_delivery import RSSDelivery
+from core.rss_personal_ui import PersonalPanel, PreferencesView, KeywordModal, show_news
+from core.rss_preferences import PreferenceStore,DEFAULT
+from core.rss_digest import DigestStore
+async def main():
+    with patch.dict('os.environ',{'RSS_DELIVERY_SOURCES':'','RSS_DIGEST_CONFIG':''}):
+        cog=RSSDelivery(SimpleNamespace())
+    with tempfile.TemporaryDirectory() as tmp:
+        cog.preferences=PreferenceStore(Path(tmp)/'prefs.db')
+        cog.store=DigestStore(Path(tmp)/'rss.db')
+        cog.digest_config.channel_id=123
+        channel=SimpleNamespace(permissions_for=lambda user:SimpleNamespace(view_channel=True))
+        cog.target_channel=lambda:channel
+        i=SimpleNamespace(user=SimpleNamespace(id=1),guild_id=config.GUILD_ID,channel_id=123,
+            response=SimpleNamespace(send_message=AsyncMock(),defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
+        assert await cog.personal_access(i)
+        panel=PersonalPanel(cog)
+        assert panel.is_persistent()
+        view=PreferencesView(cog,1,DEFAULT)
+        assert len(view.children)==6
+        assert await view.interaction_check(i)
+        i.user.id=2
+        assert not await view.interaction_check(i)
+        i.user.id=1
+        i.channel_id=456
+        assert not await cog.personal_access(i)
+        i.channel_id=123
+        cog.digest_config.simulation=False
+        assert not await cog.personal_access(i)
+        cog.digest_config.simulation=True
+        cog.preferences.put(1,dict(DEFAULT,platforms=['pc'],stores=['epic'],kinds=['keep']))
+        await show_news(cog,i,True)
+        sent=i.followup.send.call_args.kwargs
+        assert sent['ephemeral'] is True and len(sent['embed'].fields)==1
+        assert 'Epic' in sent['embed'].fields[0].name
+        assert sent['allowed_mentions'].everyone is False
+        await show_news(cog,i)
+        assert i.followup.send.call_args.kwargs['embed'] is None
+        KeywordModal(cog,1,DEFAULT)
+asyncio.run(main())
+'''],capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
