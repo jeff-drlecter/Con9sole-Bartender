@@ -5,8 +5,13 @@ on:
     branches: [ main ]   # push 上 main 時自動部署
   workflow_dispatch:      # 可以手動觸發
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: production
     timeout-minutes: 15
     runs-on: ubuntu-latest
 
@@ -16,15 +21,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements.txt
+        run: python -m pip install --disable-pip-version-check --require-hashes -r requirements.txt
 
       - name: Validate Python source
         run: python -m compileall -q .
@@ -33,7 +40,9 @@ jobs:
         run: timeout 120 python -m unittest discover -s tests -v
 
       - name: Setup Flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@v1
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1
+        with:
+          version: "0.5.7"
 
       # （可選）顯示 fly.toml 幫助除錯
       - name: Show fly.toml
@@ -60,3 +69,8 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_helper_sandbox.py'
+
+      - name: Verify application runs without root privileges
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_runtime_identity.py'
