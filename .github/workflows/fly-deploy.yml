@@ -41,6 +41,8 @@ jobs:
 
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1
+        with:
+          version: "0.5.7"
 
       # （可選）顯示 fly.toml 幫助除錯
       - name: Show fly.toml
