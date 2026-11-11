@@ -61,8 +61,12 @@ class PlatformSelect(discord.ui.Select):
         item=next((i for i in invites if i.code==code),None)
         if item is None:
             await inter.followup.send('呢條連結已不在有效清單；未自動建立替代連結。',ephemeral=True);return
-        name=f"#{item.channel.name}" if item.channel else "現有邀請"
-        await inter.followup.send(f'**{name}**\nhttps://discord.gg/{code}\n累計使用：{item.uses}｜來源按原有 channel 命名',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+        personal=await asyncio.to_thread(self.cog.store.personal_codes,inter.guild_id)
+        name=next((label for label,invite in source_invites([item],personal)),None)
+        if name is None:
+            await inter.followup.send('呢條連結已不屬於平台邀請清單，請重新選擇。',ephemeral=True);return
+        channel=f"#{item.channel.name}" if item.channel else "現有邀請"
+        await inter.followup.send(f'**{name}**\nhttps://discord.gg/{code}\n累計使用：{item.uses}｜入口：{channel}',ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
 
 class Invites(commands.Cog):

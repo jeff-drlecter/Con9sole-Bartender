@@ -14,9 +14,22 @@ SOURCE_CHANNELS = {
 }
 
 
+# Explicit publication labels take precedence over landing-channel names.
+# These are public invitation codes, never personal referral links.
+SOURCE_INVITE_LABELS = {'rg7xz8gnJp': 'LIHKG'}
+
+
 def source_invites(invites, personal_codes):
-    return [(SOURCE_CHANNELS[i.channel.name],i) for i in invites
-            if i.channel and i.channel.name in SOURCE_CHANNELS and i.code not in personal_codes]
+    entries = []
+    for invite in invites:
+        if invite.code in personal_codes:
+            continue
+        label = SOURCE_INVITE_LABELS.get(invite.code)
+        if label is None and invite.channel:
+            label = SOURCE_CHANNELS.get(invite.channel.name)
+        if label is not None:
+            entries.append((label, invite))
+    return entries
 
 
 INVITE_XP = 25
