@@ -18,6 +18,8 @@ from core.rss_delivery import enabled_sources
 from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, excerpt, display_link
 from datetime import datetime
 from core.rss_simulation import scenarios
+from core.rss_preferences import PreferenceStore
+from core.rss_personal_ui import PersonalPanel
 from core.rss_trial import MAX_BYTES, SOURCES, parse_feed
 from core.storage_paths import DATA_DIR
 
@@ -36,6 +38,8 @@ class RSSDelivery(commands.Cog):
                 raise ValueError("digest config exceeds 64 KiB")
             data = json.loads(raw)
         self.digest_config = DigestConfig.from_dict(data)
+        self.preferences = None
+        self.personal_panel = None
         self.store = None
         self.session = None
         self.errors = {}
@@ -49,10 +53,16 @@ class RSSDelivery(commands.Cog):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25),
                                             headers={"User-Agent": "Con9sole-Bartender RSS/1.0"},
                                             cookie_jar=aiohttp.DummyCookieJar(), trust_env=False)
+        if self.digest_config.simulation:
+            self.preferences = PreferenceStore(DATA_DIR / 'rss_sandbox_preferences.sqlite3')
+            self.personal_panel = PersonalPanel(self)
+            self.bot.add_view(self.personal_panel)
         self.poll.start()
         self.deliver.start()
 
     async def cog_unload(self):
+        if self.personal_panel:
+            self.personal_panel.stop()
         self.poll.cancel()
         self.deliver.cancel()
         if self.session:
@@ -144,6 +154,28 @@ class RSSDelivery(commands.Cog):
     @deliver.before_loop
     async def before_loop(self):
         await self.bot.wait_until_ready()
+
+    async def personal_access(self, interaction):
+        channel = self.target_channel()
+        allowed = (self.digest_config.simulation and self.preferences is not None and self.store is not None
+                   and channel is not None and interaction.guild_id == config.GUILD_ID
+                   and interaction.channel_id == self.digest_config.channel_id
+                   and channel.permissions_for(interaction.user).view_channel)
+        if not allowed:
+            await interaction.response.send_message('只限有權進入 RSS 沙盤嘅成員使用。', ephemeral=True)
+        return bool(allowed)
+
+    @app_commands.command(name="rss_personal_panel", description="在 RSS 沙盤張貼個人情報測試入口（管理員）")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def personal_entry(self, interaction: discord.Interaction):
+        if not await self.personal_access(interaction): return
+        await interaction.response.send_message(
+            '🧪 個人情報沙盤\n按「調整偏好」揀平台、商店、內容類型及關鍵字，再按「我的情報」。\n'
+            '結果只畀你睇；偏好會保存。可用「虛構資料試篩選」測試限免／會員／試玩分流。\n'
+            '目前不發個人通知、不改正式訂閱。歡迎直接喺呢度留言回報。',
+            view=PersonalPanel(self), allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="rss_delivery_status", description="查看 RSS 正式派送狀態（管理員）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))

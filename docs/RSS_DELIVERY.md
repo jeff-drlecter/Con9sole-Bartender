@@ -157,3 +157,33 @@ Acceptance before replacement: inspect actual rendering; verify source fetching,
 keyword outcomes, deduplication, deadline classification, scheduled runs and restart
 behavior. Steam/Epic automated offer collectors and a real destination decision
 remain open. Passing synthetic checks alone is not full migration acceptance.
+
+## Tester personal sandbox
+
+The private `rss-模擬區` now permits the 🧪 Tester role to view history,
+comment, react and use non-administrative commands. Everyone remains denied
+View Channel. Existing management commands remain administrator-only.
+
+An administrator posts `/rss_personal_panel` in that room once. Its persistent
+buttons survive restart. Members with access can open private preferences and
+personal previews; interactions reject other guilds/channels and production mode.
+Preferences are stored by user ID in `/data/rss_sandbox_preferences.sqlite3`.
+This does not assign roles, change channel subscriptions, send DMs or notifications,
+or consume the scheduled digest queue. The settings view expires after ten minutes;
+reopen it from the persistent panel. Each selected field saves immediately.
+
+Options: PS/Xbox/PC, any store/Steam/Epic, news/permanent claim/member/trial,
+and up to ten literal include-any/exclude-any keywords per field. Exclusion wins.
+All-store selection overrides individual store selections. Personal filtering
+happens before the eight-item cap and preserves administrator filtering and exact
+deduplication. Mixed 4Gamers content is not automatically considered PC: explicit
+platform text is required. This deliberately conservative classifier can omit
+relevant articles. A claim is only classified as an offer when verified metadata
+exists; Steam/Epic acquisition is still pending. Empty results are stated honestly.
+
+The settings panel provides a clearly labeled fictional fixture mode for testing
+Steam/Epic and keep/member/trial combinations independently of available feeds.
+Acceptance: two testers save different preferences, reopen after restart, confirm
+private independent results, check PC+Epic+keep yields only the fictional Epic
+claim, verify exclusion takes precedence, and confirm live preview leaves delivery
+state unchanged. No automatic production promotion.
