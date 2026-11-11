@@ -65,3 +65,25 @@ private-thread exclusion, source permission filtering, edit/delete withdrawal,
 reply observation, dedup, claim races, owner controls, retention and no text-body
 storage. Deployment checks the actual private room access/history permissions,
 five controls, automatic-detection panel, detector version and initial scan status.
+
+## Unified mobile Overview
+
+`開啟 Overview` combines four sections into one private, per-viewer embed:
+needs-help first, recent chat, occupied voice rooms, and attention opportunities.
+Each section shows at most three short rows. `刷新` edits the same ephemeral card;
+`跟進求助` and `處理記錄` use the existing source-permission checks and workflow.
+Empty lists and request controls provide `返回 Overview`. The public entry message
+is deliberately short; real activity/source text is never copied into it.
+
+Attention opportunities retain references only in a 200-item in-memory window:
+observed messages by members who joined within seven days, and explicit LFG/chat
+invitations without an observed direct human reply. New-member messages are
+shown once per author within the observation window, never described as their
+first-ever message. Opportunities expire after 30 minutes; direct human replies
+remove LFG entries and source deletions remove referenced opportunities. Source
+view/history permissions are checked before links are shown. This coverage is
+bounded observation and does not establish that nobody responded elsewhere.
+
+The `睇示例` button opens a clearly fictional four-section card, never inserts
+fake requests/activity into the live queue, and allows returning to the real
+Overview. This supports mobile layout testing even when the server is quiet.

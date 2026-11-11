@@ -88,6 +88,7 @@ class ActivityWindow:
         self.events=deque(maxlen=limit)
         self.truncated_until=0
         self.voice_started={}
+        self.attention=deque(maxlen=200)
 
     def add(self,channel,user,now):
         self.prune(now)
@@ -105,3 +106,20 @@ class ActivityWindow:
             item['messages']+=1
             item['users'].add(user)
         return result
+
+
+    def note_attention(self,message_id,channel_id,user,at,*,newcomer=False,lfg=False):
+        self.attention=deque((r for r in self.attention if r['at']>=at-1800),maxlen=200)
+        if newcomer and not any(r['kind']=='newcomer' and r['user']==user for r in self.attention):
+            self.attention.append(dict(message=message_id,channel=channel_id,user=user,at=at,kind='newcomer',replied=False))
+        existing=next((r for r in self.attention if r['kind']=='lfg' and r['message']==message_id),None)
+        if existing and not lfg: self.attention.remove(existing)
+        elif lfg and not existing:
+            self.attention.append(dict(message=message_id,channel=channel_id,user=user,at=at,kind='lfg',replied=False))
+
+    def attention_reply(self,message_id,user):
+        for row in self.attention:
+            if row['message']==message_id and row['user']!=user: row['replied']=True
+
+    def attention_delete(self,message_id):
+        self.attention=deque((r for r in self.attention if r['message']!=message_id),maxlen=200)

@@ -12,6 +12,7 @@ from core.storage_paths import DATA_DIR
 from core.helper_sandbox import ActivityWindow
 from core.helper_detection import DetectionStore,detect_help
 from core.helper_detection_ui import show_pending
+from core.helper_overview import show_overview,example_overview,BackToOverview
 
 log=logging.getLogger(__name__)
 ROOM='helper-模擬區'
@@ -27,22 +28,19 @@ class HelperPanel(discord.ui.View):
 
     async def interaction_check(self,i): return await self.cog.access(i)
 
-    @discord.ui.button(label='即時活動（私密）',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='開啟 Overview',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary,row=0)
     async def live(self,i,button):
-        await i.response.defer(ephemeral=True)
-        await i.followup.send(embed=self.cog.live_embed(i.user),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+        await show_overview(self.cog,i)
 
-    @discord.ui.button(label='偵測示例',custom_id='helper:sandbox:create:v1')
+    @discord.ui.button(label='睇示例',custom_id='helper:sandbox:create:v1',row=2)
     async def create(self,i,button):
-        examples=['MH 連唔到朋友個場，有冇人知點搞？','請問點樣配裝？','有冇人今晚打機？','搞掂咗，唔使幫啦','我可以幫你']
-        lines=[('🆘 疑似求助' if detect_help(text) else '— 不列入')+'｜'+text for text in examples]
-        await i.response.send_message('同一套偵測規則嘅示例（虛構）：\n'+'\n'.join(lines),ephemeral=True)
+        await i.response.send_message(embed=example_overview(time.time()),view=BackToOverview(self.cog,i.user.id),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
-    @discord.ui.button(label='待接應（自動偵測）',custom_id='helper:sandbox:manage:v1',style=discord.ButtonStyle.success)
+    @discord.ui.button(label='跟進求助',custom_id='helper:sandbox:manage:v1',style=discord.ButtonStyle.success,row=0)
     async def manage(self,i,button):
         await show_pending(self.cog,i)
 
-    @discord.ui.button(label='值班／暫停（模擬）',custom_id='helper:sandbox:duty:v1',row=1)
+    @discord.ui.button(label='值班設定',custom_id='helper:sandbox:duty:v1',row=1)
     async def duty(self,i,button):
         enabled=await asyncio.to_thread(self.cog.store.toggle_duty,i.user.id)
         await i.response.send_message(('🟢 已設為值班' if enabled else '⚪ 已暫停')+'（模擬設定已保存；未啟用真實提醒）。',ephemeral=True)
@@ -109,6 +107,7 @@ class HelperSandbox(commands.Cog):
         if not self.enabled: return
         self.store=DetectionStore(DATA_DIR/'helper_sandbox.sqlite3')
         await asyncio.to_thread(self.store.set,'detector_version','1')
+        await asyncio.to_thread(self.store.set,'overview_version','1')
         self.panel=HelperPanel(self)
         self.bot.add_view(self.panel)
         self.tick.start()
@@ -154,11 +153,41 @@ class HelperSandbox(commands.Cog):
             await asyncio.to_thread(self.store.reply,message.channel.id,message.author.id)
         await asyncio.to_thread(self.store.observe,message.id,message.channel.id,message.author.id,message.created_at.timestamp(),detect_help(self.help_text(message)),time.time())
 
+    def observe_attention(self,message):
+        if not self.help_source(message.channel) or message.author.bot: return
+        now=time.time()
+        at=message.created_at.timestamp()
+        if not now-1800<=at<=now+300: return
+        joined=getattr(message.author,'joined_at',None)
+        newcomer=bool(joined and now-7*86400<=joined.timestamp()<=now)
+        text=re.sub(r'```.*?```','',self.help_text(message).casefold(),flags=re.S)
+        text='\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('>'))
+        lfg=bool(re.search(r'有[冇無沒]人.{0,15}(?:打|玩|一齊|組)|搵.{0,8}隊友|徵.{0,8}隊友|缺.{0,4}人|\blfg\b|looking for (?:group|players)',text))
+        if re.search(r'夠人|滿人|組滿|已成團|搵到隊友|找到隊友|found (?:a )?(?:team|group)|full now',text): lfg=False
+        self.window.note_attention(message.id,message.channel.id,message.author.id,at,newcomer=newcomer,lfg=lfg)
+        reference=getattr(message,'reference',None)
+        if reference and reference.message_id: self.window.attention_reply(reference.message_id,message.author.id)
+        if isinstance(message.channel,discord.Thread) and message.id!=message.channel.id:
+            self.window.attention_reply(message.channel.id,message.author.id)
+
+    def attention_lines(self,member,now):
+        lines=[]
+        for row in reversed(self.window.attention):
+            if row['at']<now-1800 or (row['kind']=='lfg' and row['replied']): continue
+            channel=self.bot.get_channel(row['channel']) or member.guild.get_thread(row['channel'])
+            if not self.can_read_source(channel,member): continue
+            label='近 7 日加入成員發言' if row['kind']=='newcomer' else '搵隊友，未觀察到直接回覆'
+            room=discord.utils.escape_markdown(channel.name[:40])
+            link=f'https://discord.com/channels/{config.GUILD_ID}/{row["channel"]}/{row["message"]}'
+            lines.append(f'**{room}** · {label} · [去接應]({link})')
+        return lines
+
     @commands.Cog.listener()
     async def on_message(self,message):
         if not self.enabled or not message.guild or message.author.bot: return
         if isinstance(message.channel,discord.TextChannel) and self.is_game(message.channel):
             self.window.add(message.channel.id,message.author.id,time.time())
+        self.observe_attention(message)
         await self.observe_help(message)
 
     @commands.Cog.listener()
@@ -166,18 +195,23 @@ class HelperSandbox(commands.Cog):
         if not self.enabled or payload.guild_id!=config.GUILD_ID: return
         channel=self.bot.get_channel(payload.channel_id)
         if not self.help_source(channel): return
-        try: await self.observe_help(await channel.fetch_message(payload.message_id))
+        try:
+            message=await channel.fetch_message(payload.message_id)
+            self.observe_attention(message)
+            await self.observe_help(message)
         except discord.HTTPException: pass
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self,payload):
         if self.enabled and self.store and payload.guild_id==config.GUILD_ID:
+            self.window.attention_delete(payload.message_id)
             await asyncio.to_thread(self.store.withdraw,payload.message_id,time.time())
 
     @commands.Cog.listener()
     async def on_raw_bulk_message_delete(self,payload):
         if self.enabled and self.store and payload.guild_id==config.GUILD_ID:
             for message_id in payload.message_ids:
+                self.window.attention_delete(message_id)
                 await asyncio.to_thread(self.store.withdraw,message_id,time.time())
 
     @tasks.loop(count=1)
@@ -256,12 +290,10 @@ class HelperSandbox(commands.Cog):
         else: await self.refresh()
 
     async def demo_embed(self):
-        embed=discord.Embed(title='🧭 Helper 動態沙盤｜自動偵測求助',description='Bot 留意遊戲吹水區、討論區及公開討論串嘅疑似求助。成員照常傾計，唔需要開單。')
-        embed.add_field(name='🆘 待接應',value='按「待接應（自動偵測）」睇你有權閱讀嘅求助原文、連結及跟進狀態。\n我跟進 → 到原頻道幫手 → 已處理；誤判可按「不是求助」。',inline=False)
-        embed.add_field(name='偵測方式',value='求助／請教、點樣做、點解、連唔到／搞唔掂等線索。單純問「有冇人打機」唔當求助。\n只標示疑似；有人直接回覆亦唔會自動當已解決。',inline=False)
-        embed.add_field(name='💬🎙️ 其他活動',value='按「即時活動」睇遊戲區聊天人數及現有 call。',inline=False)
-        embed.add_field(name='目前範圍',value='有小隊 call 入口嘅遊戲分類：吹水／討論／求助／組隊文字頻道，以及公開論壇討論串。\n啟動時最多 60 個頻道，各檢查近 6 小時最新 30 則；之後偵測新訊息及編輯。',inline=False)
-        embed.set_footer(text='沙盤自動偵測已開 · 未 ping Helper · 私人清單按原有權限顯示 · 記錄保留 7 日')
+        embed=discord.Embed(title='🧭 Helper Overview｜沙盤',description='一個畫面睇求助、傾計、開 call 同值得接應嘅成員。')
+        embed.add_field(name='開啟 Overview',value='先顯示需要接應，再列最近活動。按「刷新」更新同一個畫面。',inline=False)
+        embed.add_field(name='跟進求助',value='自動留意吹水／討論區訊息，按原訊息入去幫手；毋須成員開單。',inline=False)
+        embed.set_footer(text='Helpers / Tester 可用 · 按原有權限顯示 · 未啟用通知')
         return embed
 
     def live_embed(self,member):
