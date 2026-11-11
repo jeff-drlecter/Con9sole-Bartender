@@ -10,6 +10,10 @@ class PreferencesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'prefs.db'
             store=PreferenceStore(path)
+            self.assertTrue(store.claim_panel(123))
+            self.assertFalse(PreferenceStore(path).claim_panel(123))
+            store.finish_panel(123,456)
+            self.assertEqual(store.panel_status(123),('posted',456))
             pref=store.get(1)
             pref.update(platforms=['pc'],stores=['epic'],kinds=['keep'],exclude=['手遊'])
             store.put(1,pref)

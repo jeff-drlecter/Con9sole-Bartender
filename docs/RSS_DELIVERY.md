@@ -164,7 +164,9 @@ The private `rss-模擬區` now permits the 🧪 Tester role to view history,
 comment, react and use non-administrative commands. Everyone remains denied
 View Channel. Existing management commands remain administrator-only.
 
-An administrator posts `/rss_personal_panel` in that room once. Its persistent
+The bot posts the panel once in that room after deployment, with a durable reservation
+to prevent duplicates on restart. Administrators can recover a failed posting with
+`/rss_personal_panel`. Its persistent
 buttons survive restart. Members with access can open private preferences and
 personal previews; interactions reject other guilds/channels and production mode.
 Preferences are stored by user ID in `/data/rss_sandbox_preferences.sqlite3`.

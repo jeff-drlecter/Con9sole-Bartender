@@ -32,6 +32,20 @@ class PreferenceStore(DeliveryStore):
         super().__init__(path)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS preferences (user_id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS panels (channel_id INTEGER PRIMARY KEY, state TEXT, message_id INTEGER)')
+
+    def claim_panel(self,channel_id):
+        with self.connect() as db:
+            return db.execute("INSERT OR IGNORE INTO panels VALUES (?, 'reserved', NULL)",(channel_id,)).rowcount == 1
+
+    def finish_panel(self,channel_id,message_id):
+        with self.connect() as db:
+            db.execute("UPDATE panels SET state='posted', message_id=? WHERE channel_id=?",(message_id,channel_id))
+
+    def panel_status(self,channel_id):
+        with self.connect() as db:
+            row=db.execute('SELECT state,message_id FROM panels WHERE channel_id=?',(channel_id,)).fetchone()
+            return tuple(row) if row else None
 
     def get(self,user_id):
         with self.connect() as db:

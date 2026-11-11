@@ -50,3 +50,8 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl status --app con9sole-bartender
+
+      - name: Verify RSS sandbox panel when enabled
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_rss_sandbox.py'
