@@ -74,3 +74,8 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_runtime_identity.py'
+
+      - name: Verify Twitch alerts credentials, roster and command sync without sending alerts
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_stream_alerts.py'

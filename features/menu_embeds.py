@@ -93,6 +93,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
 def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
     from core.permissions import can_use_staff_tool
     entries = [
+        ("stream_admin", "📺 直播名單 — 直播主、檢查頻率及通知設定"),
         ("permission_audit", "🔍 權限審核 — 查看權限差異及審核結果"),
         ("community_levels_admin", "🎖️ 等級管理 — 計分、角色及等級設定"),
         ("title_roles_admin", "🏅 稱號管理 — 綁定 Role 及全員同步"),
