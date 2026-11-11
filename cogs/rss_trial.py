@@ -98,6 +98,8 @@ class RSSTrial(commands.Cog):
                  "Steam 停用；公開派送 0；翻譯 API 0。", "首次成功讀取只建立基準，不補發舊聞。"]
         for source, count, size, rss, peak, errors in report["polls"]:
             lines.append(f"{source}: {count} 次檢查／錯誤 {errors}／讀取 {size/1024:.0f} KiB／程序 RAM {rss/1048576:.1f} MiB／峰值 {peak/1048576:.1f} MiB")
+        for source, error in report["last_errors"]:
+            lines.append(f"{source} 最近一次錯誤（歷史）：{error[:180]}")
         for source, verdict, count in report["decisions"]:
             lines.append(f"{source} · {verdict}: {count}")
         lines.append("RAM 為整個 Bot 程序，並非 RSS 增量或整部 Fly VM；無法由此計算帳單。")

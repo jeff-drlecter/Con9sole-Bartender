@@ -13,7 +13,7 @@ from email.utils import parsedate_to_datetime
 TRIAL_SECONDS = 3 * 86400
 MAX_BYTES = 2 * 1024 * 1024
 SOURCES = (
-    ("4gamers", "https://www.4gamers.com.tw/rss/news/c/2", 1364210080043630612),
+    ("4gamers", "https://www.4gamers.com.tw/rss/latest-news", 1364210080043630612),
     ("xbox", "https://news.xbox.com/en-us/feed/", 1379699174668505098),
     ("ps", "https://blog.zh-hant.playstation.com/feed/", 1364201334798290994),
 )
@@ -133,5 +133,6 @@ class TrialStore:
                 "start": db.execute("SELECT value FROM meta WHERE key='start'").fetchone()[0],
                 "decisions": db.execute("SELECT source,decision,count(*) FROM articles GROUP BY source,decision").fetchall(),
                 "polls": db.execute("SELECT source,count(*),sum(bytes),max(rss_bytes),max(peak_bytes),sum(status NOT IN ('ok','not_modified')) FROM polls GROUP BY source").fetchall(),
+                "last_errors": db.execute("SELECT p.source,p.status FROM polls p WHERE p.rowid = (SELECT max(q.rowid) FROM polls q WHERE q.source=p.source AND q.status NOT IN ('ok','not_modified')) ORDER BY p.source").fetchall(),
                 "recent": db.execute("SELECT source,title,decision FROM articles ORDER BY seen DESC LIMIT 5").fetchall(),
             }

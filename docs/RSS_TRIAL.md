@@ -23,3 +23,21 @@ Before any cutover: compare eligible article links against MonitoRSS for 3 days,
 parser/filter differences, check restart deduplication and RAM, and implement/test queue,
 daily cap, Discord format and retries. Then switch one source at a time. Keep original
 MonitoRSS settings as rollback. No automatic switch occurs.
+
+## 11 November migration check
+
+Live status at 19:46 HKT: each source had 60 checks; PS and Xbox had zero
+errors and three eligible new articles each. 4Gamers failed all 60 checks.
+Whole-process peak RSS was 76.3 MiB; this does not establish monthly cost.
+
+The old 4Gamers `/rss/news/c/2` URL returned HTTP 200 HTML, not XML. Its
+HTML advertises `https://www.4gamers.com.tw/rss/latest-news` as the RSS
+alternate. A live check of that endpoint parsed 50 articles with the existing
+parser. It is a broader latest-news feed; the existing audited filters remain
+unchanged, so compare its eligible output before production use.
+
+The source fix preserves the database and original expiry. Failed polls never
+created a baseline, so the first valid 4Gamers response establishes one without
+backfilling. The status command now includes the last recorded historical error
+per source, even after recovery. This fix does not enable delivery or reset the
+three-day trial. Queue, caps, retries and output comparison remain cutover gates.
