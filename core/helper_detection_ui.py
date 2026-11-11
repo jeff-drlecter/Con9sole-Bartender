@@ -8,8 +8,7 @@ def short(text,length=140):
     return discord.utils.escape_markdown(' '.join(text.split())[:length])
 
 
-async def show_pending(cog,i,closed=False):
-    await i.response.defer(ephemeral=True)
+async def visible_candidates(cog,i,closed=False,limit=8):
     rows=await asyncio.to_thread(cog.store.candidates,time.time(),closed)
     visible=[]
     checked=0
@@ -29,7 +28,13 @@ async def show_pending(cog,i,closed=False):
             await asyncio.to_thread(cog.store.withdraw,row['message_id'],time.time())
             continue
         visible.append((row,message))
-        if len(visible)>=8: break
+        if len(visible)>=limit: break
+    return visible
+
+
+async def show_pending(cog,i,closed=False):
+    await i.response.defer(ephemeral=True)
+    visible=await visible_candidates(cog,i,closed)
     embed=discord.Embed(title='🆘 求助處理記錄' if closed else '🆘 待接應｜自動偵測、待人確認',description='只顯示你有權閱讀嘅原訊息。關鍵字可能誤判；「有人回覆」唔代表已解決。')
     for row,message in visible:
         state={'open':'待確認','claimed':'跟進中','handoff':'待轉交','done':'已完成','dismissed':'非求助'}[row['state']]
@@ -39,7 +44,8 @@ async def show_pending(cog,i,closed=False):
         content=short(cog.help_text(message)) or '（內容已變更）'
         embed.add_field(name=name,value=f"{content}\n[去原訊息]({message.jump_url}) · {reply}{owner}\n{row['reason']} · <t:{int(row['created'])}:R>",inline=False)
     if not visible: embed.description+='\n目前冇可顯示嘅項目。只掃指定遊戲吹水／討論區；唔代表所有問題已解決。'
-    await i.followup.send(embed=embed,view=DetectionView(cog,i.user.id,visible) if visible and not closed else None,
+    from core.helper_overview import BackToOverview
+    await i.followup.send(embed=embed,view=DetectionView(cog,i.user.id,visible) if visible and not closed else BackToOverview(cog,i.user.id),
         ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -82,6 +88,11 @@ class DetectionView(discord.ui.View):
         except discord.HTTPException:
             await i.followup.send('暫時無法核對原訊息，未作更改。',ephemeral=True)
         except ValueError as exc: await i.followup.send(str(exc),ephemeral=True)
+    @discord.ui.button(label='返回 Overview',row=2)
+    async def back(self,i,button):
+        from core.helper_overview import show_overview
+        await show_overview(self.cog,i,edit=True)
+
     @discord.ui.button(label='我跟進',row=1,style=discord.ButtonStyle.primary)
     async def claim(self,i,button): await self.act(i,'claim')
     @discord.ui.button(label='已處理',row=1,style=discord.ButtonStyle.success)

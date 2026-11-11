@@ -33,16 +33,21 @@ def main():
         assert allowed & 1024 and allowed & 65536, 'Helper/Tester view/history missing'
     for _ in range(24):
         message=get(f"channels/{settings['channel']}/messages/{settings['panel']}")
-        if message.get('embeds') and '自動偵測求助' in message['embeds'][0].get('title',''): break
+        if message.get('embeds') and 'Helper Overview' in message['embeds'][0].get('title',''): break
         time.sleep(5)
     else: raise RuntimeError('Automatic detection panel was not refreshed')
     ids={c.get('custom_id') for row in message.get('components',[]) for c in row.get('components',[])}
     expected={f'helper:sandbox:{key}:v1' for key in ('live','create','manage','duty','history')}
     assert expected<=ids, 'Missing helper sandbox controls'
-    assert '自動偵測求助' in message['embeds'][0]['title'], 'Automatic detection panel missing'
+    assert 'Helper Overview' in message['embeds'][0]['title'], 'Overview panel missing'
+    labels={c.get('label') for row in message.get('components',[]) for c in row.get('components',[])}
+    assert '開啟 Overview' in labels and '跟進求助' in labels, 'Overview controls missing'
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         version=db.execute("SELECT value FROM settings WHERE key='detector_version'").fetchone()
     assert version and version[0]=='1', 'Detector not enabled'
+    with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+        overview=db.execute("SELECT value FROM settings WHERE key='overview_version'").fetchone()
+    assert overview and overview[0]=='1', 'Overview not enabled'
     print(f"Verified helper sandbox https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{message['id']}")
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         scan=db.execute("SELECT value FROM settings WHERE key='detector_scan'").fetchone()
