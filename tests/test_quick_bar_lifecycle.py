@@ -71,6 +71,7 @@ asyncio.run(run())
                     "TWITCH_RELAY_CONFIG": "[]",
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "RSS_TRIAL_STOP": "1",
+                    "HELPER_SANDBOX": "",
                     "RSS_DELIVERY_SOURCES": "",
                     "RSS_DIGEST_CONFIG": "",
                 }
@@ -85,7 +86,7 @@ asyncio.run(run())
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(report["extensions"], 28, result.stderr)
+        self.assertEqual(report["extensions"], 29, result.stderr)
         self.assertEqual(report["missing"], [])
         self.assertTrue(report["sweeper_restarted"])
         self.assertTrue(report["maintenance_restarted"])

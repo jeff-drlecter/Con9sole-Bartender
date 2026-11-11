@@ -55,3 +55,8 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_rss_sandbox.py'
+
+      - name: Verify Helper sandbox when enabled
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_helper_sandbox.py'
