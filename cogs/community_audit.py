@@ -18,6 +18,7 @@ from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
 from core.audit_monitor import WriteFailures
 from core.audit_privacy import require_private_audit_channel
+from features.audit_format import safe, who, where, changes, role_label, identity_footer, ACTIONS
 
 log = logging.getLogger(__name__)
 ROUTES = {
@@ -29,24 +30,6 @@ ROUTES = {
 # Do not copy log content back into itself or a second log destination.
 EXCLUDED = set(ROUTES.values()) | {1400830921883521166}
 NONE = discord.AllowedMentions.none()
-
-
-def safe(value, limit=900):
-    text = discord.utils.escape_markdown(str(value))
-    return text[:limit] + ('…' if len(text)>limit else '')
-
-
-def who(user):
-    return f'{safe(user,100)} (`{user.id}`)'
-
-
-def where(channel):
-    return f'#{safe(channel.name,100)} (`{channel.id}`)' if channel else '未連接'
-
-
-def changes(before, after, fields):
-    return [f'{label}：{safe(getattr(before,key,None),180)} → {safe(getattr(after,key,None),180)}'
-            for key,label in fields if getattr(before,key,None)!=getattr(after,key,None)]
 
 
 def preview(message, content=None):
@@ -83,10 +66,16 @@ class CommunityAudit(commands.Cog):
         if task:
             await asyncio.gather(task,return_exceptions=True)
 
-    async def emit(self, category, title, description, *, key=None):
+    async def emit(self, category, title, description, *, key=None, subject=None):
         try:
+            payload={'title':title[:200],'description':description[:3500]}
+            if subject is not None:
+                payload['author']={'name':str(getattr(subject,'display_name',None) or getattr(subject,'name',None) or '成員')[:100],
+                                   'url':f'https://discord.com/users/{int(subject.id)}'}
+                avatar=getattr(subject,'display_avatar',None)
+                if avatar: payload['author']['icon_url']=str(avatar)
             key = await asyncio.to_thread(self.store.append,category,
-                {'title':title[:200],'description':description[:3500]},key=key)
+                payload,key=key)
             return key
         except Exception:
             async with self.failure_lock:
@@ -130,7 +119,9 @@ class CommunityAudit(commands.Cog):
                     for key,stamp,payload in rows:
                         embed=discord.Embed(title=payload['title'],description=payload['description'],
                                             color=0x5865F2,timestamp=datetime.fromtimestamp(stamp,timezone.utc))
-                        embed.set_footer(text=f'Bartender 日誌 v2｜事件 {key}')
+                        if payload.get('author'): embed.set_author(**payload['author'])
+                        identities=identity_footer(payload['description'])
+                        embed.set_footer(text=f'Bartender 日誌 v2｜事件 {key}'+('\n'+identities if identities else ''))
                         if embeds and total+len(embed)>5500:
                             break
                         embeds.append(embed); keys.append(key); total+=len(embed)
@@ -194,12 +185,12 @@ class CommunityAudit(commands.Cog):
         if member.guild.id==config.GUILD_ID:
             created=int(member.created_at.timestamp())
             await self.emit('member','成員加入',f'{who(member)}\n帳戶建立：<t:{created}:f>',
-                            key=f'join:{member.id}:{member.joined_at.timestamp()}')
+                            key=f'join:{member.id}:{member.joined_at.timestamp()}',subject=member)
 
     @commands.Cog.listener()
     async def on_member_remove(self,member):
         if member.guild.id==config.GUILD_ID:
-            await self.emit('member','成員離開',f'{who(member)}\n離開原因未確認；封鎖／移除請對照官方審核事件。')
+            await self.emit('member','成員離開',f'{who(member)}\n離開原因未確認；封鎖／移除請對照官方審核事件。',subject=member)
 
     @commands.Cog.listener()
     async def on_member_update(self,before,after):
@@ -207,25 +198,25 @@ class CommunityAudit(commands.Cog):
             return
         lines=changes(before,after,[('nick','暱稱'),('timed_out_until','禁言至'),('pending','入會審核')])
         b={r.id:r for r in before.roles}; a={r.id:r for r in after.roles}
-        if a.keys()-b.keys(): lines.append('新增身份組：'+', '.join(f'{safe(a[i].name,80)} (`{i}`)' for i in sorted(a.keys()-b.keys())))
-        if b.keys()-a.keys(): lines.append('移除身份組：'+', '.join(f'{safe(b[i].name,80)} (`{i}`)' for i in sorted(b.keys()-a.keys())))
+        if a.keys()-b.keys(): lines.append('🟢 新增身份組：'+', '.join(role_label(a[i]) for i in sorted(a.keys()-b.keys())))
+        if b.keys()-a.keys(): lines.append('🔴 移除身份組：'+', '.join(role_label(b[i]) for i in sorted(b.keys()-a.keys())))
         if lines:
-            await self.emit('member','成員資料變更',who(after)+'\n'+'\n'.join(lines))
+            await self.emit('member','成員資料變更',who(after)+'\n'+'\n'.join(lines),subject=after)
 
     @commands.Cog.listener()
     async def on_user_update(self,before,after):
         guild=self.bot.get_guild(config.GUILD_ID)
         if guild and guild.get_member(after.id):
             lines=changes(before,after,[('name','用戶名稱'),('global_name','顯示名稱'),('avatar','頭像')])
-            if lines: await self.emit('member','帳戶資料變更',who(after)+'\n'+'\n'.join(lines))
+            if lines: await self.emit('member','帳戶資料變更',who(guild.get_member(after.id))+'\n'+'\n'.join(lines),subject=guild.get_member(after.id))
 
     @commands.Cog.listener()
     async def on_member_ban(self,guild,user):
-        if guild.id==config.GUILD_ID: await self.emit('member','成員被封鎖',who(user))
+        if guild.id==config.GUILD_ID: await self.emit('member','成員被封鎖',who(user),subject=user)
 
     @commands.Cog.listener()
     async def on_member_unban(self,guild,user):
-        if guild.id==config.GUILD_ID: await self.emit('member','解除成員封鎖',who(user))
+        if guild.id==config.GUILD_ID: await self.emit('member','解除成員封鎖',who(user),subject=user)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self,member,before,after):
@@ -239,9 +230,9 @@ class CommunityAudit(commands.Cog):
                 elapsed=f'\n上一頻道停留約 {int(time.monotonic()-started)} 秒' if started else '\n上一頻道時長未知（重啟／斷線或加入時間未觀察到）'
             if after.channel: self.voice_started[key]=time.monotonic()
             title='加入語音' if before.channel is None else ('離開語音' if after.channel is None else '切換語音')
-            await self.emit('voice',title,f'{who(member)}\n{where(before.channel)} → {where(after.channel)}{elapsed}')
+            await self.emit('voice',title,f'{who(member)}\n{where(before.channel)} → {where(after.channel)}{elapsed}',subject=member)
         lines=changes(before,after,[('mute','伺服器靜音'),('deaf','伺服器拒聽'),('self_stream','分享畫面'),('self_video','視訊')])
-        if lines: await self.emit('voice','語音狀態變更',who(member)+'\n'+where(after.channel or before.channel)+'\n'+'\n'.join(lines))
+        if lines: await self.emit('voice','語音狀態變更',who(member)+'\n'+where(after.channel or before.channel)+'\n'+'\n'.join(lines),subject=member)
 
     def message_scope(self,payload):
         return payload.guild_id==config.GUILD_ID and payload.channel_id not in EXCLUDED
@@ -258,7 +249,8 @@ class CommunityAudit(commands.Cog):
         content=payload.data['content']
         if old and old.content==content:
             return
-        author=who(old.author) if old else f"作者 ID：{payload.data.get('author',{}).get('id','未提供')}"
+        raw_author=payload.data.get('author',{})
+        author=who(old.author) if old else (f"<@{int(raw_author['id'])}>" if raw_author.get('id') else '作者未快取，無法確認。')
         guild=self.bot.get_guild(config.GUILD_ID)
         channel=guild.get_channel_or_thread(payload.channel_id) if guild else None
         restricted=channel and channel.is_nsfw()
@@ -266,9 +258,9 @@ class CommunityAudit(commands.Cog):
         current='年齡限制頻道：只記錄事件資料。' if restricted else preview(old,content)
         stamp=payload.data.get('edited_timestamp','')
         key='edit:'+str(payload.message_id)+':'+hashlib.sha256((stamp+content).encode()).hexdigest()[:24]
-        await self.emit('message','訊息編輯',f'{author}\n頻道 ID：{payload.channel_id}｜訊息 ID：{payload.message_id}\n'
+        await self.emit('message','訊息編輯',f'{author}\n頻道：<#{payload.channel_id}>｜訊息 ID：{payload.message_id}\n'
                         f'**修改前**\n{previous}\n**修改後**\n{current}\n'
-                        f'https://discord.com/channels/{config.GUILD_ID}/{payload.channel_id}/{payload.message_id}',key=key)
+                        f'https://discord.com/channels/{config.GUILD_ID}/{payload.channel_id}/{payload.message_id}',key=key,subject=old.author if old else None)
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self,payload):
@@ -280,38 +272,39 @@ class CommunityAudit(commands.Cog):
         author=who(message.author) if message else '作者未快取，無法確認。'
         body=preview(message) if message else '未快取原文，無法還原。'
         attachments=len(message.attachments) if message else '未知'
-        await self.emit('message','訊息刪除',f'{author}\n頻道 ID：{payload.channel_id}｜訊息 ID：{payload.message_id}\n'
-                        f'{body}\n附件數：{attachments}（不下載）\n刪除操作者未確認。',key=f'delete:{payload.message_id}')
+        await self.emit('message','訊息刪除',f'{author}\n頻道：<#{payload.channel_id}>｜訊息 ID：{payload.message_id}\n'
+                        f'{body}\n附件數：{attachments}（不下載）\n刪除操作者未確認。',key=f'delete:{payload.message_id}',subject=message.author if message else None)
 
     @commands.Cog.listener()
     async def on_raw_bulk_message_delete(self,payload):
         if self.message_scope(payload):
             ids=sorted(payload.message_ids)
             digest=hashlib.sha256(','.join(map(str,ids)).encode()).hexdigest()[:24]
-            await self.emit('message','批次刪除訊息',f'頻道 ID：{payload.channel_id}\n共 {len(ids)} 條；快取 {len(payload.cached_messages)} 條。\n'
+            await self.emit('message','批次刪除訊息',f'頻道：<#{payload.channel_id}>\n共 {len(ids)} 條；快取 {len(payload.cached_messages)} 條。\n'
                             '訊息 ID（最多列出 40 條）：'+', '.join(map(str,ids[:40]))+'\n不另複製原文／附件；操作者請對照官方審核。',key='bulk:'+digest)
 
-    async def object_event(self,category,title,obj,description=''):
+    async def object_event(self,category,title,obj,description='',*,kind='channel',deleted=False):
         if obj.guild.id==config.GUILD_ID:
-            await self.emit(category,title,f'{safe(obj.name,150)} (`{obj.id}`)\n{description}')
+            label=role_label(obj,deleted=deleted) if kind=='role' else (f'**{safe(obj.name,100)}**（已刪除｜ID `{obj.id}`）' if deleted else where(obj))
+            await self.emit(category,title,f'{label}\n{description}')
 
     @commands.Cog.listener()
     async def on_guild_channel_create(self,channel): await self.object_event('server','建立頻道',channel)
     @commands.Cog.listener()
-    async def on_guild_channel_delete(self,channel): await self.object_event('server','刪除頻道',channel)
+    async def on_guild_channel_delete(self,channel): await self.object_event('server','刪除頻道',channel,deleted=True)
     @commands.Cog.listener()
     async def on_guild_channel_update(self,before,after):
         lines=changes(before,after,[('name','名稱'),('topic','主題'),('category_id','分類'),('slowmode_delay','慢速模式'),('nsfw','年齡限制'),('user_limit','人數上限')])
         if before.overwrites!=after.overwrites: lines.append('頻道權限覆寫已變更；詳見官方審核事件。')
         if lines: await self.object_event('server','頻道設定變更',after,'\n'.join(lines))
     @commands.Cog.listener()
-    async def on_guild_role_create(self,role): await self.object_event('server','建立身份組',role)
+    async def on_guild_role_create(self,role): await self.object_event('server','建立身份組',role,kind='role')
     @commands.Cog.listener()
-    async def on_guild_role_delete(self,role): await self.object_event('server','刪除身份組',role)
+    async def on_guild_role_delete(self,role): await self.object_event('server','刪除身份組',role,kind='role',deleted=True)
     @commands.Cog.listener()
     async def on_guild_role_update(self,before,after):
         lines=changes(before,after,[('name','名稱'),('permissions','權限'),('colour','顏色'),('hoist','獨立顯示'),('mentionable','可被提及')])
-        if lines: await self.object_event('server','身份組設定變更',after,'\n'.join(lines))
+        if lines: await self.object_event('server','身份組設定變更',after,'\n'.join(lines),kind='role')
     @commands.Cog.listener()
     async def on_guild_update(self,before,after):
         lines=changes(before,after,[('name','名稱'),('verification_level','驗證等級'),('mfa_level','管理員雙重驗證'),('explicit_content_filter','內容過濾')])
@@ -336,19 +329,34 @@ class CommunityAudit(commands.Cog):
     async def on_audit_log_entry_create(self,entry):
         if entry.guild.id!=config.GUILD_ID:
             return
-        actor=who(entry.user) if entry.user else f'用戶 ID：{entry.user_id or "未知"}'
+        actor_user=entry.user
+        if actor_user is not None: actor_user=entry.guild.get_member(actor_user.id) or actor_user
+        actor=who(actor_user) if actor_user else (f'<@{entry.user_id}>' if entry.user_id else '未知')
         target=getattr(entry.target,'id',None)
-        detail=f'官方審核 ID：{entry.id}\n操作：{entry.action.name}\n操作者：{actor}\n對象 ID：{target or "未提供"}\n原因：{safe(entry.reason or "未提供",500)}'
+        kind=entry.action.target_type
+        target_label=f'ID `{target}`' if target else '未提供'
+        if target and kind=='role':
+            obj=entry.guild.get_role(target) or entry.target
+            if not getattr(obj,'name',None):
+                from types import SimpleNamespace
+                obj=SimpleNamespace(id=target,name=getattr(entry.before,'name',None) or getattr(entry.after,'name',None) or '未快取名稱')
+            target_label=role_label(obj,deleted=entry.action.name=='role_delete')
+        elif target and (kind=='user' or isinstance(entry.target,(discord.Member,discord.User))):
+            target_label=who(entry.guild.get_member(target) or entry.target)
+        elif target and kind in {'channel','thread'}:
+            target_label=f'**{safe(getattr(entry.target,"name","未快取名稱"),100)}** · <#{target}>'
+        action=ACTIONS.get(entry.action.name,entry.action.name.replace('_',' '))
+        detail=f'**操作者**\n{actor}\n**對象**\n{target_label}\n原因：{safe(entry.reason or "未提供",500)}\n審核編號：`{entry.id}`'
         # This entry is authoritative only for its own target/action, never guessed onto a message.
         fields=[('name','名稱'),('permissions','權限'),('topic','主題'),('roles','身份組'),('communication_disabled_until','禁言至'),('mute','靜音'),('deaf','拒聽'),('nsfw','年齡限制')]
         detail+='\n'+'\n'.join(changes(entry.before,entry.after,fields))
         extra=getattr(entry,'extra',None)
         if extra:
             channel=getattr(extra,'channel',None)
-            if channel: detail+=f'\n頻道 ID：{channel.id}'
+            if channel: detail+=f'\n頻道：<#{channel.id}>'
             count=getattr(extra,'count',None)
             if count is not None: detail+=f'\n涉及數量：{count}'
-        await self.emit('server','官方審核事件',detail,key=f'audit:{entry.id}')
+        await self.emit('server','官方審核｜'+action,detail,key=f'audit:{entry.id}',subject=actor_user)
 
     async def menu_entry(self,inter):
         await self.show_status(inter)
@@ -402,7 +410,7 @@ class CommunityAudit(commands.Cog):
             for category in ROUTES:
                 self.destination(category)
             for category in ROUTES:
-                keys.append(await self.emit(category,'🧪 日誌路由驗收',f'管理員 {who(inter.user)} 測試 {category} 路由。\n這是明確標示的測試事件，不代表真實成員／訊息操作。'))
+                keys.append(await self.emit(category,'🧪 日誌路由驗收',f'管理員 {who(inter.user)} 測試 {category} 路由。\n身份組顯示樣本：{role_label(inter.guild.me.top_role)}\n這是明確標示的測試事件，不代表真實成員／訊息操作。',subject=inter.user))
             await inter.followup.send('四類測試已排入佇列；請核對各頻道實際收到。\n'+'\n'.join(str(k) for k in keys),ephemeral=True,allowed_mentions=NONE)
         else:
             changed=await asyncio.to_thread(self.store.resolve,event or '',action,inter.user.id)
