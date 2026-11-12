@@ -32,6 +32,60 @@ class AuditHomeView(AuditView):
     @discord.ui.button(label='處理待查事件',emoji='📋')
     async def reviews(self,inter,button): await open_reviews(self.cog,inter)
 
+    @discord.ui.button(label='處理監察問題',emoji='🛠️')
+    async def monitor(self,inter,button):
+        if not await self.cog.authorized(inter): return
+        await inter.response.defer(ephemeral=True)
+        monitor=self.cog.bot.get_cog('AuditMonitor')
+        if monitor is None:
+            return await inter.followup.send('故障監察尚未載入。',ephemeral=True)
+        view=MonitorRecoveryView(self.cog,self.owner,monitor.card.state.get('recovery_token'),self.cog.write_failures.count)
+        view.rebuild.disabled=monitor.card.state.get('delivery')!='uncertain'
+        view.confirm_loss.disabled=not self.cog.write_failed
+        await inter.followup.send('監察卡結果未明：先核對 bot-維護，再決定重建；原卡如已送達，可能重複。\n寫入失敗：確認只會解除警號，無法補回遺失事件。',view=view,ephemeral=True,allowed_mentions=NONE)
+
+
+class MonitorRecoveryView(AuditView):
+    def __init__(self,cog,owner,token,count):
+        super().__init__(cog,owner)
+        self.token,self.count=token,count
+
+    @discord.ui.button(label='已核對，重建監察卡…')
+    async def rebuild(self,inter,button):
+        await inter.response.send_message('確認已核對 bot-維護？重建可恢復通知，但原卡如已送達，可能出現重複。',
+            view=MonitorConfirmation(self.cog,self.owner,'rebuild',self.token,self.count),ephemeral=True)
+
+    @discord.ui.button(label='確認已知悉漏記…')
+    async def confirm_loss(self,inter,button):
+        await inter.response.send_message(f'確認已知悉累計 {self.count} 次寫入失敗？遺失內容無法由此操作補回；其後新增失敗仍會保留警號。',
+            view=MonitorConfirmation(self.cog,self.owner,'loss',self.token,self.count),ephemeral=True)
+
+
+class MonitorConfirmation(AuditView):
+    def __init__(self,cog,owner,action,token,count):
+        super().__init__(cog,owner)
+        self.action,self.token,self.count=action,token,count
+
+    @discord.ui.button(label='確認處理',style=discord.ButtonStyle.primary)
+    async def confirm(self,inter,button):
+        if not await self.cog.authorized(inter): return
+        await inter.response.defer(ephemeral=True)
+        if self.action=='rebuild':
+            monitor=self.cog.bot.get_cog('AuditMonitor')
+            if monitor is None:
+                return await inter.followup.send('故障監察尚未載入。',ephemeral=True)
+            async with monitor.lock:
+                changed=await asyncio.to_thread(monitor.card.allow_rebuild,self.token,inter.user.id)
+        else:
+            changed=await self.cog.acknowledge_write_failures(self.count,inter.user.id)
+        if changed:
+            await self.cog.emit('server','日誌監察人工處理',f'操作人 ID：{inter.user.id}\n處理：{self.action}\n失敗累計：{self.count}\n此操作不代表遺失事件已補回。')
+        await inter.followup.send('已記錄處理，監察將於下一輪重新核對。' if changed else '狀態已變更或已處理，請重新開啟面板。',ephemeral=True,allowed_mentions=NONE)
+
+    @discord.ui.button(label='取消')
+    async def cancel(self,inter,button):
+        await inter.response.edit_message(content='已取消，狀態不變。',view=None)
+
 
 async def open_reviews(cog,inter):
     if not await cog.authorized(inter):return

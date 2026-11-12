@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 
 import discord
 
@@ -16,7 +17,7 @@ def findings(health, *, sender_running, heartbeat, write_failed, now=None):
     result=[]
     if not sender_running: result.append('日誌派送循環已停止')
     elif heartbeat and now-heartbeat>120: result.append('日誌派送超過 120 秒未完成一輪')
-    if write_failed: result.append('最近一次事件未能寫入持久佇列')
+    if write_failed: result.append('曾有事件未能寫入持久佇列，需人工確認漏記')
     if health['states'].get('uncertain',0): result.append(f"結果未明：{health['states']['uncertain']} 筆，需人工核對")
     if health['states'].get('pending',0)>=100: result.append(f"待送積壓：{health['states']['pending']} 筆")
     if health.get('oldest_pending') and now-health['oldest_pending']>120:
@@ -34,8 +35,25 @@ class IncidentCard:
         if self.state.get('delivery')=='sending':
             self.state['delivery']='uncertain'
             self.save()
+        if self.state.get('delivery')=='uncertain' and not self.state.get('recovery_token'):
+            self.state['recovery_token']=uuid.uuid4().hex
+            self.save()
 
     def save(self): atomic_write_json(self.path,self.state)
+
+    def allow_rebuild(self,token,actor):
+        """Explicit human decision only; stale confirmations cannot reset a later incident."""
+        if not token or token!=self.state.get('recovery_token') or self.state.get('delivery')!='uncertain':
+            return False
+        receipt=dict(actor=actor,action='rebuild',stamp=time.time(),token=token)
+        previous=self.state
+        self.state={**previous,'delivery':'pending','status':None,'published_issues':[],
+                    'recovery_token':None,'reviews':(previous.get('reviews',[])+[receipt])[-20:]}
+        try: self.save()
+        except BaseException:
+            self.state=previous
+            raise
+        return True
 
     async def publish(self,channel,issues,*,demo=False,now=None):
         now=time.time() if now is None else now
@@ -76,11 +94,43 @@ class IncidentCard:
                 message=await channel.send(text,allowed_mentions=discord.AllowedMentions.none(),silent=True)
             except discord.HTTPException as exc:
                 self.state['delivery']='pending' if 400<=exc.status<500 else 'uncertain'
+                if self.state['delivery']=='uncertain': self.state['recovery_token']=uuid.uuid4().hex
                 self.save(); raise
             except BaseException:
-                self.state['delivery']='uncertain'; self.save(); raise
+                self.state.update(delivery='uncertain',recovery_token=uuid.uuid4().hex)
+                self.save(); raise
             self.state['message_id']=message.id
         self.state.update(status=status,published_issues=list(issues),delivery='sent')
         if not issues: self.state['since']=None
         self.save()
         return 'updated' if mid else 'sent'
+
+
+class WriteFailures:
+    """A successful later event must not erase evidence of an earlier lost event."""
+    def __init__(self,path=None):
+        self.path=path
+        self.state=load_json_object(path,dict) if path else {}
+
+    @property
+    def count(self): return self.state.get('count',0)
+
+    @property
+    def pending(self): return self.count>self.state.get('acknowledged',0)
+
+    def save(self):
+        if self.path: atomic_write_json(self.path,self.state)
+
+    def record(self):
+        self.state.update(count=self.count+1,last_failure=time.time())
+        self.save()
+
+    def acknowledge(self,count,actor):
+        if count!=self.count or not self.pending: return False
+        previous=self.state
+        self.state={**previous,'acknowledged':count,'actor':actor,'acknowledged_at':time.time()}
+        try: self.save()
+        except BaseException:
+            self.state=previous
+            raise
+        return True

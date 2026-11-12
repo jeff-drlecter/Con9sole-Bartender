@@ -123,6 +123,9 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
         cog=CommunityAudit(NS())
         guild=NS(default_role=object(),me=object())
         channel=MagicMock(spec=discord.TextChannel)
+        channel.guild=guild
+        guild.roles=[]; guild.members=[]; guild.owner_id=1
+        channel.overwrites={}
         guild.get_channel=lambda _:channel
         cog.bot=NS(get_guild=lambda _:guild)
         channel.permissions_for.side_effect=lambda who:NS(view_channel=who is guild.me,send_messages=True,embed_links=True)
