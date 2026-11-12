@@ -11,6 +11,7 @@ from discord.ext import commands, tasks
 import config
 from core.audit_monitor import ALERT_CHANNEL, IncidentCard, findings
 from core.storage_paths import DATA_DIR
+from core.audit_privacy import require_private_audit_channel
 
 log=logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class AuditMonitor(commands.Cog):
         permissions=channel.permissions_for(guild.me)
         if channel.permissions_for(guild.default_role).view_channel or not (permissions.view_channel and permissions.send_messages):
             raise RuntimeError('bot-維護路由不是私有或 Bot 無法派送')
+        require_private_audit_channel(channel,admin_only=True)
         return channel
 
     @tasks.loop(seconds=30)
@@ -60,7 +62,10 @@ class AuditMonitor(commands.Cog):
                 if not self.bot.is_ready(): issues.append('Discord Gateway 未連線')
                 self.latest=issues
                 if issues or self.card.state.get('since'):
-                    await self.card.publish(self.destination(),issues)
+                    result=await self.card.publish(self.destination(),issues)
+                    if result=='uncertain':
+                        self.last_error='監察卡送出結果未明；請用 /logging → 處理監察問題人工核對'
+                        return
                 self.last_error=None
             except asyncio.CancelledError: raise
             except Exception as exc:

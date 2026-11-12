@@ -16,6 +16,8 @@ import config
 from core.community_audit import AuditStore, event_id
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
+from core.audit_monitor import WriteFailures
+from core.audit_privacy import require_private_audit_channel
 
 log = logging.getLogger(__name__)
 ROUTES = {
@@ -66,8 +68,12 @@ class CommunityAudit(commands.Cog):
         self.route_due = {}
         self.heartbeat = time.time()
         self.write_failed = False
+        self.write_failures = WriteFailures()
+        self.failure_lock = asyncio.Lock()
 
     async def cog_load(self):
+        self.write_failures = await asyncio.to_thread(WriteFailures, DATA_DIR / 'audit_write_failures.json')
+        self.write_failed = self.write_failures.pending
         self.store = await asyncio.to_thread(AuditStore, DATA_DIR / 'community_audit.sqlite3')
         self.deliver.start()
 
@@ -81,12 +87,20 @@ class CommunityAudit(commands.Cog):
         try:
             key = await asyncio.to_thread(self.store.append,category,
                 {'title':title[:200],'description':description[:3500]},key=key)
-            self.write_failed=False
             return key
         except Exception:
-            self.write_failed=True
+            async with self.failure_lock:
+                self.write_failed=True
+                try: await asyncio.to_thread(self.write_failures.record)
+                except Exception: log.exception('Could not persist audit write-failure counter; in-memory warning retained')
             self.last_error='事件寫入失敗；請查看執行日誌。'
             log.exception('Audit event persistence failed: category=%s',category)
+
+    async def acknowledge_write_failures(self,count,actor):
+        async with self.failure_lock:
+            changed=await asyncio.to_thread(self.write_failures.acknowledge,count,actor)
+            self.write_failed=self.write_failures.pending
+            return changed
 
     def destination(self, category):
         guild=self.bot.get_guild(config.GUILD_ID)
@@ -98,6 +112,7 @@ class CommunityAudit(commands.Cog):
             raise RuntimeError('missing audit delivery permissions: '+category)
         if channel.permissions_for(guild.default_role).view_channel:
             raise RuntimeError('audit channel is visible to everyone: '+category)
+        require_private_audit_channel(channel)
         return channel
 
     @tasks.loop(seconds=3)
@@ -358,6 +373,7 @@ class CommunityAudit(commands.Cog):
         guild=inter.guild
         embed.add_field(name='事件接收',value=f'Gateway 已連線：{self.bot.is_ready()}｜審核權限：{guild.me.guild_permissions.view_audit_log}｜訊息內容 Intent：{self.bot.intents.message_content}',inline=False)
         embed.add_field(name='佇列',value=str(states)+'\n'+f'派送循環：{self.deliver.is_running()}｜最近錯誤：{self.last_error or "無"}',inline=False)
+        embed.add_field(name='寫入失敗紀錄',value=f'累計：{self.write_failures.count}｜待人工確認：{self.write_failed}（成功寫入不會清除此警號）',inline=False)
         if recent: embed.add_field(name='待送／待查事件（完整 ID）',value='\n'.join(f'{key}｜{cat}｜{state}' for key,cat,state,error in recent)[:1000],inline=False)
         embed.set_footer(text='未快取刪除訊息無法還原；斷線期間不補記；結果不明需人工核對；Discord 已發日誌不會定時刪除。')
         from features.audit_review import AuditHomeView
