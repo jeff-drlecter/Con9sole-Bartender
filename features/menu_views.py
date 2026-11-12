@@ -81,6 +81,7 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
 }
 
 NO_COOLDOWN_ITEM_IDS = {
+    "squad_plans",
     "stream_admin",
     "invite_leaderboard", "invite_mine", "platform_invites",
     "community_rank",

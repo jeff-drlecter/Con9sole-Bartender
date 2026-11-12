@@ -18,6 +18,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
                 ("飲一杯", 0),
                 ("請人飲", 0),
                 ("搵人玩", 1),
+                ("約一局", 1),
                 ("小隊 call", 1),
                 ("小隊 call 控制", 3),
                 ("我的組隊通知", 3),
