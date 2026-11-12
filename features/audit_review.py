@@ -45,9 +45,10 @@ async def open_reviews(cog,inter):
         label=f"{row['category']}｜{row['payload']['title']}"[:100],value=row['id'],
         description=f"{row['id'][:45]}｜嘗試 {row['attempts']} 次"[:100]) for row in rows])
     async def choose(interaction):
+        await interaction.response.defer(ephemeral=True)
         row=await asyncio.to_thread(cog.store.get_review,select.values[0])
         if row is None:
-            return await interaction.response.send_message('此事件已處理，請重新整理。',ephemeral=True)
+            return await interaction.followup.send('此事件已處理，請重新整理。',ephemeral=True)
         await show_detail(cog,interaction,row)
     select.callback=choose
     view.add_item(select)
@@ -59,7 +60,7 @@ async def show_detail(cog,inter,row):
     embed.add_field(name='事件',value=f"`{row['id']}`\n{row['category']}｜{row['payload']['title']}\n<t:{int(row['stamp'])}:f>",inline=False)
     embed.add_field(name='派送狀態',value=f"結果未明｜嘗試 {row['attempts']} 次｜{row['error'] or '無錯誤分類'}",inline=False)
     embed.set_footer(text='原頻道已出現相同事件編號才選確認收到；未收到才確認重試。')
-    await inter.response.send_message(embed=embed,view=AuditDetailView(cog,inter.user.id,row['id'],row['category']),ephemeral=True,allowed_mentions=NONE)
+    await inter.followup.send(embed=embed,view=AuditDetailView(cog,inter.user.id,row['id'],row['category']),ephemeral=True,allowed_mentions=NONE)
 
 
 class AuditDetailView(AuditView):
@@ -75,10 +76,11 @@ class AuditDetailView(AuditView):
 
     @discord.ui.button(label='重試派送…',style=discord.ButtonStyle.secondary)
     async def retry(self,inter,button):
+        await inter.response.defer(ephemeral=True)
         row=await asyncio.to_thread(self.cog.store.get_review,self.key)
         if row is None:
-            return await inter.response.send_message('此事件已處理，請重新整理。',ephemeral=True)
-        await inter.response.send_message('已在原頻道核對，未找到相同事件編號？\n確認後會重新派送；若其實已收到，可能出現重複日誌。',
+            return await inter.followup.send('此事件已處理，請重新整理。',ephemeral=True)
+        await inter.followup.send('已在原頻道核對，未找到相同事件編號？\n確認後會重新派送；若其實已收到，可能出現重複日誌。',
             view=RetryConfirmation(self.cog,self.owner,self.key),ephemeral=True,allowed_mentions=NONE)
 
 
