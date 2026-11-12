@@ -1081,15 +1081,6 @@ class TempVC(commands.Cog):
         if member.bot:
             return
 
-        if before.channel != after.channel:
-            mtxt = await mention_or_id(member.guild, member)
-            if not before.channel and after.channel:
-                await send_log(member.guild, emb("Voice Join", f"{mtxt} {voice_arrow(before.channel, after.channel)}", 0x57F287))
-            elif before.channel and not after.channel:
-                await send_log(member.guild, emb("Voice Leave", f"{mtxt} {voice_arrow(before.channel, after.channel)}", 0xED4245))
-            else:
-                await send_log(member.guild, emb("Voice Move", f"{mtxt} {voice_arrow(before.channel, after.channel)}", 0x5865F2))
-
         if before.channel and is_temp_vc_id(before.channel.id):
             await schedule_delete_if_empty(before.channel, force=True)
 

@@ -66,59 +66,6 @@ class WelcomeLog(commands.Cog):
         except Exception as exc:
             log.exception("Failed to send welcome message: member=%s guild=%s", member.id, member.guild.id)
 
-        member_text = await mention_or_id(member.guild, member)
-        await send_log(member.guild, emb("Member Join", f"👋 {member_text} 加入伺服器。", 0x57F287))
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
-        member_text = await mention_or_id(member.guild, member)
-        await send_log(member.guild, emb("Member Leave", f"👋 {member_text} 離開伺服器。", 0xED4245))
-
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member):
-        if before.nick != after.nick:
-            member_text = await mention_or_id(after.guild, after)
-            description = (
-                f"🪪 {member_text} 暱稱變更：\n"
-                f"**Before**：{before.nick or '（無）'}\n"
-                f"**After**：{after.nick or '（無）'}"
-            )
-            await send_log(after.guild, emb("Nickname Change", description, 0x5865F2))
-
-        before_ids = {role.id for role in before.roles}
-        after_ids = {role.id for role in after.roles}
-        added_roles = [
-            role for role in after.roles
-            if role.id not in before_ids and role.name != "@everyone"
-        ]
-        removed_roles = [
-            role for role in before.roles
-            if role.id not in after_ids and role.name != "@everyone"
-        ]
-
-        if added_roles:
-            member_text = await mention_or_id(after.guild, after)
-            text = "➕ " + member_text + " 新增角色： " + ", ".join(
-                role_mention_safe(role) for role in added_roles
-            )
-            await send_log(after.guild, emb("Member Role Add", text, 0x57F287))
-
-        if removed_roles:
-            member_text = await mention_or_id(after.guild, after)
-            text = "➖ " + member_text + " 移除角色： " + ", ".join(
-                role_mention_safe(role) for role in removed_roles
-            )
-            await send_log(after.guild, emb("Member Role Remove", text, 0xED4245))
-
-    @commands.Cog.listener()
-    async def on_member_ban(self, guild: discord.Guild, user: discord.User):
-        member_text = await mention_or_id(guild, user)
-        await send_log(guild, emb("Member Ban", f"🔨 封鎖：{member_text}", 0xED4245))
-
-    @commands.Cog.listener()
-    async def on_member_unban(self, guild: discord.Guild, user: discord.User):
-        member_text = await mention_or_id(guild, user)
-        await send_log(guild, emb("Member Unban", f"🕊️ 解除封鎖：{member_text}", 0x57F287))
 
 
 async def setup(bot: commands.Bot):

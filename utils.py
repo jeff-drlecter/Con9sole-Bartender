@@ -28,12 +28,7 @@ def emb(title: str, desc: str = "", color: int = 0x5865F2) -> discord.Embed:
 
 
 async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
-    """把 embed 發到 LOG_CHANNEL_ID（如果設置正確）。
-
-    - 先用 cache `guild.get_channel`，失敗再 `fetch_channel`。
-    - 強制允許 **user mentions**，以確保手機/桌面都可點擊打開用戶卡。
-    - 出錯唔會影響主流程，只記錄提示。
-    """
+    """Legacy helper; community event listeners now use CommunityAudit."""
     if not LOG_CHANNEL_ID:
         log.warning("LOG_CHANNEL_ID is not configured; skipping Discord audit log")
         return
@@ -47,11 +42,8 @@ async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
         try:
             await ch.send(
                 embed=embed,
-                allowed_mentions=discord.AllowedMentions(
-                    users=True,  # ✅ 允許 @用戶（保證 mobile-clickable）
-                    roles=False,
-                    everyone=False,
-                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+                silent=True,
             )
         except Exception:  # pragma: no cover
             log.exception("Failed to send Discord audit log to channel=%s", LOG_CHANNEL_ID)
