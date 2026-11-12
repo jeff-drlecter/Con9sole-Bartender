@@ -20,8 +20,8 @@ TARGET = discord.Object(id=config.GUILD_ID)
 NONE = discord.AllowedMentions.none()
 
 
-def allowed(interaction):
-    channel = interaction.channel
+def allowed(interaction, channel=None):
+    channel = interaction.channel if channel is None else channel
     return (interaction.guild_id == config.GUILD_ID
             and isinstance(channel, discord.TextChannel)
             and (is_verified_member(interaction.user) or is_server_admin(interaction.user))
@@ -37,6 +37,36 @@ def game_hint(channel):
         if fragment.casefold() in name.casefold():
             return label
     return ''
+
+
+def squad_channel(channel):
+    return isinstance(channel, discord.TextChannel) and (
+        channel.name.endswith('-吹水組隊') or channel.name == '公海吹水'
+    )
+
+
+class PlanChannelView(SafeView):
+    """Choose only a destination the member and bot can currently use."""
+    def __init__(self, cog, owner_id, channels):
+        super().__init__(timeout=180)
+        self.cog, self.owner_id = cog, owner_id
+        # Discord permits 25 options per select; use separate rows if needed.
+        for offset in range(0, len(channels), 25):
+            select = discord.ui.Select(placeholder='選擇組隊頻道', options=[
+                discord.SelectOption(label=channel.name[:100], value=str(channel.id))
+                for channel in channels[offset:offset + 25]
+            ])
+            async def choose(interaction, select=select):
+                if interaction.user.id != self.owner_id:
+                    await interaction.response.send_message('請用 /menu 開啟自己嘅約局選單。', ephemeral=True)
+                    return
+                channel = interaction.guild.get_channel(int(select.values[0])) if interaction.guild else None
+                if not squad_channel(channel) or not allowed(interaction, channel):
+                    await interaction.response.send_message('你已無法喺呢個頻道約局，請重新開啟 /menu。', ephemeral=True)
+                    return
+                await interaction.response.send_modal(PlanForm(self.cog, channel))
+            select.callback = choose
+            self.add_item(select)
 
 
 def card(plan):
@@ -75,7 +105,8 @@ class PlanForm(SafeModal):
             self.add_item(item)
 
     async def on_submit(self, interaction):
-        if not allowed(interaction) or interaction.channel_id != self.channel_id:
+        channel = interaction.guild.get_channel(self.channel_id) if interaction.guild else None
+        if channel is None or not allowed(interaction, channel) or (self.plan_id and interaction.channel_id != self.channel_id):
             await interaction.response.send_message('請喺你可以發言嘅遊戲文字頻道使用。', ephemeral=True)
             return
         try:
@@ -92,25 +123,25 @@ class PlanForm(SafeModal):
             try:
                 if self.plan_id:
                     p = self.cog.book.get(self.plan_id)
-                    if not p or p['channel'] != interaction.channel_id:
+                    if not p or p['channel'] != channel.id:
                         raise ValueError('搵唔到呢個約局。')
                     p = self.cog.book.act(self.plan_id, interaction.user.id, 'edit', changes=changes)
                     refreshed = await self.cog.refresh(p)
                 else:
-                    perms = interaction.channel.permissions_for(interaction.guild.me)
+                    perms = channel.permissions_for(interaction.guild.me)
                     if not all((perms.view_channel, perms.send_messages, perms.embed_links, perms.read_message_history)):
                         raise ValueError('Bot 需要查看、發訊息、嵌入連結及讀取歷史權限。')
-                    p = self.cog.book.create(guild=interaction.guild_id, channel=interaction.channel_id, owner=interaction.user.id, **changes)
+                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='open')
                     view = PlanView(self.cog, posted)
-                    message = await interaction.channel.send(embed=card(posted), view=view, allowed_mentions=NONE)
+                    message = await channel.send(embed=card(posted), view=view, allowed_mentions=NONE)
                     self.cog.book.publish(p['id'], message.id)
                     refreshed = True
             except ValueError as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
                 return
-        await interaction.followup.send('已更新約局。' if self.plan_id else '約局已發出，其他人可以按卡加入。', ephemeral=True,
+        await interaction.followup.send('已更新約局。' if self.plan_id else f'約局已發到 {channel.mention}，其他人可以按卡加入。', ephemeral=True,
             allowed_mentions=NONE)
         if not refreshed:
             await interaction.followup.send('資料已儲存；卡片暫時更新唔到，稍後會重試。', ephemeral=True)
@@ -210,6 +241,23 @@ class SquadPlans(commands.Cog):
     def __init__(self, bot):
         self.bot, self.lock = bot, asyncio.Lock()
         self.book = PlanBook(DATA_DIR / 'squad_plans.json')
+
+    async def menu_entry(self, interaction):
+        if not allowed(interaction):
+            await interaction.response.send_message('已驗證成員可喺可發言嘅文字頻道約局。', ephemeral=True)
+            return
+        if squad_channel(interaction.channel):
+            await interaction.response.send_modal(PlanForm(self, interaction.channel))
+            return
+        channels = [channel for channel in interaction.guild.text_channels
+                    if squad_channel(channel) and allowed(interaction, channel)
+                    and all(getattr(channel.permissions_for(interaction.guild.me), name)
+                            for name in ('view_channel', 'send_messages', 'embed_links', 'read_message_history'))]
+        if not channels:
+            await interaction.response.send_message('暫時未有可用嘅組隊頻道；請先到「頻道及身份組」選擇遊戲。', ephemeral=True)
+            return
+        await interaction.response.send_message('📅 想喺邊個頻道約一局？',
+            view=PlanChannelView(self, interaction.user.id, channels[:125]), ephemeral=True)
 
     async def cog_load(self):
         self.bot.add_view(PlanEntry(self))
