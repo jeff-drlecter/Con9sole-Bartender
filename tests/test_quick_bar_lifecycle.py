@@ -43,7 +43,7 @@ async def run():
         after = bot.get_cog("TempVC")._sweeper_task
         await bot.reload_extension("cogs.menu")
         await bot.reload_extension("cogs.teams")
-        print(json.dumps({"extensions": len(bot.extensions), "missing": missing,
+        print(json.dumps({"extensions": len(bot.extensions), "missing": missing,\n            "plans_loaded": bot.get_cog("SquadPlans") is not None,
             "sweeper_restarted": before is not None and after is not None and before is not after,
             "maintenance_restarted": maintenance_before is not maintenance_after and maintenance_before.cancelling() > 0,
             "command_count": len(bot.tree.get_commands(guild=discord.Object(626378673523785731))) }))
@@ -86,8 +86,9 @@ asyncio.run(run())
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(report["extensions"], 32, result.stderr)
+        self.assertEqual(report["extensions"], 33, result.stderr)
         self.assertEqual(report["missing"], [])
+        self.assertTrue(report["plans_loaded"])
         self.assertTrue(report["sweeper_restarted"])
         self.assertTrue(report["maintenance_restarted"])
-        self.assertEqual(report["command_count"], 54)
+        self.assertEqual(report["command_count"], 56)
