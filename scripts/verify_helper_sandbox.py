@@ -25,7 +25,8 @@ def main():
             headers={'Authorization':'Bot '+token,'User-Agent':'Con9sole-Bartender/1.0'})
         with urllib.request.urlopen(request,timeout=20) as response: return json.load(response)
     channel=get('channels/'+settings['channel'])
-    assert channel['guild_id']=='626378673523785731' and channel['name']=='helper-模擬區'
+    assert channel['guild_id']=='626378673523785731' and channel['id']==settings['channel']
+    assert channel['id']=='1570093470666854411' and channel['type']==0, 'Unexpected helper sandbox channel'
     overwrites={r['id']:r for r in channel['permission_overwrites']}
     assert int(overwrites[channel['guild_id']]['deny']) & 1024, 'Channel must remain private'
     for role in [settings['tester_role'],'1279071042249162856']:
