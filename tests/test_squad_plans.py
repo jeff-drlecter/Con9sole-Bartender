@@ -1,4 +1,6 @@
 import tempfile
+import subprocess
+import sys
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -121,6 +123,38 @@ class ScheduledSquadTests(unittest.TestCase):
             self.create()
         with self.assertRaises(ValueError):
             self.create()
+
+    def test_discord_extension_and_persistent_controls(self):
+        # A subprocess avoids the lightweight Discord fakes used by other suites.
+        check = subprocess.run([sys.executable, '-c', '''
+import sys
+try:
+    import discord
+except ModuleNotFoundError:
+    sys.exit(77)
+import asyncio
+from cogs.squad_plans import PlanView, PlanEntry, PlanForm, ManageView, card, SquadPlans
+from types import SimpleNamespace
+async def check():
+    p = dict(id='test', game='FC', mode='Clubs', status='open', owner=3,
+             start=2000000000, party=3, capacity=5, members=[4], message=9)
+    assert PlanView(None, p).is_persistent()
+    assert PlanEntry(None).is_persistent()
+    assert len(PlanView(None, p).children) == 3
+    assert len(PlanForm(None, SimpleNamespace(id=2, category=None)).children) == 5
+    assert '4／5' in card(p).fields[0].name
+    view = ManageView(None, 'test', False, False)
+    assert all(button.disabled for button in view.children)
+    view = ManageView(None, 'test', False, True)
+    assert view.edit.disabled and not view.cancel.disabled
+    p['status'] = 'cancelled'
+    assert all(button.disabled for button in PlanView(None, p).children)
+    assert SquadPlans.plan.name == '約局'
+asyncio.run(check())
+'''], capture_output=True, text=True)
+        if check.returncode == 77:
+            self.skipTest('discord.py unavailable locally; CI installs locked dependencies')
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
 
 if __name__ == '__main__':
