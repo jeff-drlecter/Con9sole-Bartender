@@ -27,6 +27,7 @@ class HealthView(SafeView):
             from features.drink_views import FeatureButton
             self.add_item(FeatureButton(label='等級管理', emoji='🎖️', cog='CommunityLevels', method='admin_entry', row=1))
             self.add_item(FeatureButton(label='稱號管理', emoji='🏅', cog='TitleRoles', method='admin_entry', row=1))
+            self.add_item(FeatureButton(label='社群日誌', emoji='📋', cog='CommunityAudit', method='menu_entry', row=1))
             audit = discord.ui.Button(label='通知操作紀錄', emoji='📋', row=1)
             async def show_audit(inter):
                 current = inter.guild.get_member(inter.user.id) if inter.guild else None
@@ -89,6 +90,10 @@ class BotHealth(commands.Cog):
         health=await asyncio.to_thread(storage_health,levels.ledger.path if levels else DATA_DIR / 'community_levels.sqlite3',interaction.guild_id)
         for name,values in health.items():
             embed.add_field(name=name,value='｜'.join(f'{key}：{value}' for key,value in values.items()),inline=False)
+        audit = self.bot.get_cog('CommunityAudit')
+        if audit:
+            counts, _ = await asyncio.to_thread(audit.store.summary)
+            embed.add_field(name='社群日誌', value=f'派送循環：{audit.deliver.is_running()}｜佇列：{counts}｜最近錯誤：{audit.last_error or "無"}', inline=False)
         if is_server_admin(interaction.guild.get_member(interaction.user.id)):
             maintenance = self.bot.get_cog('Maintenance')
             status = await asyncio.to_thread(maintenance.summary, interaction.guild_id) if maintenance else '維護監察未載入'
