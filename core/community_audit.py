@@ -30,6 +30,9 @@ class AuditStore:
                     message_id INTEGER, error TEXT);
                 CREATE INDEX IF NOT EXISTS audit_due ON audit_events(state,due,stamp);
             ''')
+            if 'started' not in {row[1] for row in db.execute('PRAGMA table_info(audit_events)')}:
+                db.execute('ALTER TABLE audit_events ADD COLUMN started REAL')
+            db.execute('CREATE TABLE IF NOT EXISTS audit_reviews(id INTEGER PRIMARY KEY,event TEXT NOT NULL,actor INTEGER NOT NULL,action TEXT NOT NULL,stamp REAL NOT NULL)')
             # A process may have died after Discord accepted a send. Never blindly resend it.
             db.execute("UPDATE audit_events SET state='uncertain',error='process interrupted during delivery' WHERE state='sending'")
 
@@ -61,7 +64,7 @@ class AuditStore:
             db.execute('BEGIN IMMEDIATE')
             if any(db.execute('SELECT state FROM audit_events WHERE id=?',(key,)).fetchone() != ('pending',) for key in keys):
                 return False
-            db.executemany("UPDATE audit_events SET state='sending',attempts=attempts+1 WHERE id=?", ((key,) for key in keys))
+            db.executemany("UPDATE audit_events SET state='sending',attempts=attempts+1,started=? WHERE id=?", ((time.time(),key) for key in keys))
         return True
 
     def finish(self, keys, state, *, message_id=None, error=None):
@@ -74,6 +77,7 @@ class AuditStore:
     def prune(self):
         with connect_sqlite(self.path) as db:
             db.execute("DELETE FROM audit_events WHERE stamp<? AND state IN ('sent','acknowledged')", (time.time()-RETENTION_SECONDS,))
+            db.execute('DELETE FROM audit_reviews WHERE stamp<?',(time.time()-RETENTION_SECONDS,))
 
     def summary(self):
         with connect_sqlite(self.path) as db:
@@ -81,9 +85,33 @@ class AuditStore:
             recent = db.execute("SELECT id,category,state,error FROM audit_events WHERE state IN ('uncertain','pending') ORDER BY stamp LIMIT 8").fetchall()
         return states,recent
 
-    def resolve(self, key, action):
+    def resolve(self, key, action, actor=0):
         if action not in {'retry','ack'}:
             raise ValueError(action)
         with connect_sqlite(self.path) as db:
-            return bool(db.execute("UPDATE audit_events SET state=?,due=0,error=NULL WHERE id=? AND state='uncertain'",
+            db.execute('BEGIN IMMEDIATE')
+            changed=bool(db.execute("UPDATE audit_events SET state=?,due=0,error=NULL WHERE id=? AND state='uncertain'",
                                    ('pending' if action=='retry' else 'acknowledged',key)).rowcount)
+            if changed:
+                db.execute('INSERT INTO audit_reviews(event,actor,action,stamp) VALUES(?,?,?,?)',(key,actor,action,time.time()))
+            return changed
+
+    def health(self):
+        with connect_sqlite(self.path) as db:
+            return {
+                'states':dict(db.execute('SELECT state,count(*) FROM audit_events GROUP BY state')),
+                'oldest_pending':db.execute("SELECT min(stamp) FROM audit_events WHERE state='pending'").fetchone()[0],
+                'oldest_sending':db.execute("SELECT min(started) FROM audit_events WHERE state='sending'").fetchone()[0],
+            }
+
+    def review_rows(self,limit=25):
+        with connect_sqlite(self.path) as db:
+            rows=db.execute("SELECT id,stamp,category,payload,attempts,error FROM audit_events WHERE state='uncertain' ORDER BY stamp LIMIT ?",(limit,)).fetchall()
+        return [dict(id=key,stamp=stamp,category=category,payload=json.loads(raw),attempts=attempts,error=error) for key,stamp,category,raw,attempts,error in rows]
+
+    def get_review(self,key):
+        with connect_sqlite(self.path) as db:
+            row=db.execute("SELECT id,stamp,category,payload,attempts,error FROM audit_events WHERE id=? AND state='uncertain'",(key,)).fetchone()
+        if row is None:return None
+        key,stamp,category,raw,attempts,error=row
+        return dict(id=key,stamp=stamp,category=category,payload=json.loads(raw),attempts=attempts,error=error)

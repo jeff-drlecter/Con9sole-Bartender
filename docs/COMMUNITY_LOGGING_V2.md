@@ -37,3 +37,12 @@
 `/logging action:test` 向四路排入清楚標示的測試事件。必須在各實際頻道看到相符事件 ID，才可視為路由功能測試通過。這不等同真人加入／封鎖／轉房等事件的完整線上測試。離線測試涵蓋原文缺失、NSFW、不迴圈、去重、重啟未明狀態、重試、私有路由及訊息長度限制。
 
 Carl 切換前開啟項目備份：Deleted messages、Edited messages、Purged messages、Members leaving、Member Role updates、Name changes、Avatar changes、Member bans、Member unbans、Member timeout、Member remove timeout、Join voice channel、Move between voice channels、Leave voice channel。其他 Logging 事件當時已關閉。
+
+## v2.1：獨立故障監察及待查面板
+
+- `AuditMonitor` 使用獨立 30 秒循環檢查日誌模組、派送心跳、寫入失敗、四路權限、待送數量／年齡及結果未明紀錄。異常持續 90 秒才在 bot-維護建立一張靜默提示卡；後續異常及恢復更新同一卡，不另發恢復通知。90 秒內恢復不發卡。沒有問題時不呼叫 Discord。
+- 監察卡 ID／狀態另以原子 JSON 保存，不依賴日誌 SQLite／派送循環；Bot 重啟亦重用卡。首次發卡結果未明時保留 uncertain，不盲目重發。若 Bot 整個程序／網絡離線，不能自行在 Discord 報警，仍需主機外部監察才能涵蓋。
+- `/logging` 狀態附「處理待查事件」按鈕；只列送出結果未明的事件，提供節錄、事件編號、嘗試次數及原日誌頻道。人工確認已收到不等同系統回條。重試另有第二步確認；每次重新核對本伺服器、面板擁有人及管理權限，過時按鈕不重複處理。
+- 處理狀態與操作人／時間／動作在 SQLite 同一交易寫入 `audit_reviews`，另送管理日誌；操作紀錄本地保留 30 日。原有手動 `retry`／`ack` 指令仍可用。
+- `/logging action:monitor_test` 用獨立模擬卡及 JSON，實際送出後更新為恢復，測試同卡更新。它不停止正式 logger、不製造正式積壓、不修改正式事件；不應稱為真實故障測試。
+- 追加事件測試覆蓋語音加入／轉房／離開與停留時間、忽略自我靜音噪音、合併身份組及暱稱變更。線上驗收須分別標示實際 Gateway 事件、模擬故障及離線測試。

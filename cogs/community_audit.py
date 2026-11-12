@@ -64,6 +64,8 @@ class CommunityAudit(commands.Cog):
         self.voice_started = {}
         self.last_prune = 0
         self.route_due = {}
+        self.heartbeat = time.time()
+        self.write_failed = False
 
     async def cog_load(self):
         self.store = await asyncio.to_thread(AuditStore, DATA_DIR / 'community_audit.sqlite3')
@@ -77,9 +79,12 @@ class CommunityAudit(commands.Cog):
 
     async def emit(self, category, title, description, *, key=None):
         try:
-            return await asyncio.to_thread(self.store.append,category,
+            key = await asyncio.to_thread(self.store.append,category,
                 {'title':title[:200],'description':description[:3500]},key=key)
+            self.write_failed=False
+            return key
         except Exception:
+            self.write_failed=True
             self.last_error='事件寫入失敗；請查看執行日誌。'
             log.exception('Audit event persistence failed: category=%s',category)
 
@@ -144,6 +149,7 @@ class CommunityAudit(commands.Cog):
                 except Exception:
                     log.exception('Audit retention maintenance failed; retrying next hour')
                 self.last_prune=time.time()
+            self.heartbeat=time.time()
 
     @deliver.before_loop
     async def before_delivery(self):
@@ -354,15 +360,27 @@ class CommunityAudit(commands.Cog):
         embed.add_field(name='佇列',value=str(states)+'\n'+f'派送循環：{self.deliver.is_running()}｜最近錯誤：{self.last_error or "無"}',inline=False)
         if recent: embed.add_field(name='待送／待查事件（完整 ID）',value='\n'.join(f'{key}｜{cat}｜{state}' for key,cat,state,error in recent)[:1000],inline=False)
         embed.set_footer(text='未快取刪除訊息無法還原；斷線期間不補記；結果不明需人工核對；Discord 已發日誌不會定時刪除。')
-        await inter.followup.send(embed=embed,ephemeral=True,allowed_mentions=NONE)
+        from features.audit_review import AuditHomeView
+        monitor=self.bot.get_cog('AuditMonitor')
+        monitor_status='未載入' if monitor is None else f'循環：{monitor.watch.is_running()}｜異常項目：{len(monitor.latest)}｜提示卡：{monitor.card.state.get("delivery","未需要發送")}｜提示錯誤：{monitor.last_error or "無"}'
+        embed.add_field(name='獨立故障監察',value=monitor_status,inline=False)
+        await inter.followup.send(embed=embed,view=AuditHomeView(self,inter.user.id),ephemeral=True,allowed_mentions=NONE)
 
     @app_commands.command(name='logging',description='管理員：核對四類日誌、測試路由及處理結果未明事件')
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)
-    async def logging_command(self,inter:discord.Interaction,action:Literal['status','test','retry','ack']='status',event:str|None=None):
+    async def logging_command(self,inter:discord.Interaction,action:Literal['status','test','review','monitor_test','retry','ack']='status',event:str|None=None):
         if action=='status': return await self.show_status(inter)
+        if action=='review':
+            from features.audit_review import open_reviews
+            return await open_reviews(self,inter)
         if not await self.authorized(inter): return
         await inter.response.defer(ephemeral=True)
+        if action=='monitor_test':
+            monitor=self.bot.get_cog('AuditMonitor')
+            if monitor is None:
+                return await inter.followup.send('故障監察尚未載入。',ephemeral=True)
+            return await monitor.demo(inter)
         if action=='test':
             keys=[]
             for category in ROUTES:
@@ -371,7 +389,7 @@ class CommunityAudit(commands.Cog):
                 keys.append(await self.emit(category,'🧪 日誌路由驗收',f'管理員 {who(inter.user)} 測試 {category} 路由。\n這是明確標示的測試事件，不代表真實成員／訊息操作。'))
             await inter.followup.send('四類測試已排入佇列；請核對各頻道實際收到。\n'+'\n'.join(str(k) for k in keys),ephemeral=True,allowed_mentions=NONE)
         else:
-            changed=await asyncio.to_thread(self.store.resolve,event or '',action)
+            changed=await asyncio.to_thread(self.store.resolve,event or '',action,inter.user.id)
             if changed: await self.emit('server','日誌待查事件處理',f'操作人：{who(inter.user)}\n事件：{safe(event,120)}\n處理：{action}（重試可能產生重複，ack 只代表人工確認）')
             await inter.followup.send('已更新事件狀態。' if changed else '未找到結果未明事件，沒有變更。',ephemeral=True,allowed_mentions=NONE)
 
