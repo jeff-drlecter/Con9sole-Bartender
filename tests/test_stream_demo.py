@@ -31,7 +31,7 @@ class StreamDemoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(demo.sent_ids, [101, 102])
         for message in messages.values():
             message.edit.assert_awaited_once()
-            self.assertIn('已收台', message.edit.await_args.kwargs['embed'].title)
+            self.assertIn('直播已結束', message.edit.await_args.kwargs['embed'].title)
         self.assertIn('直播卡 2 張', demo.summary())
 
     async def test_demo_rejects_real_notification_channels(self):

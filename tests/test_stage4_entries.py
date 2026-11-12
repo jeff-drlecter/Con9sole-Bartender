@@ -36,7 +36,7 @@ class EntryTests(unittest.IsolatedAsyncioTestCase):
             for row in range(5):
                 self.assertLessEqual(sum(b.row == row for b in localized.children), 3 if row == 3 else 2)
             self.assertIn('我的組隊通知', {b.label for b in localized.children})
-            self.assertIn('小隊語音管理' if code == 'tw' else '小隊 call 控制', {b.label for b in localized.children})
+            self.assertIn('語音房設定', {b.label for b in localized.children})
             self.assertIn('我的組隊通知', build_help_embed(language_member(code)).description)
             view.stop()
 

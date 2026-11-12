@@ -33,7 +33,7 @@ LEGACY_QUICK_MENU_ITEMS: list[MenuItem] = [
         row=0,
         cog="Menu",
         method="open_home_menu_from_button",
-        description="進入吧枱主頁",
+        description="進入酒吧主頁",
     ),
     MenuItem(
         id="team",
@@ -48,7 +48,7 @@ LEGACY_QUICK_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="tempvc",
-        label="小隊 call",
+        label="小隊語音",
         emoji="🎧",
         style="primary",
         layer="quick",
@@ -88,7 +88,7 @@ LEGACY_QUICK_MENU_ITEMS: list[MenuItem] = [
         row=2,
         cog="Cheers",
         method="cheer_for_member_entry",
-        description="幫人打氣",
+        description="為成員打氣",
     ),
     MenuItem(
         id="drink",
@@ -129,7 +129,7 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="tempvc",
-        label="小隊 call",
+        label="小隊語音",
         emoji="🎧",
         style="primary",
         layer="home",
@@ -140,7 +140,7 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="tempvc_control",
-        label="小隊 call 控制",
+        label="語音房設定",
         emoji="🎛️",
         style="primary",
         layer="home",
@@ -162,7 +162,7 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="cheers_target",
-        label="幫人打氣",
+        label="為成員打氣",
         emoji="🙌",
         style="primary",
         layer="home",
@@ -246,7 +246,7 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
         row=3,
         cog="DailyBar",
         method="menu_entry",
-        description="查看今日吧枱任務",
+        description="查看今日酒吧任務",
     ),
     MenuItem(
         id="invite",
@@ -308,11 +308,11 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
 
 
 QUICK_MENU_ITEMS: list[MenuItem] = [
-    MenuItem("drink", "飲一杯", "🍹", "success", "quick", 0, "Drink"),
-    MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
-    MenuItem("team", "搵人玩", "👥", "primary", "quick", 1, "Teams"),
-    MenuItem("tempvc", "小隊 call", "🎧", "primary", "quick", 1, "TempVC"),
-    MenuItem("tempvc_control", "小隊 call 控制", "🎛️", "secondary", "quick", 3, "TempVC", "open_control_panel_from_menu"),
+    MenuItem("drink", "喝一杯", "🍹", "success", "quick", 0, "Drink"),
+    MenuItem("drink_gift", "請喝一杯", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
+    MenuItem("team", "找隊友", "👥", "primary", "quick", 1, "Teams"),
+    MenuItem("tempvc", "小隊語音", "🎧", "primary", "quick", 1, "TempVC"),
+    MenuItem("tempvc_control", "語音房設定", "🎛️", "secondary", "quick", 3, "TempVC", "open_control_panel_from_menu"),
     MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "quick", 3, "SquadCards"),
     MenuItem("invite", "邀請朋友", "🔗", "primary", "quick", 3, "Invites"),
     MenuItem("home_menu", "更多玩法", "🍸", "secondary", "quick", 4, "Menu", "open_home_menu_from_button"),
@@ -321,12 +321,12 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
 ]
 
 PREVIOUS_HOME_MENU_ITEMS: list[MenuItem] = [
-    MenuItem("quick_bar", "返回吧枱", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
+    MenuItem("quick_bar", "返回酒吧", "⬅️", "secondary", "home", 0, "Menu", "open_main_menu"),
     MenuItem("drink_collection", "我的收藏", "🍾", "primary", "home", 0, "Drink", "collection_entry"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "home", 0, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "home", 0, "CommunityLevels"),
     MenuItem("cheers", "打氣", "🎉", "success", "home", 1, "Cheers"),
-    MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "home", 1, "Cheers", "cheer_for_member_entry"),
+    MenuItem("cheers_target", "為成員打氣", "🙌", "primary", "home", 1, "Cheers", "cheer_for_member_entry"),
     MenuItem("invite", "邀請朋友", "🔗", "secondary", "home", 2, "Menu", "create_invite_link_from_button"),
     MenuItem("instagram", "IG", "📸", "secondary", "home", 2, "Menu", "open_instagram_from_button"),
     MenuItem("threads", "Threads", "🧵", "secondary", "home", 2, "Menu", "open_threads_from_button"),
@@ -345,7 +345,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem("rankings", "社群排行", "🏆", "secondary", "home", 0, "Menu", "open_rankings_menu"),
     MenuItem("social", "社群互動", "🙌", "secondary", "home", 1, "Menu", "open_social_menu"),
     MenuItem("info", "資訊與設定", "ℹ️", "secondary", "home", 1, "Menu", "open_info_menu"),
-    MenuItem("quick_bar", "返回吧枱", "🍸", "secondary", "home", 2, "Menu", "open_main_menu"),
+    MenuItem("quick_bar", "返回酒吧", "🍸", "secondary", "home", 2, "Menu", "open_main_menu"),
     MenuItem("admin_tool", "管理工具", "🛠️", "secondary", "home", 2, "Menu", "open_admin_tool_from_button", admin_only=True),
 ]
 
@@ -367,12 +367,12 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
     "social": [
         MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "social", 1, "SquadCards"),
         MenuItem("cheers", "打氣", "🎉", "success", "social", 0, "Cheers"),
-        MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
+        MenuItem("cheers_target", "為成員打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
         MenuItem("confession", "無名告白", "🕯️", "secondary", "social", 1, "Confession"),
     ],
     "info": [
-        MenuItem("language", "語境設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
-        MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
+        MenuItem("language", "用語偏好", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
+        MenuItem("customize", "頻道與身分組", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
         MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),
         MenuItem("instagram", "IG", "📸", "secondary", "info", 1, "Menu", "open_instagram_from_button"),
         MenuItem("threads", "Threads", "🧵", "secondary", "info", 1, "Menu", "open_threads_from_button"),
@@ -382,7 +382,7 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
 for section, items in SECTION_MENU_ITEMS.items():
     items.extend([
         MenuItem("home_menu", "返回上一頁", "⬅️", "secondary", section, 4, "Menu", "open_home_menu_from_button"),
-        MenuItem("quick_bar", "返回吧枱", "🍸", "secondary", section, 4, "Menu", "open_main_menu"),
+        MenuItem("quick_bar", "返回酒吧", "🍸", "secondary", section, 4, "Menu", "open_main_menu"),
     ])
 
 
@@ -403,11 +403,11 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
         row=0,
         cog="Menu",
         method="open_home_menu_from_button",
-        description="返回吧枱主頁",
+        description="返回酒吧主頁",
     ),
     MenuItem(
         id="admin_stats",
-        label="Stats",
+        label="使用統計",
         emoji="📊",
         style="primary",
         layer="admin",
@@ -419,7 +419,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_reload",
-        label="Reload",
+        label="重載模組",
         emoji="🔄",
         style="primary",
         layer="admin",
@@ -431,7 +431,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_roles",
-        label="Role Tools",
+        label="身分組工具",
         emoji="🎭",
         style="primary",
         layer="admin",
@@ -443,7 +443,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_game_tools",
-        label="Game Tools",
+        label="遊戲專區管理",
         emoji="🎮",
         style="primary",
         layer="admin",
@@ -455,7 +455,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_update_publisher",
-        label="Update Publisher",
+        label="公告發佈",
         emoji="📣",
         style="success",
         layer="admin",
@@ -467,7 +467,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_ping",
-        label="Ping",
+        label="連線延遲",
         emoji="🏓",
         style="secondary",
         layer="admin",
@@ -479,7 +479,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     ),
     MenuItem(
         id="admin_vc_teardown",
-        label="VC Teardown",
+        label="清理語音房",
         emoji="🧹",
         style="danger",
         layer="admin",

@@ -11,7 +11,11 @@ PROMPT_TITLE = LANGUAGE_TITLE
 def language(member) -> str:
     names = {r.name for r in getattr(member, "roles", []) if not getattr(r, "managed", True) and getattr(getattr(r, "permissions", None), "value", None) == 0}
     # Ambiguous dual-role selections fail back to the server default.
-    return "tw" if ROLE_NAMES["tw"] in names and ROLE_NAMES["hk"] not in names else "hk"
+    if ROLE_NAMES["tw"] in names and ROLE_NAMES["hk"] not in names:
+        return "tw"
+    if ROLE_NAMES["hk"] in names and ROLE_NAMES["tw"] not in names:
+        return "hk"
+    return "neutral"
 
 
 def preference_roles(roles, channels=()):
@@ -43,6 +47,9 @@ TW = {
 
 
 def menu_text(text: str, code: str) -> str:
+    if code == "neutral":
+        from features.wording import text_for_code
+        return text_for_code(code, text)
     if code != "tw":
         return text
     if text in TW:
@@ -98,7 +105,7 @@ class LanguageView(discord.ui.View):
     def __init__(self, owner_id):
         super().__init__(timeout=180)
         self.owner_id = owner_id
-        for code, label in (("hk", "香港語境"), ("tw", "台灣語境")):
+        for code, label in (("neutral", "通用繁體中文"), ("hk", "香港用語"), ("tw", "台灣用語")):
             button = discord.ui.Button(label=label, custom_id=f"language:{code}")
             async def callback(interaction, selected=code):
                 await self.choose(interaction, selected)
@@ -127,15 +134,18 @@ class LanguageView(discord.ui.View):
                 if any(r >= me.top_role for r in roles.values()):
                     raise ValueError("Bot 無法管理語境角色，請管理員檢查角色排序。")
                 # Per-role endpoints preserve concurrent unrelated role assignments.
-                await member.add_roles(roles[code], reason="Member wording preference")
-                await member.remove_roles(roles["hk" if code == "tw" else "tw"], reason="Member wording preference")
+                if code == "neutral":
+                    await member.remove_roles(*roles.values(), reason="Use neutral community wording")
+                else:
+                    await member.add_roles(roles[code], reason="Member wording preference")
+                    await member.remove_roles(roles["hk" if code == "tw" else "tw"], reason="Member wording preference")
                 fresh = await interaction.guild.fetch_member(member.id)
                 selected = {r.id for r in fresh.roles} & {r.id for r in roles.values()}
-                if selected != {roles[code].id}:
+                if selected != (set() if code == "neutral" else {roles[code].id}):
                     raise ValueError("未能確認設定，請重新開啟語境選單再試。")
                 from features.menu_embeds import build_quick_bar_embed
                 from features.menu_views import QuickBarView
                 embed, view = localize_menu(fresh, build_quick_bar_embed(fresh), QuickBarView(interaction.client.get_cog("Menu")))
-                await interaction.followup.send("已切換香港語境。" if code == "hk" else "已切換為台灣用語。", embed=embed, view=view, ephemeral=True)
+                await interaction.followup.send({"neutral": "已切換為通用繁體中文。", "hk": "已切換香港語境。", "tw": "已切換為台灣用語。"}[code], embed=embed, view=view, ephemeral=True)
             except (ValueError, discord.HTTPException) as exc:
                 await interaction.followup.send(f"設定未完成：{exc}", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())

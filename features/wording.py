@@ -207,8 +207,20 @@ def text(member, authored: str) -> str:
     return text_for_code(language(member), authored)
 
 
+NEUTRAL = {
+    "🍸 Con9sole 吧枱": "🍸 Con9sole 酒吧",
+    "搵人玩": "找隊友", "小隊 call": "小隊語音", "小隊 call 控制": "語音房設定",
+    "請人飲": "請喝一杯", "幫人打氣": "為成員打氣", "返回吧枱": "返回酒吧",
+    "語境設定": "用語偏好", "自選頻道與身份": "頻道與身分組",
+    "飲杯嘢，定搵人開局？": "喝一杯，或找隊友一起玩！",
+    "送句打氣，或者去公海傾下遊戲以外嘅話題。": "為成員打氣、匿名投稿，或到綜合聊天區交流。",
+}
+
+
 def text_for_code(code: str, authored: str) -> str:
-    if code != "tw":
+    if code == "neutral" and authored in NEUTRAL:
+        return NEUTRAL[authored]
+    if code not in ("tw", "neutral"):
         return authored
     if authored in TW:
         return TW[authored]

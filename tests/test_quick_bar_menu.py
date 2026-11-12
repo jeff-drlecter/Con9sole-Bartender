@@ -15,11 +15,11 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(b.label, b.row) for b in view.children],
             [
-                ("飲一杯", 0),
-                ("請人飲", 0),
-                ("搵人玩", 1),
-                ("小隊 call", 1),
-                ("小隊 call 控制", 3),
+                ("喝一杯", 0),
+                ("請喝一杯", 0),
+                ("找隊友", 1),
+                ("小隊語音", 1),
+                ("語音房設定", 3),
                 ("我的組隊通知", 3),
                 ("邀請朋友", 3),
                 ("更多玩法", 4),
