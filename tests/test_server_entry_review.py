@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 import config
 from cogs.member_entry import MemberEntryView
+from cogs.member_entry import game_entry_moves
 from cogs.squad_plans import SquadPlans, PlanView, card
 from cogs.welcome_log import welcome_message
 from core.secret_redaction import redact_credentials
@@ -69,7 +70,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([b.disabled for b in view.children], [True, True, False])
             with patch('cogs.squad_plans.is_verified_member', return_value=True):
                 await view.handle(i, 'manage')
-            self.assertIsNone(i.response.send_message.await_args.kwargs['view'])
+            self.assertNotIn('view', i.response.send_message.await_args.kwargs)
             self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
             self.assertEqual(book.get(p['id'])['status'], 'started')
             i.response.send_message.reset_mock()
@@ -77,6 +78,24 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
             with patch('cogs.squad_plans.is_verified_member', return_value=True):
                 await view.handle(i, 'manage')
             self.assertNotIn('view', i.response.send_message.await_args.kwargs)
+
+    async def test_no_view_response_reaches_real_discord_serializer(self):
+        # discord.py sends a response and then calls view.is_finished() when a view
+        # argument is present. An AsyncMock alone cannot catch view=None failures.
+        from discord.webhook.async_ import async_context
+        adapter = N(create_interaction_response=AsyncMock(return_value={
+            'interaction': {'id': '123456789012345678', 'type': 3, 'response_message_id': '223456789012345678'}}))
+        parent = MagicMock()
+        parent.id, parent.token, parent.application_id = 123456789012345678, 'synthetic', 99
+        parent._state.allowed_mentions = None
+        parent._state._interaction_token_expiry = {}
+        response = discord.InteractionResponse(parent)
+        token = async_context.set(adapter)
+        try:
+            await response.send_message('原有 4 人；按卡加入 0 人。', ephemeral=True)
+            adapter.create_interaction_response.assert_awaited_once()
+        finally:
+            async_context.reset(token)
 
     async def test_public_entry_is_persistent_and_opens_private_personal_menu(self):
         view = MemberEntryView()
@@ -106,6 +125,17 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CredentialTests(unittest.TestCase):
+    def test_game_order_excludes_templates_and_ambiguous_categories(self):
+        def category(ident, names):
+            children = [N(id=n, name=name, position=n, _sorting_bucket=0) for n, name in enumerate(names, 1)]
+            return N(id=ident, name='game', text_channels=children, channels=children)
+        live = category(1, ['官方更新-fc', 'fc-吹水組隊'])
+        template = category(config.TEMPLATE_CATEGORY_ID, ['官方更新-sample', 'sample-吹水組隊'])
+        ambiguous = category(2, ['a-吹水組隊', 'b-吹水組隊'])
+        already = category(3, ['bf-吹水組隊', '官方更新-bf'])
+        targets = game_entry_moves(N(categories=[live, template, ambiguous, already]))
+        self.assertEqual(targets, [live.channels[1]])
+
     def test_audit_redacts_credentials_before_escaping_or_truncating(self):
         fake = 'oauth:' + 'a' * 30
         text = '{"twitch_oauth":"' + fake + '","discord_channel_id":"123456789012345678"}'

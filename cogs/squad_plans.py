@@ -53,7 +53,7 @@ def game_hint(channel):
 
 
 def squad_channel(channel):
-    return isinstance(channel, discord.TextChannel) and (
+    return isinstance(channel, discord.TextChannel) and getattr(channel, 'category_id', None) != config.TEMPLATE_CATEGORY_ID and (
         channel.name.endswith('-吹水組隊') or channel.name == '公海吹水'
         or ('測試' in getattr(getattr(channel, 'category', None), 'name', '')
             and channel.name.endswith('體驗交流'))
@@ -189,9 +189,9 @@ class PlanView(SafeView):
             active = p['status'] == 'open' and p['start'] > self.cog.book.clock()
             roster = '、'.join(f'<@{uid}>' for uid in p['members']) or '暫無成員按卡加入。'
             # Chunk into private messages without ever pinging the listed members.
+            controls = {'view': ManageView(self.cog, self.key, interaction.user.id == p['owner'], is_server_admin(interaction.user))} if active else {}
             await interaction.response.send_message(f"原有 {p['party']} 人（包括發起人）；按卡加入 {len(p['members'])} 人。",
-                view=ManageView(self.cog, self.key, interaction.user.id == p['owner'], is_server_admin(interaction.user)) if active else None,
-                ephemeral=True, allowed_mentions=NONE)
+                **controls, ephemeral=True, allowed_mentions=NONE)
             for offset in range(0, len(roster), 1800):
                 await interaction.followup.send(roster[offset:offset + 1800], ephemeral=True, allowed_mentions=NONE)
             return
@@ -356,15 +356,24 @@ class SquadPlans(commands.Cog):
                         updated += 1
                     else:
                         failed += 1
+            seen = set()
+            async def update_entry(message):
+                nonlocal updated
+                if message.id in seen:
+                    return
+                seen.add(message.id)
+                ids = {getattr(item, 'custom_id', None) for row in message.components for item in row.children}
+                if message.author.id == self.bot.user.id and 'plan:new:v1' in ids:
+                    await message.edit(content=PANEL_COPY, view=PlanEntry(self), allowed_mentions=NONE)
+                    updated += 1
             for channel in interaction.guild.text_channels:
                 if not squad_channel(channel):
                     continue
                 try:
                     async for message in channel.pins():
-                        ids = {getattr(item, 'custom_id', None) for row in message.components for item in row.children}
-                        if message.author.id == self.bot.user.id and 'plan:new:v1' in ids:
-                            await message.edit(content=PANEL_COPY, view=PlanEntry(self), allowed_mentions=NONE)
-                            updated += 1
+                        await update_entry(message)
+                    async for message in channel.history(limit=50):
+                        await update_entry(message)
                 except discord.HTTPException:
                     failed += 1
         await interaction.followup.send(f'已更新 {updated} 張現有卡片／入口；未完成 {failed} 項。沒有新增通知。', ephemeral=True)
