@@ -369,3 +369,39 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         helper.guild_permissions=discord.Permissions.none()
         helper.roles=[types.SimpleNamespace(id=123,name='Helpers')]
         self.assertFalse(can_use_staff_tool(helper,'squad_test'))
+
+    async def test_footprint_next_plan_prefills_game_mode_without_posting(self):
+        from cogs.squad_cards import FootprintView
+        from cogs.squad_plans import PlanForm
+        cog=self.cog();view=FootprintView(cog,self.topic)
+        inter=interaction();inter.permissions=discord.Permissions(view_channel=True)
+        inter.message.embeds=[discord.Embed(description='🎮 EA FC · Clubs 球會\n👥 參與成員 · A、B')]
+        inter.channel=MagicMock(spec=discord.TextChannel)
+        inter.channel.id=30;inter.channel.category=None
+        plans=types.SimpleNamespace(menu_entry=AsyncMock())
+        inter.client.get_cog.return_value=plans
+        with patch('cogs.squad_plans.allowed',return_value=True), patch('cogs.squad_plans.squad_channel',return_value=True):
+            await view.create_next(inter)
+        form=inter.response.send_modal.call_args.args[0]
+        self.assertIsInstance(form,PlanForm)
+        self.assertEqual(form.game.default,'EA FC')
+        self.assertEqual(form.mode.default,'Clubs 球會')
+        self.assertFalse(form.start.default)
+        inter.channel.send.assert_not_called()
+        plans.menu_entry.assert_not_awaited()
+        self.assertEqual(store.preferences(self.scope),{})
+        self.assertTrue(view.is_persistent())
+        self.assertEqual(len(view.children),4)
+        view.stop()
+
+    async def test_footprint_next_plan_rechecks_destination_permission(self):
+        from cogs.squad_cards import FootprintView
+        cog=self.cog();view=FootprintView(cog,self.topic)
+        inter=interaction();inter.permissions=discord.Permissions(view_channel=True)
+        plans=types.SimpleNamespace(menu_entry=AsyncMock())
+        inter.client.get_cog.return_value=plans
+        with patch('cogs.squad_plans.squad_channel',return_value=True), patch('cogs.squad_plans.allowed',return_value=False):
+            await view.create_next(inter)
+        inter.response.send_modal.assert_not_awaited()
+        plans.menu_entry.assert_awaited_once_with(inter)
+        view.stop()

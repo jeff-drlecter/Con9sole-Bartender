@@ -77,6 +77,6 @@ class ViewTests(unittest.IsolatedAsyncioTestCase):
         from cogs.squad_cards import FootprintView
         value=dict(id='scope-old',guild_id=1,label='EA FC')
         view=FootprintView(None,value)
-        self.assertEqual([b.custom_id for b in view.children],['squad-interest:scope-old','squad-interest-always:scope-old','squad-interest-roster:scope-old'])
+        self.assertEqual([b.custom_id for b in view.children],['squad-interest:scope-old','squad-interest-always:scope-old','squad-interest-roster:scope-old','squad-next-plan:scope-old'])
         self.assertTrue(view.is_persistent())
         self.assertEqual(view.children[0].label,'🙋 下次通知我')
