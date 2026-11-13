@@ -17,9 +17,7 @@ from core.helper_pulse import PulseStore,summarize,fragments
 from zoneinfo import ZoneInfo
 
 log=logging.getLogger(__name__)
-ROOM='helper-模擬區'
-LEGACY_TOPIC='Helper sandbox v1 — 虛構求助流程；真實活動只按個人原有權限顯示。'
-TOPIC='Helper sandbox v2 — 自動偵測吹水／討論區疑似求助；按原有權限查看，未啟用 ping。'
+ROOM_ID=1570639281225994301
 RSS_ROOM=1570054214850183289
 
 
@@ -30,11 +28,11 @@ class HelperPanel(discord.ui.View):
 
     async def interaction_check(self,i): return await self.cog.access(i)
 
-    @discord.ui.button(label='活動詳情',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary,row=0)
+    @discord.ui.button(label='我的總覽',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary,row=0)
     async def live(self,i,button):
         await show_overview(self.cog,i)
 
-    @discord.ui.button(label='睇示例',custom_id='helper:sandbox:create:v1',row=2)
+    @discord.ui.button(label='查看示例',custom_id='helper:sandbox:create:v1',row=2)
     async def create(self,i,button):
         await i.response.send_message('【虛構 log 示例】\n20:10 · MH｜💬 3 人、12 則 · 🆘 1 則疑似求助\n20:12 · FC｜🎙️ 1 個 call、4 人\n20:14 · GTA｜🤝 1 則搵隊友',ephemeral=True)
 
@@ -169,7 +167,7 @@ class HelperSandbox(commands.Cog):
         parent=channel.parent if isinstance(channel,discord.Thread) else channel
         if parent.category is None: return False
         name=(parent.category.name+' '+parent.name).casefold()
-        return not any(word in name for word in ('admin','管理','hidden','archive','封存','金主','staff','private','私密'))
+        return not any(word in name for word in ('admin','管理','hidden','archive','封存','金主','staff','private','私密','測試'))
 
     async def record_pulse(self,message,kind):
         if not self.pulse or not self.pulse_source(message.channel): return
@@ -289,7 +287,7 @@ class HelperSandbox(commands.Cog):
         valid=(self.enabled and self.channel is not None and i.guild_id==config.GUILD_ID and i.channel_id==self.channel.id
                and isinstance(i.user,discord.Member) and self.channel.permissions_for(i.user).view_channel
                and (i.user.guild_permissions.administrator or any(r.id in {*config.HELPER_ROLE_IDS,self.tester_id} for r in i.user.roles)))
-        if not valid: await i.response.send_message('只限 Helper／Tester 喺指定沙盤使用。',ephemeral=True)
+        if not valid: await i.response.send_message(f'請到 <#{ROOM_ID}> 使用 Helper Dashboard。',ephemeral=True)
         return valid
 
     async def bootstrap(self):
@@ -302,44 +300,33 @@ class HelperSandbox(commands.Cog):
         if not rss or not rss.category or not tester or not helpers or not guild.me: raise RuntimeError('Missing verified sandbox category/roles')
         self.tester_id=tester.id
         await asyncio.to_thread(self.store.set,'tester_role',tester.id)
-        key=await asyncio.to_thread(self.store.get,'channel')
-        if key and key!='reserved': channel=guild.get_channel(int(key))
-        else:
-            if any(c.name==ROOM and c.topic not in {TOPIC,LEGACY_TOPIC} for c in guild.text_channels):
-                raise RuntimeError('Existing channel name is not owned by this sandbox')
-            candidates=[c for c in guild.text_channels if c.name==ROOM and c.topic in {TOPIC,LEGACY_TOPIC}]
-            if len(candidates)>1: raise RuntimeError('Ambiguous helper sandbox channels')
-            channel=candidates[0] if candidates else None
-            if channel is None:
-                if not await asyncio.to_thread(self.store.reserve,'channel'): raise RuntimeError('Unconfirmed channel creation; requires inspection')
-                overwrites={guild.default_role:discord.PermissionOverwrite(view_channel=False),
-                    guild.me:discord.PermissionOverwrite(view_channel=True,send_messages=True,embed_links=True,read_message_history=True)}
-                for role in [tester,*helpers]:
-                    overwrites[role]=discord.PermissionOverwrite(view_channel=True,read_message_history=True,send_messages=True,add_reactions=True,use_application_commands=True)
-                channel=await guild.create_text_channel(ROOM,category=rss.category,topic=TOPIC,overwrites=overwrites,reason='Authorized Helper/Tester sandbox demo')
-            await asyncio.to_thread(self.store.set,'channel',channel.id)
-        if not isinstance(channel,discord.TextChannel) or channel.name!=ROOM or channel.topic not in {TOPIC,LEGACY_TOPIC} or channel.permissions_for(guild.default_role).view_channel:
+        key=await asyncio.to_thread(self.store.get,'dashboard_channel')
+        # Existing deployment: identify the owned channel by immutable identity.
+        # Names/topics are editable display copy, not access or ownership markers.
+        if key is not None and key != str(ROOM_ID):
+            raise RuntimeError('Unexpected helper sandbox channel identity')
+        channel=guild.get_channel(ROOM_ID)
+        if (not isinstance(channel,discord.TextChannel) or channel.id!=ROOM_ID
+                or channel.guild.id!=config.GUILD_ID
+                or channel.permissions_for(guild.default_role).view_channel):
             raise RuntimeError('Unsafe or missing helper sandbox target')
         for role in [tester,*helpers]:
             if not channel.permissions_for(role).view_channel or not channel.permissions_for(role).read_message_history:
                 raise RuntimeError('Helper/Tester sandbox access missing')
-        if channel.topic==LEGACY_TOPIC:
-            channel=await channel.edit(topic=TOPIC,reason='Switch sandbox to automatic help detection')
+        await asyncio.to_thread(self.store.set,'dashboard_channel',ROOM_ID)
         self.channel=channel
-        message_id=await asyncio.to_thread(self.store.get,'panel')
+        message_id=await asyncio.to_thread(self.store.get,'dashboard_panel')
         if not message_id:
-            if not await asyncio.to_thread(self.store.reserve,'panel'): return
+            if not await asyncio.to_thread(self.store.reserve,'dashboard_panel'): return
             message=await channel.send(embed=await self.demo_embed(),view=HelperPanel(self),allowed_mentions=discord.AllowedMentions.none())
-            await asyncio.to_thread(self.store.set,'panel',message.id)
+            await asyncio.to_thread(self.store.set,'dashboard_panel',message.id)
             log.info('Helper sandbox ready channel=%s message=%s',channel.id,message.id)
         elif message_id=='reserved': raise RuntimeError('Unconfirmed panel creation; requires inspection')
         else: await self.refresh()
 
     async def demo_embed(self):
-        embed=discord.Embed(title='🧭 Helper 活動 log｜沙盤',description='活動會直接貼喺下面，睇未讀就知邊區有人。')
-        embed.add_field(name='簡單睇脈膊',value='約每 2 分鐘合併：傾計、疑似求助、搵隊友、新加入成員發言、call 人數。\n冇活動就唔出；想跟進先按「待接應」。',inline=False)
-        embed.set_footer(text='只列遊戲區／類型／人數 · 唔轉貼聊天原文 · 無 ping')
-        return embed
+        from core.helper_dashboard import dashboard_embed
+        return dashboard_embed(self)
 
     async def publish_pulse(self):
         if not self.pulse or not self.channel: return
@@ -385,9 +372,6 @@ class HelperSandbox(commands.Cog):
     async def pulse_tick(self):
         try:
             if not self.channel: return
-            if await asyncio.to_thread(self.store.reserve,'pulse_intro_v1'):
-                message=await self.channel.send('🟢 **Helper 活動 log 開始試行**\n之後有新活動會直接貼喺呢度；約每 2 分鐘合併，冇活動唔出。\n只記錄已納入遊戲區嘅活動概況，唔轉貼聊天原文。',allowed_mentions=discord.AllowedMentions.none())
-                await asyncio.to_thread(self.store.set,'pulse_intro_v1',message.id)
             await self.publish_pulse()
         except Exception: log.exception('Helper pulse loop needs inspection')
 
@@ -434,7 +418,7 @@ class HelperSandbox(commands.Cog):
         async with self.lock:
             await asyncio.to_thread(self.store.prune,time.time())
             if not self.channel: return
-            key=await asyncio.to_thread(self.store.get,'panel')
+            key=await asyncio.to_thread(self.store.get,'dashboard_panel')
             if not key or key=='reserved': return
             message=await self.channel.fetch_message(int(key))
             await message.edit(embed=await self.demo_embed(),view=HelperPanel(self),allowed_mentions=discord.AllowedMentions.none())

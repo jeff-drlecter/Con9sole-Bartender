@@ -16,7 +16,7 @@ def main():
             with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
                 try: settings=dict(db.execute('SELECT key,value FROM settings'))
                 except sqlite3.OperationalError: pass
-        if settings.get('panel','').isdigit() and settings.get('channel','').isdigit(): break
+        if settings.get('dashboard_panel','').isdigit() and settings.get('dashboard_channel','').isdigit(): break
         time.sleep(5)
     else: raise RuntimeError('Helper sandbox channel/panel not confirmed')
     token=os.getenv('DISCORD_TOKEN') or os.getenv('DISCORD_BOT_TOKEN')
@@ -24,41 +24,31 @@ def main():
         request=urllib.request.Request('https://discord.com/api/v10/'+route,
             headers={'Authorization':'Bot '+token,'User-Agent':'Con9sole-Bartender/1.0'})
         with urllib.request.urlopen(request,timeout=20) as response: return json.load(response)
-    channel=get('channels/'+settings['channel'])
-    assert channel['guild_id']=='626378673523785731' and channel['id']==settings['channel']
-    assert channel['id']=='1570093470666854411' and channel['type']==0, 'Unexpected helper sandbox channel'
+    channel=get('channels/'+settings['dashboard_channel'])
+    assert channel['guild_id']=='626378673523785731' and channel['id']==settings['dashboard_channel']
+    assert channel['id']=='1570639281225994301' and channel['type']==0, 'Unexpected helper sandbox channel'
     overwrites={r['id']:r for r in channel['permission_overwrites']}
     assert int(overwrites[channel['guild_id']]['deny']) & 1024, 'Channel must remain private'
     for role in [settings['tester_role'],'1279071042249162856']:
         allowed=int(overwrites[role]['allow'])
         assert allowed & 1024 and allowed & 65536, 'Helper/Tester view/history missing'
     for _ in range(24):
-        message=get(f"channels/{settings['channel']}/messages/{settings['panel']}")
-        if message.get('embeds') and 'Helper 活動 log' in message['embeds'][0].get('title',''): break
+        message=get(f"channels/{settings['dashboard_channel']}/messages/{settings['dashboard_panel']}")
+        if message.get('embeds') and '社群動態 Dashboard' in message['embeds'][0].get('title',''): break
         time.sleep(5)
     else: raise RuntimeError('Automatic detection panel was not refreshed')
     ids={c.get('custom_id') for row in message.get('components',[]) for c in row.get('components',[])}
     expected={f'helper:sandbox:{key}:v1' for key in ('live','create','manage','duty','history')}
     assert expected<=ids, 'Missing helper sandbox controls'
-    assert 'Helper 活動 log' in message['embeds'][0]['title'], 'Pulse log entry missing'
+    assert '社群動態 Dashboard' in message['embeds'][0]['title'], 'Pulse log entry missing'
     labels={c.get('label') for row in message.get('components',[]) for c in row.get('components',[])}
-    assert '活動詳情' in labels and '待接應' in labels, 'Pulse controls missing'
+    assert '我的總覽' in labels and '待接應' in labels, 'Pulse controls missing'
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         version=db.execute("SELECT value FROM settings WHERE key='detector_version'").fetchone()
     assert version and version[0]=='1', 'Detector not enabled'
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         overview=db.execute("SELECT value FROM settings WHERE key='overview_version'").fetchone()
     assert overview and overview[0]=='1', 'Overview not enabled'
-    for _ in range(24):
-        with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
-            intro=db.execute("SELECT value FROM settings WHERE key='pulse_intro_v1'").fetchone()
-        if intro and intro[0].isdigit(): break
-        time.sleep(5)
-    else: raise RuntimeError('Pulse intro not confirmed posted')
-    intro_message=get(f"channels/{settings['channel']}/messages/{intro[0]}")
-    assert 'Helper 活動 log 開始試行' in intro_message['content'], 'Missing pulse intro'
-    print(f"Verified pulse log intro https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{intro[0]}")
-
     print(f"Verified helper sandbox https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{message['id']}")
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         scan=db.execute("SELECT value FROM settings WHERE key='detector_scan'").fetchone()
