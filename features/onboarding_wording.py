@@ -47,6 +47,8 @@ def neutralize_prompts(prompts):
             options = LANGUAGE_OPTIONS
         elif pid in TITLES:
             prompt["title"] = TITLES[pid]
+            if pid == "1279023252903301224" and prompt.get("required"):
+                prompt["title"] = "選擇想玩的遊戲（必選，可複選；也可選「暫不選擇」）"
         for option in prompt["options"]:
             for aliases, title, description in options:
                 if option["title"] in aliases:

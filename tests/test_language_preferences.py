@@ -11,10 +11,10 @@ def role(code, value=0, managed=False):
 
 class LanguageTests(unittest.TestCase):
     def test_default_and_conflict(self):
-        self.assertEqual(language(NS(roles=[])), 'hk')
+        self.assertEqual(language(NS(roles=[])), 'neutral')
         self.assertEqual(language(NS(roles=[role('tw')])), 'tw')
-        self.assertEqual(language(NS(roles=[role('tw'), role('hk')])), 'hk')
-        self.assertEqual(language(NS(roles=[role('tw', 8)])), 'hk')
+        self.assertEqual(language(NS(roles=[role('tw'), role('hk')])), 'neutral')
+        self.assertEqual(language(NS(roles=[role('tw', 8)])), 'neutral')
 
     def test_role_safety(self):
         self.assertEqual(set(preference_roles([role('hk'), role('tw')])), {'hk', 'tw'})

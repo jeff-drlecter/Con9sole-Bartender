@@ -18,6 +18,7 @@ from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
 from core.audit_monitor import WriteFailures
 from core.audit_privacy import require_private_audit_channel
+from core.secret_redaction import redact_credentials
 from features.audit_format import safe, who, where, changes, role_label, identity_footer, ACTIONS
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def preview(message, content=None):
     if message and hasattr(message.channel,'is_nsfw') and message.channel.is_nsfw():
         return '年齡限制頻道：只記錄事件資料。'
     text = getattr(message,'content','') if content is None else content
-    return safe(text or '（無文字／未能取得）',850)
+    return safe(redact_credentials(text or '（無文字／未能取得）'),850)
 
 
 class CommunityAudit(commands.Cog):

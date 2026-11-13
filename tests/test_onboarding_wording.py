@@ -4,6 +4,14 @@ from features.onboarding_wording import neutralize_prompts, LANGUAGE_TITLE, LEGA
 
 
 class OnboardingCopyTests(unittest.TestCase):
+    def test_required_game_question_does_not_regress_to_optional_copy(self):
+        prompts = [dict(id='1279023252903301224', title='required', required=True,
+                        options=[dict(id='skip', title='暫不選擇／找不到想玩的遊戲', description='keep')])]
+        result = neutralize_prompts(prompts)
+        self.assertIn('必選', result[0]['title'])
+        self.assertTrue(result[0]['required'])
+        self.assertEqual(result[0]['options'], prompts[0]['options'])
+
     def test_only_copy_changes_and_idempotent(self):
         prompts = [dict(id='1426676369567387821',title='想唔想加入公海吹水區？',single_select=True,required=True,in_onboarding=True,type=0,
             options=[dict(id='answer123',title='暫時唔加入',description='舊說明',role_ids=['no-offtopic'],channel_ids=[],emoji=dict(name='🚱'))])]

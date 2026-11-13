@@ -24,6 +24,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
                 ("我的組隊通知", 3),
                 ("邀請朋友", 3),
                 ("更多玩法", 4),
+                ("語言設定", 4),
                 ("今日小任務", 2),
                 ("我的會員卡", 2),
             ],

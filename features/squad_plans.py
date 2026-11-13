@@ -34,7 +34,7 @@ def parse_start(value, now=None):
     except ValueError:
         raise ValueError('日期或時間無效；請用24小時制，例如22:00。') from None
     if not now < start <= now + timedelta(days=14):
-        raise ValueError('請選未來14日內嘅時間；過咗今晚請填「明天 22:00」。')
+        raise ValueError('請選未來14日內的時間；今天的時間已過時，請填「明天 22:00」。')
     return int(start.timestamp())
 
 
@@ -45,7 +45,7 @@ def counts(party, missing):
     except ValueError:
         raise ValueError('人數請填整數。') from None
     if not 1 <= party <= 99 or (missing is not None and not 1 <= missing <= 99):
-        raise ValueError('已有幾人（包括自己）及仲差幾人，請填1至99。')
+        raise ValueError('已有人數（包括自己）及尚欠人數，請填1至99。')
     return party, None if missing is None else party + missing
 
 
@@ -71,7 +71,7 @@ class PlanBook:
             self._validate(start, party, capacity)
             if sum(p['owner'] == owner and p['status'] in {'posting', 'open'} and p['start'] > self.clock()
                    for p in self.state['plans'].values()) >= 3:
-                raise ValueError('你已有3個未開始嘅約局，請先修改或取消舊約局。')
+                raise ValueError('你已有3個尚未開始的約局，請先修改或取消舊約局。')
             key = uuid.uuid4().hex
             plan = dict(id=key, guild=guild, channel=channel, owner=owner,
                         game=game, mode=mode, start=start, party=party,
@@ -89,7 +89,7 @@ class PlanBook:
 
     def _validate(self, start, party, capacity):
         if not self.clock() < start <= self.clock() + 14 * 86400:
-            raise ValueError('請選未來14日內嘅時間。')
+            raise ValueError('請選未來14日內的時間。')
         if not 1 <= party <= 99 or (capacity is not None and not party < capacity <= party + 99):
             raise ValueError('人數無效。')
 
@@ -98,7 +98,7 @@ class PlanBook:
             state = copy.deepcopy(self.state)
             p = state['plans'].get(key)
             if p is None or p['status'] != 'open' or p['start'] <= self.clock():
-                raise ValueError('呢個約局已結束或已到開始時間。')
+                raise ValueError('此約局已結束或已到開始時間。')
             if action in {'edit', 'cancel'}:
                 if user != p['owner'] and not (action == 'cancel' and admin):
                     raise ValueError('只有發起人可以修改；管理員可以取消。')
@@ -109,19 +109,19 @@ class PlanBook:
                         raise ValueError('約局資料不完整。')
                     self._validate(changes['start'], changes['party'], changes['capacity'])
                     if changes['capacity'] is not None and changes['party'] + len(p['members']) > changes['capacity']:
-                        raise ValueError('目標人數少過現有已參加人數。')
+                        raise ValueError('目標人數不可少於現有參加人數。')
                     p.update(changes)
             elif action == 'join':
                 if user == p['owner']:
-                    raise ValueError('你已計入「已有幾人」，唔使再加入。')
+                    raise ValueError('你已計入「已有人數」，無需重複加入。')
                 if user in p['members']:
-                    raise ValueError('你已經加入咗。')
+                    raise ValueError('你已加入。')
                 if p['capacity'] is not None and p['party'] + len(p['members']) >= p['capacity']:
-                    raise ValueError('呢個約局已滿人。')
+                    raise ValueError('此約局已滿人。')
                 p['members'].append(user)
             elif action == 'leave':
                 if user not in p['members']:
-                    raise ValueError('你未有按卡加入；發起人可用修改調整已有人數。')
+                    raise ValueError('你尚未按卡加入；發起人可修改原有隊伍人數。')
                 p['members'].remove(user)
             else:
                 raise ValueError('Unknown action')
