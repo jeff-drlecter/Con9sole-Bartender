@@ -567,7 +567,7 @@ class SquadCards(commands.Cog):
         self.arrivals = {}
         self.last_error = None
         for key, session in self.state["sessions"].items():
-            if session.get("message"):
+            if session.get("message") and not session.get('plan_id'):
                 bot.add_view(CardView(self, key, session), message_id=session["message"])
         for value in squad_interest.topics():
             bot.add_view(FootprintView(self, value))
@@ -581,7 +581,41 @@ class SquadCards(commands.Cog):
 
     async def render(self, channel, session, ended=False):
         session["dirty"] = True
-        if session.get('id'):
+        from features.squad_plans import PlanBook
+        plans = getattr(self.bot, 'get_cog', lambda _: None)('SquadPlans')
+        if not isinstance(getattr(plans, 'book', None), PlanBook):
+            plans = None
+        plan = (plans.book.get(session['plan_id']) if session.get('plan_id') else plans.book.for_voice(channel.id) if channel else None) if plans else None
+        if plan and plan['status'] in {'gathering', 'live'}:
+            if session.get('message') and session['message'] != plan['message']:
+                old_destination = self.bot.get_channel(session['destination'])
+                try:
+                    old = await old_destination.fetch_message(session['message'])
+                    if old.author.id != self.bot.user.id:
+                        raise RuntimeError('Linked squad card author mismatch')
+                    url = f"https://discord.com/channels/{plan['guild']}/{plan['channel']}/{plan['message']}"
+                    await old.edit(content=f'本局已連接約局 · [前往原卡]({url})', embed=None, view=None,
+                                   allowed_mentions=discord.AllowedMentions.none())
+                    await run_stats(squad_interest.forget_card, old.id)
+                except discord.NotFound:
+                    pass
+            if session.get('game') != plan['game']:
+                session.pop('interest_topic', None)
+                session.pop('last_interest_topic', None)
+            session.update(plan_id=plan['id'], message=plan['message'], destination=plan['channel'],
+                           game=plan['game'], mode=plan['mode'])
+            if not ended:
+                plan = plans.book.sync_session(plan['id'], plan['voice'], session['id'])
+                if plan is None:
+                    session['missing_card'] = True
+                    self.save()
+                    return
+            self.save()
+        elif session.get('plan_id'):
+            # A cancelled or detached plan cannot keep sending its session notifications.
+            session['missing_card'] = True
+            return
+        if session.get('id') and not session.get('plan_id'):
             latest = await run_stats(squad_interest.latest_card_post,session['id'])
             if latest and latest['state']=='sent' and latest['message_id'] and session.get('message')!=latest['message_id']:
                 session['message']=latest['message_id']
@@ -626,12 +660,20 @@ class SquadCards(commands.Cog):
             roster = interest_roster(self.bot.get_guild(value['guild_id']), destination, preferences)
             add_interest_fields(embed, roster, preferences)
         view = (FootprintView(self, value) if value else None) if ended else CardView(self, str(channel.id), session)
+        if plan and not ended:
+            from cogs.squad_plans import PlanView, card
+            embed, view = card(plan), PlanView(plans, plan)
         kwargs = dict(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         if session.get("message"):
             try:
                 message = await destination.fetch_message(session["message"])
                 if ended and session.get('id'):
                     await self.finish_footprint(destination, message, session, embed, view, value)
+                    if plan:
+                        closed = plans.book.sync_session(plan['id'], plan['voice'], session['id'],
+                                                         ended=True, footprint=session.get('footprint'))
+                        if closed:
+                            await plans.refresh(closed)
                     return
                 await run_stats(squad_participants.save, message.id, config.GUILD_ID, destination.id, names)
                 await message.edit(content=None if ended else message.content, **kwargs)
@@ -645,6 +687,12 @@ class SquadCards(commands.Cog):
                     await self.notify_interested(channel, session)
                 return
             except discord.NotFound:
+                if plan:
+                    session['missing_card'] = True
+                    if ended:
+                        plans.book.sync_session(plan['id'], plan['voice'], session['id'], ended=True)
+                    self.save()
+                    return
                 if ended:
                     return  # Do not repost a deliberately deleted card as a footprint.
         # Notify only on the original card, never on edits or replacement cards.
@@ -814,6 +862,8 @@ class SquadCards(commands.Cog):
             log.exception('Could not start subscription delivery: session=%s',session.get('id'))
 
     async def _notify_interested_locked(self, channel, session, retry_batch=None):
+        if session.get('missing_card'):
+            return
         try:
             if session['id'] in self.interest_baseline and retry_batch is None:
                 return  # Deployments never tag people for a game already in progress.
@@ -904,7 +954,7 @@ class SquadCards(commands.Cog):
                 session = self.state["sessions"].get(key)
                 if session and session.get('id'):
                     latest=await run_stats(squad_interest.latest_card_post,session['id'])
-                    if latest and latest['state']=='sent' and latest['message_id']:
+                    if latest and latest['state']=='sent' and latest['message_id'] and not session.get('plan_id'):
                         session['message']=latest['message_id']
                 if not members or (session and session.get('ended') is not None):
                     if session:
@@ -935,6 +985,11 @@ class SquadCards(commands.Cog):
                 roster = sorted(m.id for m in members)
                 display = {str(m.id): m.display_name for m in members}
                 changed = roster != session.get("roster") or display != session.get("display") or session.get("dirty", False)
+                from features.squad_plans import PlanBook
+                plans = getattr(self.bot, 'get_cog', lambda _: None)('SquadPlans')
+                if isinstance(getattr(plans, 'book', None), PlanBook):
+                    linked = plans.book.for_voice(channel.id)
+                    changed = changed or bool(linked and linked['id'] != session.get('plan_id'))
                 if not session.get("message"):
                     if len(members) < 1:
                         session["qualified"] = None

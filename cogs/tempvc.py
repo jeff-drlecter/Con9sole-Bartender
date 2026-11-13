@@ -757,6 +757,30 @@ class TempVC(commands.Cog):
                 return room
         return None
 
+    async def room_for_plan(self, interaction: discord.Interaction, *, before_create=None) -> discord.VoiceChannel:
+        """Prepare one owned room in this category, without moving or notifying members."""
+        from core.permissions import is_verified_member, is_server_admin
+        member = await interaction.guild.fetch_member(interaction.user.id)
+        category = _category_from_ctx_channel(interaction.channel)
+        if (not category or not (is_verified_member(member) or is_server_admin(member)) or member.pending or member.bot
+                or member.is_timed_out() or not user_can_run_tempvc(interaction)):
+            raise ValueError('請先選擇遊戲身份，並在有權加入語音的遊戲區開局。')
+        perms = category.permissions_for(member)
+        if not (perms.view_channel and perms.connect and perms.speak):
+            raise ValueError('目前無權加入此遊戲區語音，約局紀錄仍保留。')
+        async with shared_async_lock('voice-create', interaction.guild_id):
+            room = await self._find_owned_room(interaction.guild, member.id)
+            if room and room.category_id != category.id:
+                raise ValueError('你在另一個遊戲區已有小隊房；請先處理該房，這裡不會自動重用。')
+            if room is None:
+                if before_create:
+                    before_create()
+                room = await self._create_manual_temp_vc(interaction.guild, category, creator_id=member.id)
+            perms = room.permissions_for(member)
+            if not (perms.view_channel and perms.connect and perms.speak):
+                raise ValueError('目前無權加入此語音房，約局紀錄仍保留。')
+            return room
+
     async def _create_default_room(self, interaction: discord.Interaction, *, name: str | None = None, limit: int | None = None) -> None:
         if not interaction.guild or not user_can_run_tempvc(interaction):
             await send_or_followup(interaction, content=wording_text(interaction.user, "請喺你有權加入嘅遊戲區／公海使用；該區需要有「開一個小隊 call」入口。"), ephemeral=True)

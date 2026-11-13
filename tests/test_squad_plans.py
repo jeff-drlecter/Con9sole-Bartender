@@ -86,6 +86,8 @@ class ScheduledSquadTests(unittest.TestCase):
         changes = {k: p[k] for k in ['game', 'mode', 'start', 'party', 'capacity']}
         changes.update(mode='Rush', capacity=5)
         self.book.act(key, 3, 'edit', changes=changes)
+        self.assertEqual(self.book.get(key)['unconfirmed'], [4])
+        self.book.act(key, 4, 'join')
         self.book.act(key, 5, 'join')
         changes['capacity'] = 4
         with self.assertRaises(ValueError):
@@ -96,10 +98,10 @@ class ScheduledSquadTests(unittest.TestCase):
         key = self.create()
         self.clock += 3601
         self.book = PlanBook(self.path, lambda: self.clock)
-        with self.assertRaises(ValueError):
-            self.book.act(key, 4, 'join')
         self.book.expire()
-        self.assertEqual(self.book.get(key)['status'], 'started')
+        self.assertEqual(self.book.get(key)['status'], 'due')
+        self.book.act(key, 4, 'join')
+        self.book.act(key, 4, 'leave')
         self.assertTrue(self.book.get(key)['dirty'])
 
     def test_ambiguous_post_is_not_published_or_replayed(self):
@@ -140,7 +142,7 @@ async def check():
              start=2000000000, party=3, capacity=5, members=[4], message=9)
     assert PlanView(None, p).is_persistent()
     assert PlanEntry(None).is_persistent()
-    assert len(PlanView(None, p).children) == 3
+    assert len(PlanView(None, p).children) == 4
     assert len(PlanForm(None, SimpleNamespace(id=2, category=None)).children) == 5
     assert '4／5' in card(p).fields[0].name
     view = ManageView(None, 'test', False, False)
@@ -148,7 +150,7 @@ async def check():
     view = ManageView(None, 'test', False, True)
     assert view.edit.disabled and not view.cancel.disabled
     p['status'] = 'cancelled'
-    assert [button.disabled for button in PlanView(None, p).children] == [True, True, False]
+    assert [button.disabled for button in PlanView(None, p).children] == [True, True, False, True, False]
     assert SquadPlans.plan.name == '約局'
 asyncio.run(check())
 '''], capture_output=True, text=True)
