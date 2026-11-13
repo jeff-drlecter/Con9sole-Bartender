@@ -7,9 +7,38 @@ import discord
 from discord.ext import commands
 
 import config
-from utils import emb, role_mention_safe, send_log
+from features.language_preferences import ROLE_NAMES
 
 log = logging.getLogger("con9sole-bartender.welcome")
+
+
+def welcome_message(member, rules_mention: str, bot_mention: str) -> str:
+    """One short welcome for this newcomer; no preference means neutral copy."""
+    names = {
+        r.name for r in getattr(member, "roles", [])
+        if not getattr(r, "managed", True)
+        and getattr(getattr(r, "permissions", None), "value", None) == 0
+    }
+    selected = {code for code, name in ROLE_NAMES.items() if name in names}
+    code = next(iter(selected)) if len(selected) == 1 else "neutral"
+    lines = {
+        "hk": (
+            f"📜 先睇 {rules_mention}，再去 <id:customize> 揀遊戲同身份組。",
+            "🎮 搵隊友打機，或者去公海傾下其他話題。",
+            f"🍸 想睇有咩功能？提及 {bot_mention}；用 /language 可隨時轉用語。",
+        ),
+        "tw": (
+            f"📜 先看 {rules_mention}，再到 <id:customize> 選擇遊戲與身分組。",
+            "🎮 找隊友一起玩，或到公海聊聊其他話題。",
+            f"🍸 想查看功能？提及 {bot_mention}；隨時可用 /language 切換用語。",
+        ),
+        "neutral": (
+            f"📜 請先閱讀 {rules_mention}，再到 <id:customize> 選擇遊戲與身份組。",
+            "🎮 尋找隊友，或到公海交流其他話題。",
+            f"🍸 查看功能可提及 {bot_mention}；用 /language 設定香港／台灣用語。",
+        ),
+    }
+    return "\n".join((f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！", *lines[code]))
 
 
 async def mention_or_id(
@@ -53,15 +82,14 @@ class WelcomeLog(commands.Cog):
                 )
                 bot_mention = self.bot.user.mention if self.bot.user else "@Con9sole-Bartender"
 
-                message = (
-                    f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！\n\n"
-                    f"📜 請先前往 {rules_mention} 閱讀伺服器規則，了解基本守則及使用方式。\n\n"
-                    "🎭 如想尋找遊戲專區、加入相關身份組，或瀏覽遊戲以外的公海話題，"
-                    "可前往 <id:customize> 選擇合適的身份。\n\n"
-                    "🌊 除了遊戲內容外，也歡迎在公海集中討論區開設新帖，"
-                    "分享寵物、飲食、音樂、電影等不同話題。\n\n"
-                    f"🍸 如不確定應從哪裏開始，或想查看伺服器功能，可直接提及 {bot_mention}。"
-                )
+                # Fetch current onboarding roles; the join payload can precede role updates.
+                try:
+                    preference_member = await member.guild.fetch_member(member.id)
+                except discord.NotFound:
+                    return
+                except discord.HTTPException:
+                    preference_member = member
+                message = welcome_message(preference_member, rules_mention, bot_mention)
                 await channel.send(message)
         except Exception as exc:
             log.exception("Failed to send welcome message: member=%s guild=%s", member.id, member.guild.id)
