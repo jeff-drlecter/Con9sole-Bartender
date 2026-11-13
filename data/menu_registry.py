@@ -317,6 +317,7 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "quick", 3, "SquadCards"),
     MenuItem("invite", "邀請朋友", "🔗", "primary", "quick", 3, "Invites"),
     MenuItem("home_menu", "更多玩法", "🍸", "secondary", "quick", 4, "Menu", "open_home_menu_from_button"),
+    MenuItem("language", "語言設定", "🌐", "secondary", "quick", 4, "LanguagePreferences", "menu_entry"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "quick", 2, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 2, "CommunityLevels"),
 ]
@@ -372,7 +373,7 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("confession", "無名告白", "🕯️", "secondary", "social", 1, "Confession"),
     ],
     "info": [
-        MenuItem("language", "語境設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
+        MenuItem("language", "語言設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
         MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
         MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),
         MenuItem("instagram", "IG", "📸", "secondary", "info", 1, "Menu", "open_instagram_from_button"),

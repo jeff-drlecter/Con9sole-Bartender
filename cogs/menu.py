@@ -136,7 +136,7 @@ class Menu(commands.Cog):
     async def open_customize_menu(self, interaction: discord.Interaction) -> None:
         from features.language_preferences import language, localize_menu
         _, view = localize_menu(interaction.user, view=SectionMenuView(self, "info"))
-        content = "⚙️ 前往 <id:customize>，自行選擇遊戲版本、公海、新聞及直播區內容，可隨時更改。" if language(interaction.user) == "tw" else "⚙️ 前往 <id:customize>，自行揀選遊戲版本、公海、新聞及直播區內容。可隨時再更改。"
+        content = "⚙️ 前往 <id:customize>，自行選擇遊戲版本、公海、新聞及直播區內容，可隨時更改。" if language(interaction.user) != "hk" else "⚙️ 前往 <id:customize>，自行揀選遊戲版本、公海、新聞及直播區內容。可隨時再更改。"
         await send_or_followup(interaction,
             content=content,
             view=view, ephemeral=True)

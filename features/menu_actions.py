@@ -120,10 +120,11 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
     await record_usage("mention_menu", message.author.id, message.guild.id if message.guild else None)
 
     try:
-        embed, view = localize_menu(message.author, build_quick_bar_embed(message.author), QuickBarView(cog))
+        from cogs.member_entry import MemberEntryView
+        # Public messages are shared. Regional menus are opened privately by button.
         kwargs = safe_message_kwargs(
-            embed=embed,
-            view=view,
+            content='🍸 按「開啟功能」查看個人選單。',
+            view=MemberEntryView(),
         )
         kwargs["mention_author"] = False
         await message.reply(**kwargs)

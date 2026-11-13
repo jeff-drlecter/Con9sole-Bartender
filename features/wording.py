@@ -208,7 +208,7 @@ def text(member, authored: str) -> str:
 
 
 def text_for_code(code: str, authored: str) -> str:
-    if code != "tw":
+    if code == "hk":
         return authored
     if authored in TW:
         return TW[authored]

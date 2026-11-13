@@ -7,38 +7,17 @@ import discord
 from discord.ext import commands
 
 import config
-from features.language_preferences import ROLE_NAMES
 
 log = logging.getLogger("con9sole-bartender.welcome")
 
 
 def welcome_message(member, rules_mention: str, bot_mention: str) -> str:
     """One short welcome for this newcomer; no preference means neutral copy."""
-    names = {
-        r.name for r in getattr(member, "roles", [])
-        if not getattr(r, "managed", True)
-        and getattr(getattr(r, "permissions", None), "value", None) == 0
-    }
-    selected = {code for code, name in ROLE_NAMES.items() if name in names}
-    code = next(iter(selected)) if len(selected) == 1 else "neutral"
-    lines = {
-        "hk": (
-            f"📜 先睇 {rules_mention}，再去 <id:customize> 揀遊戲同身份組。",
-            "🎮 搵隊友打機，或者去公海傾下其他話題。",
-            f"🍸 想睇有咩功能？提及 {bot_mention}；用 /language 可隨時轉用語。",
-        ),
-        "tw": (
-            f"📜 先看 {rules_mention}，再到 <id:customize> 選擇遊戲與身分組。",
-            "🎮 找隊友一起玩，或到公海聊聊其他話題。",
-            f"🍸 想查看功能？提及 {bot_mention}；隨時可用 /language 切換用語。",
-        ),
-        "neutral": (
-            f"📜 請先閱讀 {rules_mention}，再到 <id:customize> 選擇遊戲與身份組。",
-            "🎮 尋找隊友，或到公海交流其他話題。",
-            f"🍸 查看功能可提及 {bot_mention}；用 /language 設定香港／台灣用語。",
-        ),
-    }
-    return "\n".join((f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！", *lines[code]))
+    return "\n".join((
+        f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！",
+        f"📜 請先閱讀 {rules_mention}，再選擇感興趣的遊戲。",
+        "🎮 按下方按鈕找隊友、發起預約或設定香港／台灣用語。",
+    ))
 
 
 async def mention_or_id(
@@ -90,7 +69,8 @@ class WelcomeLog(commands.Cog):
                 except discord.HTTPException:
                     preference_member = member
                 message = welcome_message(preference_member, rules_mention, bot_mention)
-                await channel.send(message)
+                from cogs.member_entry import MemberEntryView
+                await channel.send(message, view=MemberEntryView())
         except Exception as exc:
             log.exception("Failed to send welcome message: member=%s guild=%s", member.id, member.guild.id)
 

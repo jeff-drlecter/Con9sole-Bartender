@@ -148,7 +148,7 @@ async def check():
     view = ManageView(None, 'test', False, True)
     assert view.edit.disabled and not view.cancel.disabled
     p['status'] = 'cancelled'
-    assert all(button.disabled for button in PlanView(None, p).children)
+    assert [button.disabled for button in PlanView(None, p).children] == [True, True, False]
     assert SquadPlans.plan.name == '約局'
 asyncio.run(check())
 '''], capture_output=True, text=True)

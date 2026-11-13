@@ -10,8 +10,9 @@ PROMPT_TITLE = LANGUAGE_TITLE
 
 def language(member) -> str:
     names = {r.name for r in getattr(member, "roles", []) if not getattr(r, "managed", True) and getattr(getattr(r, "permissions", None), "value", None) == 0}
-    # Ambiguous dual-role selections fail back to the server default.
-    return "tw" if ROLE_NAMES["tw"] in names and ROLE_NAMES["hk"] not in names else "hk"
+    selected = [code for code, name in ROLE_NAMES.items() if name in names]
+    # No choice (or conflicting roles) must not silently imply a regional choice.
+    return selected[0] if len(selected) == 1 else "neutral"
 
 
 def preference_roles(roles, channels=()):
@@ -43,7 +44,7 @@ TW = {
 
 
 def menu_text(text: str, code: str) -> str:
-    if code != "tw":
+    if code == "hk":
         return text
     if text in TW:
         return TW[text]

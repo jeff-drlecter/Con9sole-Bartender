@@ -17,9 +17,9 @@ class LanguagePreferences(commands.Cog):
 
     async def menu_entry(self, interaction):
         from features.language_preferences import language
-        current = "台灣" if language(interaction.user) == "tw" else "香港"
+        current = {"tw": "台灣繁體中文", "hk": "香港廣東話", "neutral": "中性繁體中文（尚未選擇或偏好有衝突）"}[language(interaction.user)]
         await interaction.response.send_message(
-            f"目前語境：{current}。\n香港語境／台灣語境：影響個人選單、會員卡、組隊通知設定及語音房操作等回覆；多人共用卡片使用中性繁體中文。與所在地無關。\n切換後請使用新選單；舊訊息不會自動改寫。",
+            f"目前用語：{current}。\n選擇香港廣東話或台灣繁體中文；偏好會保留至下次使用，公共卡片使用中性繁體中文。\n切換後請使用新選單。",
             view=LanguageView(interaction.user.id), ephemeral=True)
 
     @app_commands.command(name="language", description="切換香港／台灣 Bot 用語")
