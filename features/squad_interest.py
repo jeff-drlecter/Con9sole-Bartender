@@ -276,6 +276,19 @@ def end_session(session_id):
         conn.execute("UPDATE squad_interest_delivery SET state='cancelled',revision=? WHERE session_id=? AND state='pending'",(uuid.uuid4().hex,session_id))
 
 
+def link_footprint(session_id, message_id):
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        for scope,batch,raw in conn.execute('SELECT scope,batch,context FROM squad_interest_delivery WHERE session_id=?',(session_id,)).fetchall():
+            context=json.loads(raw)
+            context.setdefault('original_card',context.get('card'))
+            context['card']=message_id
+            conn.execute('UPDATE squad_interest_delivery SET context=? WHERE session_id=? AND scope=? AND batch=?',
+                         (json.dumps(context),session_id,scope,batch))
+        # A notice might already have closed while a footprint edit was retried.
+        conn.execute('UPDATE squad_closed_notices SET compact=0 WHERE session_id=?',(session_id,))
+
+
 def closing_notices(limit=20):
     initialize()
     with connect_sqlite(STATS_DB) as conn:

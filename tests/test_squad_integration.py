@@ -231,7 +231,7 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         channel=types.SimpleNamespace(id=20,category_id=40,members=[])
         guild=types.SimpleNamespace(id=1,voice_channels=[channel],afk_channel=None)
         cog.bot.get_guild.return_value=guild
-        old=dict(id='old',destination=30,message=500,started=100,participants={'10':'A'})
+        old=dict(id='old',destination=30,message=500,started=100,empty_since=0,participants={'10':'A'})
         cog.state['sessions']['20']=old
         cog.render=AsyncMock(side_effect=RuntimeError('temporary footprint failure'))
         with self.assertLogs('cogs.squad_cards',level='ERROR'):
@@ -253,7 +253,7 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         channel=types.SimpleNamespace(id=20,category_id=40,members=[])
         guild=types.SimpleNamespace(id=1,voice_channels=[channel],afk_channel=None)
         cog.bot.get_guild.return_value=guild
-        cog.state['sessions']['20']=dict(id='old',destination=30,message=500,started=100,participants={})
+        cog.state['sessions']['20']=dict(id='old',destination=30,message=500,started=100,empty_since=0,participants={})
         snapshots=[]
         cog.save.side_effect=lambda:snapshots.append(json.loads(json.dumps(cog.state)))
         cog.render=AsyncMock(side_effect=RuntimeError('failed edit'))
@@ -264,3 +264,108 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await restarted.reconcile()
         self.assertTrue(restarted.render.call_args.kwargs['ended'])
         self.assertNotIn('20',restarted.state['sessions'])
+
+    def footprint_fixture(self):
+        cog=self.cog()
+        original=types.SimpleNamespace(id=99,edit=AsyncMock())
+        destination=types.SimpleNamespace(id=30,send=AsyncMock(return_value=types.SimpleNamespace(id=501)))
+        session=dict(id='s',destination=30,message=99,started=100,ended=200,
+                     participants={'10':'A','11':'B'})
+        return cog,original,destination,session
+
+    async def test_separate_footprint_retry_reuses_post_and_redirects_notice(self):
+        self.reserve();rev=store.claim_delivery('s',self.scope,0)
+        store.finish_delivery('s',self.scope,0,message_id=500,expected_revision=rev)
+        store.end_session('s')
+        cog,original,destination,session=self.footprint_fixture()
+        embed=discord.Embed(title='本局已結束')
+        from cogs.squad_cards import FootprintView
+        view=FootprintView(cog,self.topic)
+        await cog.finish_footprint(destination,original,session,embed,view,self.topic)
+        await cog.finish_footprint(destination,original,session,embed,view,self.topic)
+        destination.send.assert_awaited_once()
+        self.assertEqual(session['message'],99)
+        self.assertEqual(session['footprint'],501)
+        self.assertEqual(original.edit.call_args.kwargs['content'],
+                         '本局已結束 · [查看足跡](https://discord.com/channels/1/30/501)')
+        self.assertIsNone(original.edit.call_args.kwargs['view'])
+        self.assertEqual(destination.send.call_args.kwargs['allowed_mentions'].to_dict(),{'parse':[]})
+        self.assertEqual([r['message_id'] for r in store.cards(self.scope)],[501])
+        notice=types.SimpleNamespace(id=500,author=types.SimpleNamespace(id=42),
+            content='[查看召人卡](https://discord.com/channels/1/30/99)',edit=AsyncMock())
+        cog.bot.user.id=42
+        cog.bot.get_channel.return_value=types.SimpleNamespace(id=30,fetch_message=AsyncMock(return_value=notice))
+        await cog.close_finished_notices()
+        self.assertIn('/501)',notice.edit.call_args.kwargs['content'])
+        self.assertIsNone(notice.edit.call_args.kwargs['view'])
+        view.stop()
+
+    async def test_uncertain_footprint_send_is_not_replayed(self):
+        cog,original,destination,session=self.footprint_fixture()
+        destination.send.side_effect=TimeoutError('unknown result')
+        with self.assertRaises(TimeoutError):
+            await cog.finish_footprint(destination,original,session,discord.Embed(),None,None)
+        with self.assertRaises(RuntimeError):
+            await cog.finish_footprint(destination,original,session,discord.Embed(),None,None)
+        destination.send.assert_awaited_once()
+        self.assertIsNotNone(store.uncertain_card('s:footprint'))
+        self.assertIsNone(original.edit.call_args.kwargs['view'])
+
+    async def test_solo_or_brief_visit_does_not_post_footprint(self):
+        cog,original,destination,session=self.footprint_fixture()
+        session['participants']={'10':'A'}
+        await cog.finish_footprint(destination,original,session,discord.Embed(),None,None)
+        destination.send.assert_not_awaited()
+        session['participants']['11']='B';session['ended']=120
+        await cog.finish_footprint(destination,original,session,discord.Embed(),None,None)
+        destination.send.assert_not_awaited()
+
+    async def test_empty_room_grace_resets_on_rejoin(self):
+        cog=self.cog();cog.state['settings']={'routes':{'40':30}}
+        member=types.SimpleNamespace(id=10,display_name='A',bot=False)
+        channel=types.SimpleNamespace(id=20,category_id=40,members=[])
+        cog.bot.get_guild.return_value=types.SimpleNamespace(id=1,voice_channels=[channel],afk_channel=None)
+        session=dict(id='s',destination=30,message=99,started=100,participants={'10':'A'})
+        cog.state['sessions']['20']=session;cog.render=AsyncMock();cog.notify_interested=AsyncMock()
+        with patch('cogs.squad_cards.time.time',return_value=200):await cog.reconcile()
+        self.assertNotIn('ended',session)
+        with patch('cogs.squad_cards.time.time',return_value=229):await cog.reconcile()
+        cog.render.assert_not_awaited()
+        channel.members=[member]
+        with patch('cogs.squad_cards.time.time',return_value=229):await cog.reconcile()
+        self.assertNotIn('empty_since',session)
+        channel.members=[];cog.render.reset_mock()
+        with patch('cogs.squad_cards.time.time',return_value=250):await cog.reconcile()
+        with patch('cogs.squad_cards.time.time',return_value=280):await cog.reconcile()
+        cog.render.assert_awaited_once()
+        self.assertTrue(cog.render.call_args.kwargs['ended'])
+
+    async def test_sandbox_command_refuses_normal_channel(self):
+        cog=self.cog();inter=interaction()
+        inter.user.guild_permissions=discord.Permissions(manage_guild=True)
+        inter.channel=types.SimpleNamespace(category=types.SimpleNamespace(name='正式組隊區'))
+        await SquadCards.test_entry(cog,inter)
+        inter.response.send_message.assert_awaited_once()
+        inter.response.defer.assert_not_awaited()
+
+    async def test_subscription_window_routes_reservation_to_existing_plans(self):
+        cog=self.cog()
+        view=SubscriptionView(cog,1,10,[])
+        button=next(b for b in view.children if b.label=='發起預約')
+        self.assertEqual((button.cog_name,button.method),('SquadPlans','menu_entry'))
+        feature=types.SimpleNamespace(menu_entry=AsyncMock())
+        inter=interaction();inter.client.get_cog.return_value=feature
+        await button.callback(inter)
+        feature.menu_entry.assert_awaited_once_with(inter)
+        self.assertEqual(store.preferences(self.scope),{})
+        view.stop()
+
+    def test_test_entry_uses_existing_admin_registry_and_denies_helpers(self):
+        from data.menu_registry import ADMIN_MENU_ITEMS
+        from core.permissions import can_use_staff_tool
+        item=next(i for i in ADMIN_MENU_ITEMS if i.id=='squad_test')
+        self.assertEqual((item.cog,item.method,item.admin_only),('SquadCards','test_entry',True))
+        helper=MagicMock(spec=discord.Member)
+        helper.guild_permissions=discord.Permissions.none()
+        helper.roles=[types.SimpleNamespace(id=123,name='Helpers')]
+        self.assertFalse(can_use_staff_tool(helper,'squad_test'))

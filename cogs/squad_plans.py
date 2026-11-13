@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from features.wording import modal_copy as wording_modal
 from core.permissions import is_server_admin, is_verified_member
 from core.storage_paths import DATA_DIR
 from core.ui import SafeModal, SafeView
@@ -42,6 +43,8 @@ def game_hint(channel):
 def squad_channel(channel):
     return isinstance(channel, discord.TextChannel) and (
         channel.name.endswith('-吹水組隊') or channel.name == '公海吹水'
+        or ('測試' in getattr(getattr(channel, 'category', None), 'name', '')
+            and channel.name.endswith('體驗交流'))
     )
 
 
@@ -64,7 +67,7 @@ class PlanChannelView(SafeView):
                 if not squad_channel(channel) or not allowed(interaction, channel):
                     await interaction.response.send_message('你已無法喺呢個頻道約局，請重新開啟 /menu。', ephemeral=True)
                     return
-                await interaction.response.send_modal(PlanForm(self.cog, channel))
+                await interaction.response.send_modal(wording_modal(interaction.user, PlanForm(self.cog, channel)))
             select.callback = choose
             self.add_item(select)
 
@@ -247,7 +250,7 @@ class SquadPlans(commands.Cog):
             await interaction.response.send_message('已驗證成員可喺可發言嘅文字頻道約局。', ephemeral=True)
             return
         if squad_channel(interaction.channel):
-            await interaction.response.send_modal(PlanForm(self, interaction.channel))
+            await interaction.response.send_modal(wording_modal(interaction.user, PlanForm(self, interaction.channel)))
             return
         channels = [channel for channel in interaction.guild.text_channels
                     if squad_channel(channel) and allowed(interaction, channel)
