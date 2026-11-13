@@ -169,6 +169,10 @@ class Teams(commands.Cog):
         await self.open_team_menu(interaction)
 
     async def open_team_menu(self, interaction: discord.Interaction) -> None:
+        plans = self.bot.get_cog('SquadPlans')
+        if plans is not None:
+            await plans.menu_entry(interaction)
+            return
         if not await require_public_send(interaction):
             return
         game = infer_game_name(interaction.channel)
@@ -250,7 +254,7 @@ class Teams(commands.Cog):
         status = (
             f"尚欠：**{remaining} 位**"
             if remaining
-            else "✅ 已齊人，召集人可以開小隊 call。"
+            else "名額已滿；稍後到的人仍未就緒，請由召集人確認開局。"
         )
         return (
             f"👥 **{discord.utils.escape_markdown(state.mode)} · 而家開局**\n"

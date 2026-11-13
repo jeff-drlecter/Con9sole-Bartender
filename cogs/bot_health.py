@@ -90,6 +90,14 @@ class BotHealth(commands.Cog):
         health=await asyncio.to_thread(storage_health,levels.ledger.path if levels else DATA_DIR / 'community_levels.sqlite3',interaction.guild_id)
         for name,values in health.items():
             embed.add_field(name=name,value='｜'.join(f'{key}：{value}' for key,value in values.items()),inline=False)
+        from features.squad_plans import PlanBook, ACTIVE
+        plans = self.bot.get_cog('SquadPlans')
+        if isinstance(getattr(plans, 'book', None), PlanBook):
+            records = plans.book.all()
+            embed.add_field(name='約一局', value=(
+                f"活動約局：{sum(p['status'] in ACTIVE for p in records)}｜"
+                f"發卡待核對：{sum(p['status'] == 'posting' for p in records)}｜"
+                f"建房待核對：{sum(bool(p.get('voice_attempt')) and p['status'] in ACTIVE for p in records)}"), inline=False)
         audit = self.bot.get_cog('CommunityAudit')
         if audit:
             counts, _ = await asyncio.to_thread(audit.store.summary)

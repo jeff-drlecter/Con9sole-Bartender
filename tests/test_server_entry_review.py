@@ -41,7 +41,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         i = interaction(source)
         i.guild = N(text_channels=[source, target, hidden, read_only], me=N(id=99))
         with patch('cogs.squad_plans.is_verified_member', return_value=True):
-            await SquadPlans.menu_entry(N(), i)
+            await SquadPlans.choose_destination(N(), i)
         picker = i.response.send_message.await_args.kwargs['view']
         self.assertEqual([option.value for option in picker.children[0].options], ['2'])
         self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
@@ -52,7 +52,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         i = interaction(source)
         i.guild = N(text_channels=[], me=N(id=99))
         with patch('cogs.squad_plans.is_verified_member', return_value=True):
-            await SquadPlans.menu_entry(N(), i)
+            await SquadPlans.choose_destination(N(), i)
         self.assertIn('<id:customize>', i.response.send_message.await_args.args[0])
         self.assertNotIn('view', i.response.send_message.await_args.kwargs)
 
@@ -61,18 +61,18 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
             book = PlanBook(Path(folder) / 'plans.json', clock=lambda: 100)
             p = book.create(guild=config.GUILD_ID, channel=2, owner=3, game='FC', mode='PS5／Clubs', start=200, party=1, capacity=3)
             book.publish(p['id'], 9)
-            book.clock = lambda: 201
+            book.clock = lambda: 7401
             book.expire()
             cog = N(book=book, lock=asyncio.Lock())
             i = interaction(channel(2, 'fc-吹水組隊', writable=False))
             i.message = N(id=9)
             view = PlanView(cog, book.get(p['id']))
-            self.assertEqual([b.disabled for b in view.children], [True, True, False])
+            self.assertEqual([b.disabled for b in view.children], [True, True, False, True, False])
             with patch('cogs.squad_plans.is_verified_member', return_value=True):
                 await view.handle(i, 'manage')
             self.assertNotIn('view', i.response.send_message.await_args.kwargs)
             self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
-            self.assertEqual(book.get(p['id'])['status'], 'started')
+            self.assertEqual(book.get(p['id'])['status'], 'expired')
             i.response.send_message.reset_mock()
             i.channel.permissions_for.return_value.view_channel = False
             with patch('cogs.squad_plans.is_verified_member', return_value=True):

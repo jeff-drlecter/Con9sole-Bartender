@@ -17,7 +17,6 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
             [
                 ("飲一杯", 0),
                 ("請人飲", 0),
-                ("搵人玩", 1),
                 ("約一局", 1),
                 ("小隊 call", 1),
                 ("小隊 call 控制", 3),
@@ -84,7 +83,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         i = interaction()
         i.client.get_cog.return_value = team
         view = QuickBarView(menu)
-        button = next(button for button in view.children if button.item.id == "team")
+        button = next(button for button in view.children if button.item.id == "squad_plans")
         await view.handle_item(i, button.item)
         team.menu_entry.assert_awaited_once_with(i)
         menu.enforce_menu_button_cooldown.assert_not_awaited()

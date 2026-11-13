@@ -14,7 +14,7 @@ from types import SimpleNamespace as N
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 import config
-from cogs.squad_plans import SquadPlans, PlanChannelView, PlanForm
+from cogs.squad_plans import SquadPlans, PlanChannelView, PlanForm, PlanMenu
 from features.squad_plans import PlanBook
 from features.menu_views import QuickBarView
 
@@ -46,13 +46,16 @@ async def main():
                 lock=asyncio.Lock(), refresh=AsyncMock())
         i = interaction(source, guild)
         await SquadPlans.menu_entry(cog, i)
+        assert isinstance(i.response.send_message.call_args.kwargs['view'], PlanMenu)
+        i.response.send_message.reset_mock()
+        await SquadPlans.choose_destination(cog, i)
         picker = i.response.send_message.call_args.kwargs['view']
         assert isinstance(picker, PlanChannelView)
         assert [o.value for o in picker.children[0].options] == ['2']
         assert i.response.send_message.call_args.kwargs['ephemeral']
 
         direct = interaction(target, guild)
-        await SquadPlans.menu_entry(cog, direct)
+        await SquadPlans.choose_destination(cog, direct)
         assert isinstance(direct.response.send_modal.call_args.args[0], PlanForm)
 
         form = PlanForm(cog, target)
@@ -89,7 +92,7 @@ async def main():
         feature.menu_entry.assert_awaited_once_with(routed)
         menu.enforce_menu_button_cooldown.assert_not_awaited()
         assert view.is_persistent()
-        assert sum(b.row == 1 for b in view.children) == 3
+        assert sum(b.row == 1 for b in view.children) == 2
 asyncio.run(main())
 '''], capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)

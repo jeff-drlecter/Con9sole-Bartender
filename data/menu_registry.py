@@ -310,7 +310,6 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
 QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("drink", "飲一杯", "🍹", "success", "quick", 0, "Drink"),
     MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
-    MenuItem("team", "搵人玩", "👥", "primary", "quick", 1, "Teams"),
     MenuItem("squad_plans", "約一局", "📅", "primary", "quick", 1, "SquadPlans"),
     MenuItem("tempvc", "小隊 call", "🎧", "primary", "quick", 1, "TempVC"),
     MenuItem("tempvc_control", "小隊 call 控制", "🎛️", "secondary", "quick", 3, "TempVC", "open_control_panel_from_menu"),
