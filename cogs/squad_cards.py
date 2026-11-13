@@ -467,8 +467,11 @@ class FootprintView(SafeView):
         if not await self.permitted(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        async with self.lock:
-            roster = await self.refresh(interaction)
+        # Public subscription lists are hidden, so a read must not edit every
+        # historical card or wait behind voice/notification reconciliation.
+        preferences = await run_stats(squad_interest.preferences, self.topic['id'])
+        roster = [(uid, f"{name}（{'下次通知' if preferences[uid] == 'once' else '每次通知'}）")
+                  for uid, name in interest_roster(interaction.guild, interaction.channel, preferences)]
         pages = InterestRosterPages(interaction.user.id, roster, self.topic['label'],
                                     source_view=self, source_message=interaction.message)
         await interaction.followup.send(embed=pages.embed(), view=wording_view(interaction.user, pages), ephemeral=True,

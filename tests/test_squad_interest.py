@@ -191,6 +191,21 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         pages.stop()
         view.stop()
 
+    async def test_roster_read_does_not_edit_cards_or_wait_for_reconcile(self):
+        view = FootprintView(None, self.topic)
+        view.refresh = AsyncMock(side_effect=AssertionError('read must not refresh public cards'))
+        i, message = self.roster_interaction()
+        storage.toggle(self.topic['id'], 1, 11, 'always')
+        async with view.lock:
+            await asyncio.wait_for(view.show_roster(i), timeout=2)
+        view.refresh.assert_not_awaited()
+        message.edit.assert_not_awaited()
+        self.assertEqual(storage.preferences(self.topic['id']), {11: 'always'})
+        self.assertIn('<@11>', i.followup.send.call_args.kwargs['embed'].description)
+        self.assertTrue(i.followup.send.call_args.kwargs['ephemeral'])
+        i.followup.send.call_args.kwargs['view'].stop()
+        view.stop()
+
     async def test_concurrent_clicks_render_latest_members(self):
         lock = asyncio.Lock()
         cog = object.__new__(SquadCards)
