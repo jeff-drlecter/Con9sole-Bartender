@@ -20,6 +20,7 @@ auto_start_machines = true   # 有請求會自動啟動
   destination = "/data"
 
 [env]
+  RSS_PERSONAL_PUBLIC = "1"
   HELPER_SANDBOX = "1"
   RSS_DELIVERY_SOURCES = "ps,xbox,4gamers"
   RSS_DIGEST_CONFIG = "docs/rss_simulation.json"

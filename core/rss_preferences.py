@@ -127,6 +127,6 @@ def fixtures(now):
         ('trial','PC Steam 免費週末 限時試玩','4gamers','trial'),
         ('news','PC Steam 合作遊戲 更新新聞','4gamers','news'),
         ('hardware','PC 硬件 顯示卡新聞','4gamers','news')]:
-        rows.append(dict(key=key,title='【虛構範例】'+title,source=source,summary='只供測試篩選，唔係真實優惠。',link='https://example.com/'+key,published=now,
+        rows.append(dict(key=key,title='【虛構範例】'+title,source=source,summary='只供測試篩選，不是真實優惠。',link='https://example.com/'+key,published=now,
                          offer=None if kind=='news' else dict(kind=kind,region='虛構測試地區',deadline=now+86400)))
     return rows

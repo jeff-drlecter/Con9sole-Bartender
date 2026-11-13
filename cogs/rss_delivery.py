@@ -18,6 +18,7 @@ from core.rss_delivery import enabled_sources
 from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, excerpt, display_link
 from datetime import datetime
 from core.rss_simulation import scenarios
+from core.rss_wording import rss_text
 from core.rss_preferences import PreferenceStore
 from core.rss_personal_ui import PersonalPanel
 from core.rss_featured import CHART_URL, parse_chart, verified_game
@@ -40,6 +41,7 @@ class RSSDelivery(commands.Cog):
                 raise ValueError("digest config exceeds 64 KiB")
             data = json.loads(raw)
         self.digest_config = DigestConfig.from_dict(data)
+        self.public_personal = os.getenv("RSS_PERSONAL_PUBLIC", "0") == "1"
         self.preferences = None
         self.personal_panel = None
         self.panel_checked = False
@@ -58,7 +60,7 @@ class RSSDelivery(commands.Cog):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25),
                                             headers={"User-Agent": "Con9sole-Bartender RSS/1.0"},
                                             cookie_jar=aiohttp.DummyCookieJar(), trust_env=False)
-        if self.digest_config.simulation:
+        if self.digest_config.simulation or self.public_personal:
             self.preferences = PreferenceStore(DATA_DIR / 'rss_sandbox_preferences.sqlite3')
             self.personal_panel = PersonalPanel(self)
             self.bot.add_view(self.personal_panel)
@@ -206,10 +208,10 @@ class RSSDelivery(commands.Cog):
         await self.bot.wait_until_ready()
 
     def personal_panel_text(self):
-        return ('🧪 個人情報沙盤\n按「調整偏好」揀平台、商店、內容類型及關鍵字，再按「我的情報」。\n'
-                '結果只畀你睇；偏好會保存。可用「虛構資料試篩選」測試限免／會員／試玩分流。\n'
-                '另有「是日精選」「今個月精選」「最近熱門」；熱門先採用 Steam 官方榜單。\n'
-                '公共精選保留歷史；按鈕結果只畀你睇。目前不發個人通知、不改正式訂閱。')
+        return ('🧪 個人情報測試區\n按「調整偏好」選擇平台、商店、內容類型及關鍵字，再按「我的情報」。\n'
+                '結果只對你顯示，偏好會保存。「虛構資料試篩選」只供測試。\n'
+                '另有「今日精選」「本月精選」「最近熱門」；熱門採用 Steam 官方榜單。\n'
+                '目前不發個人通知，不改正式訂閱。')
 
     async def ensure_personal_panel(self,channel):
         if self.panel_checked or not self.preferences or not self.digest_config.simulation: return
@@ -241,7 +243,7 @@ class RSSDelivery(commands.Cog):
             if not await asyncio.to_thread(self.preferences.claim_featured,slot): return
             # Keep shared historical snapshots; private button previews never post to chat.
             embeds=[render_featured(kind,rows[:3],now,snapshot,compact=True) for kind,rows in results.items()]
-            message=await channel.send('🧪 精選速覽｜是日・今個月・最近熱門',embeds=embeds,
+            message=await channel.send('🧪 精選速覽｜今日・本月・最近熱門',embeds=embeds,
                 view=PersonalPanel(self),allowed_mentions=discord.AllowedMentions.none())
             await asyncio.to_thread(self.preferences.finish_featured,slot,message.id)
             log.info('RSS featured sandbox posted: channel=%s message=%s',channel.id,message.id)
@@ -249,21 +251,45 @@ class RSSDelivery(commands.Cog):
             log.exception('Featured post requires verification; reserved posts are not automatically resent')
 
     async def personal_access(self, interaction):
-        channel = self.target_channel()
-        allowed = (self.digest_config.simulation and self.preferences is not None and self.store is not None
-                   and channel is not None and interaction.guild_id == config.GUILD_ID
-                   and interaction.channel_id == self.digest_config.channel_id
-                   and channel.permissions_for(interaction.user).view_channel)
-        if not allowed:
-            await interaction.response.send_message('只限有權進入 RSS 沙盤嘅成員使用。', ephemeral=True)
-        return bool(allowed)
+        ready = self.preferences is not None and self.store is not None
+        same_guild = interaction.guild_id == config.GUILD_ID
+        sandbox = False
+        if ready and same_guild and interaction.channel_id == self.digest_config.channel_id:
+            target = self.target_channel()
+            sandbox = bool(self.digest_config.simulation and target is not None
+                           and target.permissions_for(interaction.user).view_channel)
+        public = False
+        if ready and same_guild and self.public_personal:
+            current = getattr(interaction, 'channel', None)
+            # No role assignments or permission bypass: use the interaction's actual channel.
+            if isinstance(current, discord.TextChannel) and current.guild.id == config.GUILD_ID:
+                me = current.guild.me
+                public = bool(me is not None and current.permissions_for(interaction.user).view_channel
+                              and current.permissions_for(me).view_channel)
+        if not (sandbox or public):
+            await interaction.response.send_message(rss_text(interaction.user, 'unavailable'), ephemeral=True)
+        return bool(sandbox or public)
+
+    async def menu_entry(self, interaction):
+        if not await self.personal_access(interaction):
+            return
+        await interaction.response.send_message(rss_text(interaction.user, 'entry'),
+            view=PersonalPanel(self), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name="news", description="私人查看遊戲情報、精選及個人偏好")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    async def news(self, interaction: discord.Interaction):
+        await self.menu_entry(interaction)
 
     @app_commands.command(name="rss_personal_panel", description="在 RSS 沙盤張貼個人情報測試入口（管理員）")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     async def personal_entry(self, interaction: discord.Interaction):
-        if not await self.personal_access(interaction): return
+        if not (self.digest_config.simulation and interaction.channel_id == self.digest_config.channel_id
+                and self.target_channel() is not None):
+            await interaction.response.send_message("請在原有私人測試區使用。", ephemeral=True)
+            return
         await interaction.response.send_message(self.personal_panel_text(),
             view=PersonalPanel(self), allowed_mentions=discord.AllowedMentions.none())
 

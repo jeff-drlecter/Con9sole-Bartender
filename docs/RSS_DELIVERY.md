@@ -226,3 +226,37 @@ The last successful cache survives restart; retrieval older than 24h or source
 rollups older than seven days are not presented as current. Source failure never
 falls back to newest RSS articles as a fabricated popularity ranking. These
 public Steam endpoints are schema-validated but not guaranteed stable.
+
+## Member browsing rollout — 14 November 2026
+
+`RSS_PERSONAL_PUBLIC=1` exposes a private, on-demand member browser via `/news`
+and `/menu` → 更多玩法 → 資訊與設定 → 遊戲情報. This flag is independent
+of scheduled delivery. The current Fly configuration keeps `simulation:true`
+and the private test destination: MonitoRSS remains the production publisher.
+No new shared public card, DM, notification or role assignment is created.
+
+The member must be in this guild and in a text channel both they and the Bot
+can view. Threads and DMs are rejected. Every panel action checks access again;
+preference panels and keyword submissions additionally check their owner.
+Public entry replies, results and settings are ephemeral. Existing persistent
+sandbox button IDs and `/data/rss_sandbox_preferences.sqlite3` are retained,
+including per-user preferences and the Steam chart cache. Browsing does not
+claim scheduled batches. Reopening reads current settings.
+
+Shared labels use neutral Traditional Chinese; authored private prompts use
+existing HK/TW language roles, defaulting to neutral when unset or conflicting.
+Source headlines, excerpts and user keywords are not translated. Steam/Epic
+verified offer collection is still absent and described explicitly in the UI.
+
+Rollback the member browser by setting `RSS_PERSONAL_PUBLIC=0` and restarting;
+the private sandbox still operates and stored preferences are retained. This
+flag never enables production publishing. Deployment checks confirm command
+registration and SQLite integrity without sending messages. Automated member
+permission models are not a real ordinary-member or iPhone interaction test.
+Before production news cutover, finish the original source comparison,
+scheduled delivery acceptance and MonitoRSS backup/disable sequence above.
+
+Deploy impact: the existing single-process Bot restarts. Discord voice rooms
+remain server-side, but Bot interaction responses and background jobs can pause;
+active short-lived preference views must be reopened. Persistent RSS button IDs
+and existing SQLite databases are retained. No guarantee of zero interruption.

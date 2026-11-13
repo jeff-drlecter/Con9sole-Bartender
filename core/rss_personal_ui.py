@@ -4,6 +4,7 @@ import time
 import discord
 from core.rss_preferences import OPTIONS, keywords, matches, fixtures, personal_preview
 from core.rss_featured_ui import show_featured
+from core.rss_wording import rss_text
 
 
 class PersonalPanel(discord.ui.View):
@@ -21,14 +22,14 @@ class PersonalPanel(discord.ui.View):
     @discord.ui.button(label='調整偏好',custom_id='rss:sandbox:preferences:v1')
     async def preferences(self,interaction,button):
         pref=await asyncio.to_thread(self.cog.preferences.get,interaction.user.id)
-        await interaction.response.send_message('揀完會自動儲存。關鍵字可留空；只影響你嘅私人摘要。',view=PreferencesView(self.cog,interaction.user.id,pref),ephemeral=True)
+        await interaction.response.send_message(rss_text(interaction.user, 'preferences'),view=PreferencesView(self.cog,interaction.user.id,pref,interaction.user),ephemeral=True)
 
 
-    @discord.ui.button(label='是日精選',custom_id='rss:sandbox:today:v1',row=1)
+    @discord.ui.button(label='今日精選',custom_id='rss:sandbox:today:v1',row=1)
     async def today(self,interaction,button):
         await show_featured(self.cog,interaction,'today')
 
-    @discord.ui.button(label='今個月精選',custom_id='rss:sandbox:month:v1',row=1)
+    @discord.ui.button(label='本月精選',custom_id='rss:sandbox:month:v1',row=1)
     async def month(self,interaction,button):
         await show_featured(self.cog,interaction,'month')
 
@@ -43,10 +44,9 @@ async def show_news(cog,interaction,demo=False):
     now=time.time()
     articles=([a for a in fixtures(now) if matches(a,pref)] if demo else
               await asyncio.to_thread(personal_preview,cog.store,cog.digest_config,cog.sources,pref,now))
-    label='🧪 虛構範例・我的情報' if demo else '🧪 我的情報・真實新聞'
-    content=('虛構資料，只供測試；唔係真實優惠。' if demo else
-             '最近 24 小時｜按平台文字線索分類，可能漏收。Steam／Epic 限免資料尚未接入；冇已核實優惠就唔會冒充限免。')
-    if not articles: content+='\n目前冇符合偏好嘅內容。可以調整篩選，或用「虛構資料試篩選」。'
+    label='🧪 虛構範例・我的情報' if demo else '我的情報・真實新聞'
+    content = rss_text(interaction.user, 'fixture' if demo else 'scope')
+    if not articles: content += '\n' + rss_text(interaction.user, 'empty')
     await interaction.followup.send(content,embed=cog.render({'kind':'digest','articles':articles},now,label) if articles else None,
                                     ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
@@ -63,16 +63,18 @@ class Choice(discord.ui.Select):
         pref=await asyncio.to_thread(self.view.cog.preferences.get,interaction.user.id)
         pref[self.key]=list(self.values)
         await asyncio.to_thread(self.view.cog.preferences.put,interaction.user.id,pref)
-        await interaction.response.edit_message(content='✅ 已儲存。按「睇我的情報」試效果。',view=PreferencesView(self.view.cog,interaction.user.id,pref))
+        await interaction.response.edit_message(content=rss_text(interaction.user, 'saved'),view=PreferencesView(self.view.cog,interaction.user.id,pref,interaction.user))
 
 
 class KeywordModal(discord.ui.Modal,title='個人關鍵字'):
-    include=discord.ui.TextInput(label='想睇嘅字（任一符合；逗號分隔）',required=False,max_length=400)
-    exclude=discord.ui.TextInput(label='唔想睇嘅字（排除優先；逗號分隔）',required=False,max_length=400)
+    include=discord.ui.TextInput(label='想看的字（任一符合；逗號分隔）',required=False,max_length=400)
+    exclude=discord.ui.TextInput(label='不想看的字（排除優先；逗號分隔）',required=False,max_length=400)
 
-    def __init__(self,cog,owner,pref):
+    def __init__(self,cog,owner,pref,member=None):
         super().__init__()
         self.cog,self.owner=cog,owner
+        self.include.label=rss_text(member, 'include')
+        self.exclude.label=rss_text(member, 'exclude')
         self.include.default=', '.join(pref['include'])
         self.exclude.default=', '.join(pref['exclude'])
 
@@ -88,23 +90,23 @@ class KeywordModal(discord.ui.Modal,title='個人關鍵字'):
 
 
 class PreferencesView(discord.ui.View):
-    def __init__(self,cog,owner,pref):
+    def __init__(self,cog,owner,pref,member=None):
         super().__init__(timeout=600)
         self.cog,self.owner=cog,owner
         for key in OPTIONS: self.add_item(Choice(key,pref))
 
     async def interaction_check(self,interaction):
         if interaction.user.id!=self.owner:
-            await interaction.response.send_message('請用自己嘅「調整偏好」。',ephemeral=True)
+            await interaction.response.send_message(rss_text(interaction.user, 'own'),ephemeral=True)
             return False
         return await self.cog.personal_access(interaction)
 
     @discord.ui.button(label='關鍵字',row=3)
     async def edit_keywords(self,interaction,button):
         pref=await asyncio.to_thread(self.cog.preferences.get,self.owner)
-        await interaction.response.send_modal(KeywordModal(self.cog,self.owner,pref))
+        await interaction.response.send_modal(KeywordModal(self.cog,self.owner,pref,interaction.user))
 
-    @discord.ui.button(label='睇我的情報',row=3,style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='查看我的情報',row=3,style=discord.ButtonStyle.primary)
     async def news(self,interaction,button):
         await show_news(self.cog,interaction)
 
