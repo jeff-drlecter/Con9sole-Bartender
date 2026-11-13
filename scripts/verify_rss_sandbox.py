@@ -41,7 +41,9 @@ def main():
                                    headers={'Authorization':'Bot '+token,'User-Agent':'Con9sole-Bartender/1.0'})
     with urllib.request.urlopen(request,timeout=20) as response: message=json.load(response)
     titles=[embed.get('title','') for embed in message.get('embeds',[])]
-    assert all(any(label in title for title in titles) for label in ('是日精選','今個月精選','最近熱門')), 'Missing featured sections'
+    assert (any(('今日精選' in t or '是日精選' in t) for t in titles)
+            and any(('本月精選' in t or '今個月精選' in t) for t in titles)
+            and any('最近熱門' in t for t in titles)), 'Missing featured sections'
     print(f"Verified featured snapshot https://discord.com/channels/626378673523785731/{config['channel_id']}/{featured[0]}")
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         chart=db.execute("SELECT payload FROM featured_cache WHERE name='steam'").fetchone()

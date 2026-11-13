@@ -372,6 +372,7 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("confession", "無名告白", "🕯️", "secondary", "social", 1, "Confession"),
     ],
     "info": [
+        MenuItem("news", "遊戲情報", "📰", "primary", "info", 2, "RSSDelivery", "menu_entry"),
         MenuItem("language", "語言設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
         MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
         MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),

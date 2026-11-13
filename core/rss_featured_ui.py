@@ -3,13 +3,14 @@ import asyncio
 import time
 from datetime import datetime
 import discord
+from core.rss_wording import rss_text
 from core.rss_digest import HK, excerpt, display_link
 from core.rss_featured import highlights, chart_rows, CHART_PAGE
 
-LABELS={'today':'📌 是日精選','month':'🗓️ 今個月精選','hot':'🔥 最近熱門'}
+LABELS={'today':'📌 今日精選','month':'🗓️ 本月精選','hot':'🔥 最近熱門'}
 
 
-def render_featured(kind,rows,now,snapshot=None,compact=False):
+def render_featured(kind,rows,now,snapshot=None,compact=False,simulation=True):
     stamp=datetime.fromtimestamp(now,HK).strftime('%m/%d %H:%M')
     embed=discord.Embed(title=LABELS[kind]+'｜'+stamp)
     if kind=='hot':
@@ -36,7 +37,7 @@ def render_featured(kind,rows,now,snapshot=None,compact=False):
         if len(description)+len(line)+len(footer)+2>budget: break
         description+='\n'+line
     embed.description=description+footer
-    embed.set_footer(text='🧪 沙盤精選 · 原文標題節錄 · 不代表免費領取')
+    embed.set_footer(text=('🧪 測試精選' if simulation else '遊戲情報') + ' · 原文標題節錄 · 不代表免費領取')
     return embed
 
 
@@ -53,5 +54,5 @@ async def show_featured(cog,interaction,kind):
     pref=await asyncio.to_thread(cog.preferences.get,interaction.user.id)
     now=time.time()
     results,snapshot=await sections(cog,now,pref)
-    await interaction.followup.send('按你已儲存嘅偏好篩選；公共精選另有完整共用版本。',
-        embed=render_featured(kind,results[kind],now,snapshot),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+    await interaction.followup.send(rss_text(interaction.user, 'featured'),
+        embed=render_featured(kind,results[kind],now,snapshot,simulation=not cog.public_personal),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
