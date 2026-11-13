@@ -53,6 +53,9 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(calls[-1][0])
         channel.members = []
         await tick()
+        self.assertFalse(calls[-1][0])
+        now[0] += 30
+        await tick()
         self.assertTrue(calls[-1][0])
         self.assertEqual(set(calls[-1][1]), {'1', '2'})
         self.assertFalse(cog.state['sessions'])
@@ -79,6 +82,8 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await namespace['reconcile'](cog)
         self.assertEqual(set(calls), {(10, 30, False), (11, 31, False)})
         channels[0].members = []
+        await namespace['reconcile'](cog)
+        now[0] += 30
         await namespace['reconcile'](cog)
         self.assertIn((10, 30, True), calls)
         self.assertIn('11', cog.state['sessions'])

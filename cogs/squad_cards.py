@@ -517,6 +517,9 @@ class SquadCards(commands.Cog):
         if session.get("message"):
             try:
                 message = await destination.fetch_message(session["message"])
+                if ended and session.get('id'):
+                    await self.finish_footprint(destination, message, session, embed, view, value)
+                    return
                 await message.edit(content=None if ended else message.content, **kwargs)
                 session["dirty"] = False
                 if value:
@@ -559,6 +562,47 @@ class SquadCards(commands.Cog):
         if not ended:
             await self.notify_interested(channel, session)
 
+    async def finish_footprint(self, destination, original, session, embed, view, value):
+        """Journal the separate closing post before sending; never replay uncertainty."""
+        async with shared_async_lock('squad-footprint', config.GUILD_ID, session['id']):
+            await original.edit(content='本局已結束 · 正在整理足跡', embed=None,
+                                view=None, allowed_mentions=discord.AllowedMentions.none())
+            # A brief solo visit is not a completed group session.
+            qualified = len(session['participants']) >= 2 and session['ended'] - session['started'] >= 60
+            if not qualified:
+                await original.edit(content='本局已結束', embed=None, view=None,
+                                    allowed_mentions=discord.AllowedMentions.none())
+                await run_stats(squad_interest.forget_card, original.id)
+                session['dirty'] = False
+                return
+            journal_id = session['id'] + ':footprint'
+            latest = await run_stats(squad_interest.latest_card_post, journal_id)
+            footprint_id = latest['message_id'] if latest and latest['state'] == 'sent' else None
+            if not footprint_id:
+                if not self.bot.is_ready():
+                    raise RuntimeError('Disconnected before footprint send')
+                attempt = await run_stats(squad_interest.begin_card_post, journal_id, destination.id, 0)
+                try:
+                    footprint = await destination.send(embed=embed, view=view,
+                        allowed_mentions=discord.AllowedMentions.none())
+                except discord.HTTPException as exc:
+                    if 400 <= exc.status < 500 and exc.status != 408:
+                        await run_stats(squad_interest.finish_card_post, attempt, rejected=True)
+                    raise
+                footprint_id = footprint.id
+                await run_stats(squad_interest.finish_card_post, attempt, message_id=footprint_id)
+            session['footprint'] = footprint_id
+            self.save()
+            url = f'https://discord.com/channels/{config.GUILD_ID}/{destination.id}/{footprint_id}'
+            await original.edit(content=f'本局已結束 · [查看足跡]({url})', embed=None,
+                                view=None, allowed_mentions=discord.AllowedMentions.none())
+            await run_stats(squad_interest.forget_card, original.id)
+            if value:
+                await run_stats(squad_interest.track_card, value['id'], destination.id, footprint_id, '')
+                self.bot.add_view(FootprintView(self, value))
+            await run_stats(squad_interest.link_footprint, session['id'], footprint_id)
+            session['dirty'] = False
+
     async def menu_entry(self, interaction, *, page=0):
         if interaction.guild_id!=config.GUILD_ID or interaction.user.bot:
             await interaction.response.send_message(wording_text(getattr(interaction, "user", None), '請喺原本伺服器使用。'),ephemeral=True)
@@ -584,7 +628,8 @@ class SquadCards(commands.Cog):
             try:
                 message=await channel.fetch_message(row['message_id'])
                 url=f"https://discord.com/channels/{context['guild']}/{context['channel']}/{context['card']}"
-                if message.author.id!=self.bot.user.id or url not in message.content:
+                original_url=f"https://discord.com/channels/{context['guild']}/{context['channel']}/{context.get('original_card',context['card'])}"
+                if message.author.id!=self.bot.user.id or not any(link in message.content for link in (url, original_url)):
                     log.warning('Refused to close mismatched squad notice: message=%s',row['message_id'])
                     await run_stats(squad_interest.notice_close_failed,row)
                     continue
@@ -604,6 +649,7 @@ class SquadCards(commands.Cog):
     async def on_disconnect(self):
         async with self.lock:
             for session in self.state['sessions'].values():
+                session.pop('empty_since', None)
                 if not session.get('message'):
                     session['qualified']=None
             self.save()
@@ -739,6 +785,11 @@ class SquadCards(commands.Cog):
                         session['message']=latest['message_id']
                 if not members or (session and session.get('ended') is not None):
                     if session:
+                        if channel is not None and session.get('message') and session.get('ended') is None:
+                            session.setdefault('empty_since', now)
+                            self.save()
+                            if now - session['empty_since'] < 30:
+                                continue
                         session.setdefault("ended", now)
                         self.save()  # Persist terminal state before any awaited finalization.
                         await run_stats(squad_interest.end_session,session['id'])
@@ -755,6 +806,7 @@ class SquadCards(commands.Cog):
                                    first_member=min(members, key=lambda m: getattr(self, "arrivals", {}).get(
                                        (channel.id, m.id), now)).id)
                     self.state["sessions"][key] = session
+                session.pop('empty_since', None)
                 before = dict(session["participants"])
                 session["participants"].update({str(m.id): m.display_name for m in members})
                 roster = sorted(m.id for m in members)
@@ -801,6 +853,7 @@ class SquadCards(commands.Cog):
                 log.exception("Could not hide legacy subscription fields: topic=%s", value["id"])
         # Unpublished timers restart: offline time cannot establish continuous presence.
         for session in self.state["sessions"].values():
+            session.pop('empty_since', None)
             if not session.get("message"):
                 session["qualified"] = None
             else:
@@ -826,6 +879,57 @@ class SquadCards(commands.Cog):
         if str(channel.id) in self.state["sessions"]:
             async with self.lock:
                 await self.reconcile()
+
+    async def test_entry(self, interaction: discord.Interaction):
+        destination = interaction.channel
+        category = getattr(destination, 'category', None)
+        if (interaction.guild_id != config.GUILD_ID or not is_server_admin(interaction.user)
+                or not isinstance(destination, discord.TextChannel) or category is None
+                or '測試' not in category.name):
+            await interaction.response.send_message('請在功能測試區的文字頻道使用。', ephemeral=True)
+            return
+        voice = next((c for c in category.voice_channels if not humans(c)), None)
+        if voice is None:
+            await interaction.response.send_message('測試區需要一個沒有成員的語音頻道。', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        now = time.time()
+        session = dict(id='test-' + uuid.uuid4().hex, started=now-90, destination=destination.id,
+                       participants={'test-a': '測試玩家 A', 'test-b': '測試玩家 B'},
+                       game='測試遊戲', mode='卡片流程測試', profile='other')
+        self.interest_baseline.add(session['id'])  # Never notify real subscribers.
+        async with self.lock:
+            try:
+                await self.render(voice, session)
+                original = await destination.fetch_message(session['message'])
+                original_url = original.jump_url
+                notice = await destination.send(f'【測試】開局提醒 · [查看召人卡]({original_url})',
+                    suppress_embeds=True, allowed_mentions=discord.AllowedMentions.none())
+                await destination.send('【測試】這則訊息模擬中途聊天，足跡卡應出現在它之後。',
+                    allowed_mentions=discord.AllowedMentions.none())
+                session['ended'] = now
+                await self.render(voice, session, ended=True)
+                footprint_id = session['footprint']
+                # Retry the production finalizer; the journal must reuse the same post.
+                await self.render(voice, session, ended=True)
+                assert session['footprint'] == footprint_id
+                footprint = await destination.fetch_message(footprint_id)
+                await notice.edit(content=f'【測試】本局已結束 · [查看足跡]({footprint.jump_url})',
+                    view=None, allowed_mentions=discord.AllowedMentions.none())
+                original = await destination.fetch_message(original.id)
+                assert not original.embeds and not original.components
+                assert footprint.jump_url in original.content
+                assert footprint.embeds and len([c for row in footprint.components for c in row.children]) == 3
+                assert footprint.id > notice.id
+                assert not notice.components and not original.mentions and not footprint.mentions
+                await interaction.followup.send(
+                    f'測試通過：[查看足跡]({footprint.jump_url})\n舊卡已收起操作；新卡位於聊天之後；重試沒有重發。\n使用模擬參與資料，未測真人進出語音。',
+                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            except Exception:
+                log.exception('Squad test incomplete: session=%s', session['id'])
+                await interaction.followup.send('測試未完成，請保留現有卡片供核對。', ephemeral=True)
+            finally:
+                self.interest_baseline.discard(session['id'])
 
     @app_commands.command(name='squad_recover', description='核對並連結發送結果不明嘅現有召人卡')
     @app_commands.guild_only()

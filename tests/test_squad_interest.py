@@ -274,14 +274,17 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
     async def test_ended_card_retains_button_and_registers_on_restart(self):
         bot=MagicMock();bot.get_channel.return_value=types.SimpleNamespace(id=30,send=AsyncMock())
         cog=object.__new__(SquadCards);cog.bot=bot;cog.save=MagicMock();cog.lock=asyncio.Lock()
-        message=types.SimpleNamespace(edit=AsyncMock(),content='old')
+        message=types.SimpleNamespace(id=99,edit=AsyncMock(),content='old')
+        bot.get_channel.return_value.send=AsyncMock(return_value=types.SimpleNamespace(id=100))
         bot.get_channel.return_value.fetch_message=AsyncMock(return_value=message)
-        session={'id':'ended','destination':30,'message':99,'participants':{'10':'Jeff'},'started':1000,'ended':2000,'game':'NBA 2K27','mode':'REC'}
+        session={'id':'ended','destination':30,'message':99,'participants':{'10':'Jeff','11':'Player B'},'started':1000,'ended':2000,'game':'NBA 2K27','mode':'REC'}
         await cog.render(None,session,ended=True)
-        view=message.edit.call_args.kwargs['view']
+        view=bot.get_channel.return_value.send.call_args.kwargs['view']
+        self.assertIsNone(message.edit.call_args.kwargs['view'])
+        self.assertIn('/100)',message.edit.call_args.kwargs['content'])
         self.assertIsInstance(view,FootprintView)
         self.assertTrue(view.is_persistent())
-        self.assertIsNone(message.edit.call_args.kwargs['content'])
+        self.assertEqual(session['footprint'],100)
         saved=next(t for t in storage.topics() if t['id']==view.topic['id'])
         restored=FootprintView(None,saved)
         self.assertEqual(restored.children[0].custom_id,view.children[0].custom_id)
