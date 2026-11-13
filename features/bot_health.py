@@ -28,7 +28,7 @@ def storage_health(level_path,guild,stats_path=None):
         '社群紀錄':database_health(stats_path or STATS_DB,[
             ('待發通知',"SELECT count(*) FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope WHERE t.guild_id=? AND d.state='pending'",(guild,)),
             ('待查召人卡',"SELECT count(*) FROM squad_card_posts WHERE state='uncertain'",()),
-            ('待收尾通知',"SELECT count(*) FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_ended_sessions e ON e.session_id=d.session_id WHERE t.guild_id=? AND d.state='sent' AND d.message_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM squad_closed_notices n WHERE n.session_id=d.session_id AND n.scope=d.scope AND n.batch=d.batch AND n.message_id=d.message_id)",(guild,)),
+            ('待收尾通知',"SELECT count(*) FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_ended_sessions e ON e.session_id=d.session_id WHERE t.guild_id=? AND d.state='sent' AND d.message_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM squad_closed_notices n WHERE n.session_id=d.session_id AND n.scope=d.scope AND n.batch=d.batch AND n.message_id=d.message_id AND n.compact=1)",(guild,)),
             ('待查通知',"SELECT count(*) FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope WHERE t.guild_id=? AND d.state='uncertain'",(guild,))]),
     }
 

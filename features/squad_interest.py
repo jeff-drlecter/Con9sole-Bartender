@@ -53,6 +53,8 @@ def initialize():
         conn.execute('CREATE TABLE IF NOT EXISTS squad_interest_cancellations(scope TEXT,user_id INTEGER,stamp REAL,PRIMARY KEY(scope,user_id))')
         conn.execute('CREATE TABLE IF NOT EXISTS squad_ended_sessions(session_id TEXT PRIMARY KEY,stamp REAL)')
         conn.execute('CREATE TABLE IF NOT EXISTS squad_closed_notices(session_id TEXT,scope TEXT,batch INTEGER,message_id INTEGER,PRIMARY KEY(session_id,scope,batch,message_id))')
+        if 'compact' not in {r[1] for r in conn.execute('PRAGMA table_info(squad_closed_notices)')}:
+            conn.execute('ALTER TABLE squad_closed_notices ADD COLUMN compact INTEGER NOT NULL DEFAULT 0')
         conn.execute('CREATE TABLE IF NOT EXISTS squad_close_retries(session_id TEXT,scope TEXT,batch INTEGER,retry_at REAL,PRIMARY KEY(session_id,scope,batch))')
         conn.execute('CREATE TABLE IF NOT EXISTS squad_card_posts(attempt TEXT PRIMARY KEY,session_id TEXT,destination INTEGER,voice INTEGER,stamp REAL,state TEXT,message_id INTEGER)')
         conn.execute('CREATE INDEX IF NOT EXISTS squad_card_post_session ON squad_card_posts(session_id,stamp)')
@@ -278,13 +280,15 @@ def closing_notices(limit=20):
     initialize()
     with connect_sqlite(STATS_DB) as conn:
         return [dict(session=s,scope=t,batch=b,message_id=m,context=json.loads(c),guild_id=g,label=l)
-            for s,t,b,m,c,g,l in conn.execute("SELECT d.session_id,d.scope,d.batch,d.message_id,d.context,t.guild_id,t.label FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_ended_sessions e ON e.session_id=d.session_id WHERE d.state='sent' AND d.message_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM squad_closed_notices n WHERE n.session_id=d.session_id AND n.scope=d.scope AND n.batch=d.batch AND n.message_id=d.message_id) AND NOT EXISTS(SELECT 1 FROM squad_close_retries r WHERE r.session_id=d.session_id AND r.scope=d.scope AND r.batch=d.batch AND r.retry_at>?) ORDER BY e.stamp LIMIT ?",(time.time(),limit))]
+            # Revisit legacy notices once, even if startup refresh has already
+            # removed their subscription-card tracking. Keep retries durable.
+            for s,t,b,m,c,g,l in conn.execute("SELECT d.session_id,d.scope,d.batch,d.message_id,d.context,t.guild_id,t.label FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_ended_sessions e ON e.session_id=d.session_id WHERE d.state='sent' AND d.message_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM squad_closed_notices n WHERE n.session_id=d.session_id AND n.scope=d.scope AND n.batch=d.batch AND n.message_id=d.message_id AND n.compact=1) AND NOT EXISTS(SELECT 1 FROM squad_close_retries r WHERE r.session_id=d.session_id AND r.scope=d.scope AND r.batch=d.batch AND r.retry_at>?) ORDER BY e.stamp LIMIT ?",(time.time(),limit))]
 
 
 def notice_closed(row):
     initialize()
     with connect_sqlite(STATS_DB) as conn:
-        conn.execute('INSERT OR IGNORE INTO squad_closed_notices VALUES(?,?,?,?)',(row['session'],row['scope'],row['batch'],row['message_id']))
+        conn.execute('INSERT OR REPLACE INTO squad_closed_notices(session_id,scope,batch,message_id,compact) VALUES(?,?,?,?,1)',(row['session'],row['scope'],row['batch'],row['message_id']))
 
 
 def begin_card_post(session_id, destination, voice):
