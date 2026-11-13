@@ -17,12 +17,13 @@ def initialize():
 
 def save(message_id, guild_id, channel_id, names):
     initialize()
+    legacy = [str(name) for uid, name in names.items() if not str(uid).isdecimal()]
     names = {str(uid): str(name) for uid, name in names.items() if str(uid).isdecimal()}
     with connect_sqlite(STATS_DB) as conn:
         conn.execute('''INSERT INTO squad_participant_snapshots VALUES(?,?,?,?,?)
             ON CONFLICT(message_id) DO UPDATE SET names=excluded.names,legacy=excluded.legacy
             WHERE guild_id=excluded.guild_id AND channel_id=excluded.channel_id''',
-            (message_id, guild_id, channel_id, json.dumps(names, ensure_ascii=False), '[]'))
+            (message_id, guild_id, channel_id, json.dumps(names, ensure_ascii=False), json.dumps(legacy, ensure_ascii=False)))
 
 
 def preserve_legacy(message_id, guild_id, channel_id, lines):

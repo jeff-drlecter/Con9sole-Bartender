@@ -34,7 +34,13 @@ class SubscriptionView(SafeView):
             button.callback=turn;self.add_item(button)
         from features.drink_views import FeatureButton
         self.add_item(FeatureButton(label='發起預約',emoji='📅',cog='SquadPlans',method='menu_entry',row=2))
-        self.add_item(FeatureButton(label='重新整理',emoji='🔄',cog='SquadCards',method='menu_entry',row=2))
+        refresh = discord.ui.Button(label='重新整理', emoji='🔄', row=2)
+        async def reload_panel(interaction):
+            if not await self.interaction_check(interaction):return
+            await interaction.response.defer()
+            await self.cog.menu_entry(interaction, page=self.page, replace=True)
+        refresh.callback = reload_panel
+        self.add_item(refresh)
         self.add_item(FeatureButton(label='返回吧枱',emoji='🍸',cog='Menu',method='open_main_menu',row=2))
 
         wording_view(self.member, self)

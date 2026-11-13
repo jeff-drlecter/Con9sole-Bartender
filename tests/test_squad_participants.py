@@ -54,6 +54,10 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(embed.fields), 0)
         self.assertEqual(store.compact_legacy(embed), [])
 
+    def test_simulated_test_players_keep_labels_without_fabricated_ids(self):
+        store.save(500, 1, 100, {'test-a': '測試玩家 A', 'test-b': '測試玩家 B'})
+        self.assertEqual(store.get(500, 1, 100), dict(names={}, legacy=['測試玩家 A', '測試玩家 B']))
+
     async def test_readonly_participants_are_private_and_do_not_subscribe(self):
         inter, _ = self.fixture()
         store.save(500, 1, 100, {'10': 'Old A', '11': 'B'})
@@ -135,6 +139,12 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
         cog.menu_entry.assert_awaited_once_with(inter, replace=True)
         self.assertFalse(any(b.label in {'上一頁', '下一頁'} for b in view.children if isinstance(b, discord.ui.Button)))
         self.assertEqual(len(view.embed().fields), 2)
+        cog.menu_entry.reset_mock()
+        refresh = next(b for b in view.children if isinstance(b, discord.ui.Button) and b.label == '重新整理')
+        refreshed, _ = self.fixture()
+        await refresh.callback(refreshed)
+        cog.menu_entry.assert_awaited_once_with(refreshed, page=0, replace=True)
+        refreshed.followup.send.assert_not_awaited()
         view.stop()
 
     async def test_menu_replacement_edits_instead_of_sending_new_message(self):
