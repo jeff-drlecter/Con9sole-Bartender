@@ -302,7 +302,7 @@ def add_interest_fields(embed, roster, preferences):
 
 
 class FootprintView(SafeView):
-    def __init__(self, cog, value):
+    def __init__(self, cog, value, *, include_plan=True):
         super().__init__(timeout=None)
         self.cog, self.topic = cog, dict(value, label=value['label'].split(' · ', 1)[0])
         self.lock = cog.lock if cog is not None else asyncio.Lock()
@@ -318,6 +318,33 @@ class FootprintView(SafeView):
                                    custom_id=f"squad-interest-roster:{value['id']}")
         button.callback = self.show_roster
         self.add_item(button)
+        if include_plan:
+            button = discord.ui.Button(label='📅 發起下次', style=discord.ButtonStyle.secondary,
+                                       custom_id=f"squad-next-plan:{value['id']}")
+            button.callback = self.create_next
+            self.add_item(button)
+
+    async def create_next(self, interaction):
+        if not await self.permitted(interaction):
+            return
+        plans = interaction.client.get_cog('SquadPlans')
+        if plans is None:
+            await interaction.response.send_message('預約功能暫時未能使用，請稍後再試。', ephemeral=True)
+            return
+        from cogs.squad_plans import allowed, squad_channel, PlanForm
+        if not squad_channel(interaction.channel) or not allowed(interaction):
+            await plans.menu_entry(interaction)
+            return
+        form = PlanForm(plans, interaction.channel)
+        form.game.default = self.topic['label']
+        # The card carries this session's mode; subscriptions remain game-scoped.
+        for embed in getattr(interaction.message, 'embeds', []):
+            first_line = (embed.description or '').split('\n', 1)[0]
+            prefix = '🎮 ' + discord.utils.escape_markdown(self.topic['label']) + ' · '
+            if first_line.startswith(prefix):
+                form.mode.default = first_line[len(prefix):][:80]
+                break
+        await interaction.response.send_modal(wording_modal(interaction.user, form))
 
     async def permitted(self, interaction):
         if interaction.guild_id != self.topic["guild_id"] or interaction.user.bot:
@@ -410,7 +437,7 @@ class CardView(FootprintView):
         # A room category normally supplies the game; unknown games still get
         # join/settings controls without creating a notification subscription.
         if value:
-            super().__init__(cog, value)
+            super().__init__(cog, value, include_plan=False)
         else:
             SafeView.__init__(self, timeout=None)
         self.cog, self.key, self.session = cog, key, session
@@ -438,7 +465,7 @@ class CardView(FootprintView):
 
 class SessionNoticeView(FootprintView):
     def __init__(self, cog, value, voice_id):
-        super().__init__(cog, value)
+        super().__init__(cog, value, include_plan=False)
         self.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
             url=f"https://discord.com/channels/{value['guild_id']}/{voice_id}"))
 
@@ -919,7 +946,7 @@ class SquadCards(commands.Cog):
                 original = await destination.fetch_message(original.id)
                 assert not original.embeds and not original.components
                 assert footprint.jump_url in original.content
-                assert footprint.embeds and len([c for row in footprint.components for c in row.children]) == 3
+                assert footprint.embeds and len([c for row in footprint.components for c in row.children]) == 4
                 assert footprint.id > notice.id
                 assert not notice.components and not original.mentions and not footprint.mentions
                 await interaction.followup.send(
