@@ -99,9 +99,29 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await cog.close_finished_notices()
         sent=message.edit.call_args.kwargs
         self.assertEqual(sent['allowed_mentions'].to_dict(),{'parse':[]})
-        self.assertFalse(any(getattr(b,'url',None) for b in sent['view'].children))
+        self.assertIsNone(sent['view'])
+        self.assertEqual(sent['content'], '本局已結束 · [查看足跡](https://discord.com/channels/1/30/99)')
         self.assertEqual(store.closing_notices(),[])
         self.assertEqual(store.card_session(500),'')
+
+    async def test_legacy_closed_notice_loses_duplicate_controls_once(self):
+        self.reserve();revision=store.claim_delivery('s',self.scope,0)
+        store.finish_delivery('s',self.scope,0,message_id=500,expected_revision=revision)
+        store.end_session('s')
+        with store.connect_sqlite(store.STATS_DB) as conn:
+            conn.execute('INSERT INTO squad_closed_notices(session_id,scope,batch,message_id) VALUES(?,?,?,?)',('s',self.scope,0,500))
+        # Startup may already have forgotten the old text-only notice.
+        self.assertEqual(store.cards(self.scope),[])
+        store.track_card(self.scope,30,99)
+        message=types.SimpleNamespace(id=500,author=types.SimpleNamespace(id=42),
+            content='🏁 本局已結束。[查看足跡](https://discord.com/channels/1/30/99)，可登記下次通知。',edit=AsyncMock())
+        channel=types.SimpleNamespace(id=30,fetch_message=AsyncMock(return_value=message))
+        cog=self.cog();cog.bot.user.id=42;cog.bot.get_channel.return_value=channel
+        await cog.close_finished_notices()
+        self.assertIsNone(message.edit.call_args.kwargs['view'])
+        self.assertEqual([c['message_id'] for c in store.cards(self.scope)],[99])
+        await cog.close_finished_notices()
+        message.edit.assert_awaited_once()
 
     async def test_close_failure_backoff_retains_evidence_then_retries(self):
         self.reserve();r=store.claim_delivery('s',self.scope,0)

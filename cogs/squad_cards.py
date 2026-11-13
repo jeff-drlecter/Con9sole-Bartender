@@ -588,13 +588,13 @@ class SquadCards(commands.Cog):
                     log.warning('Refused to close mismatched squad notice: message=%s',row['message_id'])
                     await run_stats(squad_interest.notice_close_failed,row)
                     continue
-                value=dict(id=row['scope'],guild_id=row['guild_id'],label=row['label'])
                 if callable(ready) and not ready():return
-                await message.edit(content=f'🏁 本局已結束。[查看足跡]({url})，可登記下次通知。',
-                    view=FootprintView(self,value),allowed_mentions=discord.AllowedMentions.none())
-                await run_stats(squad_interest.track_card,row['scope'],channel.id,message.id,'')
+                await message.edit(content=f'本局已結束 · [查看足跡]({url})',
+                    view=None,allowed_mentions=discord.AllowedMentions.none())
+                await run_stats(squad_interest.forget_card,message.id)
                 await run_stats(squad_interest.notice_closed,row)
             except discord.NotFound:
+                await run_stats(squad_interest.forget_card,row['message_id'])
                 await run_stats(squad_interest.notice_closed,row)
             except discord.HTTPException:
                 log.exception('Could not close ended squad notice: message=%s',row['message_id'])
@@ -694,9 +694,6 @@ class SquadCards(commands.Cog):
                         await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,expected_revision=revision)
                         continue
                     mentions = " ".join(f"<@{uid}>" for uid in batch)
-                    view = discord.ui.View()
-                    view.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
-                        url=f"https://discord.com/channels/{guild.id}/{channel.id}"))
                     ready=getattr(self.bot,'is_ready',None)
                     if callable(ready) and not ready():
                         await run_stats(squad_interest.finish_delivery,session['id'],value['id'],batch_id,retry=True,expected_revision=revision)
@@ -704,7 +701,7 @@ class SquadCards(commands.Cog):
                     try:
                         message=await destination.send(
                             f"{mentions}｜🎮 **{label}** 開局了！[查看召人卡]({url})",
-                            view=view, suppress_embeds=True,
+                            suppress_embeds=True,
                             allowed_mentions=discord.AllowedMentions(
                                 users=[discord.Object(id=uid) for uid in batch], roles=False,
                                 everyone=False, replied_user=False))
