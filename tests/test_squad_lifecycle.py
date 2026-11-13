@@ -137,11 +137,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             AllowedMentions=Mentions, Object=lambda **kw: types.SimpleNamespace(**kw),
             NotFound=type('NotFound', (Exception,), {}))
         scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None,
-                     game_profile=lambda *a: '', GAME_LABELS={}, interest_topic=lambda *a: None)
+                     game_profile=lambda *a: '', GAME_LABELS={}, interest_topic=lambda *a: None,
+                     config=types.SimpleNamespace(GUILD_ID=1), run_stats=AsyncMock(),
+                     squad_participants=types.SimpleNamespace(save=object()))
         scope.update(wording_text=__import__("features.wording", fromlist=["text"]).text, wording_view=__import__("features.wording", fromlist=["view_copy"]).view_copy)
         exec(compile(ast.Module(body=[render_method], type_ignores=[]), str(source), 'exec'), scope)
         message = types.SimpleNamespace(id=99, content='<@1> prompt', edit=AsyncMock())
-        destination = types.SimpleNamespace(send=AsyncMock(return_value=message),
+        destination = types.SimpleNamespace(id=30, send=AsyncMock(return_value=message),
                                              fetch_message=AsyncMock(return_value=message))
         cog = types.SimpleNamespace(bot=types.SimpleNamespace(get_channel=lambda _: destination),
                                     save=lambda: None, notify_interested=AsyncMock())
@@ -174,7 +176,8 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertIn('🎮 Clubs Rush', embeds[-1].description)
         self.assertEqual(embeds[-1].fields, [])
         self.assertIn('16 分鐘', embeds[-1].description)
-        self.assertIn('參與成員 · A、B', embeds[-1].description)
+        self.assertIn('參與 2 人', embeds[-1].description)
+        self.assertNotIn('A、B', embeds[-1].description)
         self.assertLessEqual(len(embeds[-1].description.splitlines()), 3)
         self.assertIsNone(message.edit.call_args.kwargs['view'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])

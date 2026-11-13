@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from cogs.squad_cards import SquadCards
-from features import squad_interest as store
+from features import squad_interest as store, squad_participants
 from features.squad_subscription_views import SubscriptionView
 from quick_bar_fakes import interaction
 
@@ -16,12 +16,13 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.db=patch.object(store,'STATS_DB',Path(self.temp.name)/'stats.sqlite3');self.db.start()
+        self.participants_db=patch.object(squad_participants,'STATS_DB',Path(self.temp.name)/'stats.sqlite3');self.participants_db.start()
         self.topic=store.topic(1,'EA FC');store.remember(self.topic)
         self.scope=self.topic['id']
         self.cfg=patch('config.GUILD_ID',1);self.cfg.start()
 
     def tearDown(self):
-        self.cfg.stop();self.db.stop();self.temp.cleanup()
+        self.cfg.stop();self.db.stop();self.participants_db.stop();self.temp.cleanup()
 
     def reserve(self,kind='once'):
         store.toggle(self.scope,1,10,kind)
@@ -286,6 +287,7 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         destination.send.assert_awaited_once()
         self.assertEqual(session['message'],99)
         self.assertEqual(session['footprint'],501)
+        self.assertEqual(squad_participants.get(501, 1, 30)['names'], session['participants'])
         self.assertEqual(original.edit.call_args.kwargs['content'],
                          '本局已結束 · [查看足跡](https://discord.com/channels/1/30/501)')
         self.assertIsNone(original.edit.call_args.kwargs['view'])
@@ -391,7 +393,7 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         plans.menu_entry.assert_not_awaited()
         self.assertEqual(store.preferences(self.scope),{})
         self.assertTrue(view.is_persistent())
-        self.assertEqual(len(view.children),4)
+        self.assertEqual(len(view.children),5)
         view.stop()
 
     async def test_footprint_next_plan_rechecks_destination_permission(self):

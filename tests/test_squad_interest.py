@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 from cogs.squad_cards import add_interest_fields, SquadCards, FootprintView, InterestRosterPages, interest_topic, interest_summary, interest_roster
-from features import squad_interest as storage
+from features import squad_interest as storage, squad_participants
 from quick_bar_fakes import interaction
 
 
@@ -30,11 +30,13 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.folder = tempfile.TemporaryDirectory()
         self.patch = patch.object(storage, 'STATS_DB', Path(self.folder.name)/'interest.sqlite3')
         self.patch.start()
+        self.participants_patch = patch.object(squad_participants, 'STATS_DB', Path(self.folder.name)/'interest.sqlite3')
+        self.participants_patch.start()
         self.topic = storage.topic(1, 'NBA 2K27', 'REC')
         storage.remember(self.topic)
 
     def tearDown(self):
-        self.patch.stop(); self.folder.cleanup()
+        self.patch.stop(); self.participants_patch.stop(); self.folder.cleanup()
 
     async def test_toggle_persists_and_topic_identity_is_normalized(self):
         self.assertTrue(storage.toggle(self.topic['id'],1,10))
@@ -139,17 +141,17 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         i, message = self.roster_interaction()
         await view.toggle(i)
         edited = message.edit.call_args.kwargs
-        self.assertEqual(edited['embed'].fields[0].name, '一齊玩過')
-        self.assertEqual(len(edited['embed'].fields), 1)
+        self.assertEqual(len(edited['embed'].fields), 0)
+        self.assertEqual(squad_participants.get(500,1,100)['legacy'], ['Jeff'])
         self.assertEqual(edited['allowed_mentions'].to_dict(), {'parse': []})
         message.embeds = [edited['embed']]
         await view.toggle(i)
         embed = message.edit.call_args.kwargs['embed']
-        self.assertEqual(len(embed.fields), 1)
-        self.assertEqual(embed.fields[0].value, 'Jeff')
+        self.assertEqual(len(embed.fields), 0)
+        self.assertEqual(squad_participants.get(500,1,100)['legacy'], ['Jeff'])
         storage.toggle(self.topic['id'], 1, 11)
         await view.show_roster(i)
-        self.assertEqual(len(message.edit.call_args.kwargs['embed'].fields), 1)
+        self.assertEqual(len(message.edit.call_args.kwargs['embed'].fields), 0)
         self.assertIn('<@11>', i.followup.send.call_args.kwargs['embed'].description)
         self.assertTrue(i.followup.send.call_args.kwargs['ephemeral'])
         self.assertEqual(i.followup.send.call_args.kwargs['allowed_mentions'].to_dict(), {'parse': []})
@@ -203,7 +205,7 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
                                         user=types.SimpleNamespace(id=99))
         await asyncio.gather(views[0].toggle(i), views[1].toggle(j))
         self.assertEqual(storage.members(self.topic['id']), [10, 11])
-        self.assertEqual(len(message.edit.call_args.kwargs['embed'].fields), 1)
+        self.assertEqual(len(message.edit.call_args.kwargs['embed'].fields), 0)
         await views[0].show_roster(i)
         private = i.followup.send.call_args.kwargs
         self.assertTrue(private['ephemeral'])
@@ -241,12 +243,12 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         view = CardView(cog, '20', session)
         i.message = live
         await view.toggle(i)
-        self.assertEqual(len(footprint.edit.call_args.kwargs['embed'].fields), 1)
+        self.assertEqual(len(footprint.edit.call_args.kwargs['embed'].fields), 0)
         self.assertIsInstance(live.edit.call_args.kwargs['view'], CardView)
         self.assertEqual(storage.reserve('current', self.topic['id'], [10]), [])
         self.assertEqual(storage.reserve('next', self.topic['id'], [10]), [10])
         await cog.refresh_interest_cards(self.topic)
-        self.assertEqual(len(footprint.edit.call_args.kwargs['embed'].fields), 1)
+        self.assertEqual(len(footprint.edit.call_args.kwargs['embed'].fields), 0)
         self.assertEqual(storage.preferences(self.topic['id']), {})
         view.stop()
 

@@ -69,7 +69,7 @@ class ViewTests(unittest.IsolatedAsyncioTestCase):
         view=SubscriptionView(NS(),1,10,rows,member=member())
         embed=view.embed()
         self.assertIn('搵唔到房間。',embed.description)
-        self.assertIn('選擇遊戲',embed.fields[0].value)
+        self.assertIn('選擇遊戲', '\n'.join(f.value for f in embed.fields))
         self.assertNotIn('嘅',embed.footer.text)
         self.assertEqual(rows,[dict(label='搵唔到房間。',id='unchanged',kind='once')])
 
@@ -77,6 +77,7 @@ class ViewTests(unittest.IsolatedAsyncioTestCase):
         from cogs.squad_cards import FootprintView
         value=dict(id='scope-old',guild_id=1,label='EA FC')
         view=FootprintView(None,value)
-        self.assertEqual([b.custom_id for b in view.children],['squad-interest:scope-old','squad-interest-always:scope-old','squad-interest-roster:scope-old','squad-next-plan:scope-old'])
+        old_ids = ['squad-interest:scope-old','squad-interest-always:scope-old','squad-interest-roster:scope-old','squad-next-plan:scope-old']
+        self.assertEqual([b.custom_id for b in view.children if b.custom_id in old_ids], old_ids)
         self.assertTrue(view.is_persistent())
         self.assertEqual(view.children[0].label,'🙋 下次通知我')

@@ -202,6 +202,9 @@ TW = {'\n以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。�
  '🧹 **確認刪除小隊 call？**\n\n': '🧹 **確認刪除小隊語音房？**\n\n'}
 
 
+TW['揀遊戲即可取消之後及未送出嘅通知；已送出或處理中嘅通知無法撤回。'] = '選擇遊戲即可取消之後及尚未送出的通知；已送出或處理中的通知無法撤回。'
+
+
 def text(member, authored: str) -> str:
     from features.language_preferences import language
     return text_for_code(language(member), authored)
