@@ -6,6 +6,7 @@ import discord
 from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES
 from features.language_preferences import language
 from core.storage_paths import DATA_DIR
+from core.rss_wording import rss_text
 from core.news_channel_inventory import fetch_news_channels
 
 STATE=DATA_DIR/'news_channel_categories'/'applied.json'
@@ -74,7 +75,7 @@ class NewsChannelView(discord.ui.View):
     async def interaction_check(self,interaction):
         import config
         if interaction.guild_id==config.GUILD_ID and interaction.user.id==self.owner: return True
-        await interaction.response.send_message('請開啟自己的「新聞頻道接收」。',ephemeral=True)
+        await interaction.response.send_message('請開啟自己的「顯示新聞頻道」。',ephemeral=True)
         return False
 
 
@@ -87,7 +88,7 @@ async def open_news_channels(interaction):
         roles=await safe_roles(interaction.guild)
         member=await interaction.guild.fetch_member(interaction.user.id)
         selected={k for k,r in roles.items() if r in member.roles}
-        await interaction.followup.send('📰 新聞頻道接收\n選擇要開啟的分類；未選擇的分類會隱藏。\n這裡調整頻道接收；「我的情報」篩選另行設定。',
+        await interaction.followup.send(rss_text(member, 'settings'),
             view=NewsChannelView(member.id,selected),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
     except (ValueError,discord.HTTPException,FileNotFoundError) as exc:
         await interaction.followup.send(str(exc) if isinstance(exc,ValueError) else '新聞分類暫未準備好，請稍後再試。',ephemeral=True)

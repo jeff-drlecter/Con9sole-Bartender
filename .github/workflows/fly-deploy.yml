@@ -48,6 +48,21 @@ jobs:
       - name: Show fly.toml
         run: cat fly.toml
 
+      - name: Verify existing news migration before deployment
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          preflight_command="$(python -c 'import shlex; from pathlib import Path; print("python -c " + shlex.quote(Path("scripts/verify_news_category_state.py").read_text()))')"
+          flyctl ssh console --app con9sole-bartender -C "$preflight_command"
+
+      - name: Record current image and verify persistent backup before deployment
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl status --app con9sole-bartender
+          backup_command="$(python -c 'import shlex; from pathlib import Path; print("python -c " + shlex.quote(Path("scripts/backup_runtime.py").read_text()))')"
+          flyctl ssh console --app con9sole-bartender -C "$backup_command $GITHUB_SHA"
+
       - name: Deploy to Fly.io
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -60,10 +75,10 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl status --app con9sole-bartender
 
-      - name: Apply backed-up news channel categories once
+      - name: Verify news migration marker without changing permissions
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/apply_news_channel_categories.py'
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_news_category_state.py'
 
       - name: Verify RSS sandbox panel when enabled
         env:
