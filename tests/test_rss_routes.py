@@ -5,6 +5,13 @@ import unittest
 
 
 class ProductionRoutesTests(unittest.TestCase):
+    def test_production_destination_retains_exact_discord_id(self):
+        import json
+        from pathlib import Path
+        config = json.loads((Path(__file__).resolve().parents[1] / 'docs/rss_production.json').read_text())
+        self.assertEqual(config['channel_id'], 1364201334798290994)
+        self.assertIs(config['simulation'], False)
+
     def test_routing_and_delivery(self):
         result = subprocess.run([sys.executable, '-c', r'''
 import asyncio, tempfile

@@ -1,7 +1,9 @@
 # Categorized news delivery
 
-Production code is staged with `docs/rss_production.json` set to `enabled: false`.
-MonitoRSS must remain active until its three replacement connections can be paused.
+Production is configured with `docs/rss_production.json` set to `enabled: true`.
+On 2026-11-14 the matching PS, Xbox and 4Gamers MonitoRSS connections were
+paused and read back before activation. Their configurations are retained.
+The original Steam feed remains disabled. Use `enabled: false` for staging or rollback.
 
 ## Member experience
 
