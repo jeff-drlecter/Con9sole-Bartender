@@ -93,10 +93,11 @@ def build(roles, channels, guild, actor, role_ids):
 async def execute(guild, plan, authorize, *, restore=False):
     from features import anti_scam_fix as journal
     from core.news_channel_ui import settings
+    from core.news_channel_inventory import fetch_news_channels
     if plan.get('scope') != SCOPE or plan['guild'] != guild.id:
         raise ValueError('計劃範圍不符。')
     if not restore:
-        fresh = build(await guild.fetch_roles(), await guild.fetch_channels(),
+        fresh = build(await guild.fetch_roles(), await fetch_news_channels(guild),
                       guild.id, plan['actor'], settings())
         if fresh['blockers']:
             raise ValueError('仍有額外查看權限需要核對，未套用。')

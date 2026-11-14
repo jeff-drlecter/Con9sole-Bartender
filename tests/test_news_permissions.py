@@ -56,9 +56,12 @@ class NewsTests(unittest.IsolatedAsyncioTestCase):
         self.dbpatch.start()
         self.settingspatch = patch('core.news_channel_ui.settings', return_value=self.ids)
         self.settingspatch.start()
+        self.inventorypatch = patch('core.news_channel_inventory.fetch_news_channels',
+                                    AsyncMock(side_effect=lambda guild:self.channels))
+        self.inventorypatch.start()
 
     def tearDown(self):
-        self.settingspatch.stop(); self.dbpatch.stop(); self.tmp.cleanup()
+        self.inventorypatch.stop(); self.settingspatch.stop(); self.dbpatch.stop(); self.tmp.cleanup()
 
     def build(self):
         return policy.build(self.roles, self.channels, config.GUILD_ID, 42, self.ids)

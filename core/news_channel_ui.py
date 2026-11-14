@@ -6,6 +6,7 @@ import discord
 from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES
 from features.language_preferences import language
 from core.storage_paths import DATA_DIR
+from core.news_channel_inventory import fetch_news_channels
 
 STATE=DATA_DIR/'news_channel_categories'/'applied.json'
 LOCKS={}
@@ -24,8 +25,11 @@ async def safe_roles(guild):
     roles={key:next((r for r in current if r.id==int(rid)),None) for key,rid in ids.items()}
     if any(r is None or r.managed or r.permissions.value or r.name!=ROLE_NAMES[k] for k,r in roles.items()):
         raise ValueError('新聞分類身份組設定已變更，請管理員檢查。')
-    for channel in await guild.fetch_channels():
-        if channel.id not in CHANNELS.values() and any(r in channel.overwrites for r in roles.values()):
+    selected_ids={r.id for r in roles.values()}
+    for channel in await fetch_news_channels(guild):
+        if channel.id not in CHANNELS.values() and any(t.id in selected_ids and
+                (isinstance(t,discord.Role) or getattr(t,'type',None) is discord.Role)
+                for t in channel.overwrites):
             raise ValueError('新聞分類身份組涉及其他區域，請管理員先檢查。')
     me=await guild.fetch_member(guild._state.user.id)
     if any(r>=me.top_role for r in roles.values()): raise ValueError('Bot 無法調整新聞分類，請管理員檢查。')
@@ -87,3 +91,4 @@ async def open_news_channels(interaction):
             view=NewsChannelView(member.id,selected),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
     except (ValueError,discord.HTTPException,FileNotFoundError) as exc:
         await interaction.followup.send(str(exc) if isinstance(exc,ValueError) else '新聞分類暫未準備好，請稍後再試。',ephemeral=True)
+
