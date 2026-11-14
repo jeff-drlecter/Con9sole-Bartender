@@ -44,8 +44,13 @@ async def show_news(cog,interaction,demo=False):
     now=time.time()
     articles=([a for a in fixtures(now) if matches(a,pref)] if demo else
               await asyncio.to_thread(personal_preview,cog.store,cog.digest_config,cog.sources,pref,now))
+    if not demo and cog.store_news_available(interaction):
+        from core.store_sources import combine_articles
+        extra=await asyncio.to_thread(cog.store_news.preview,cog.digest_config,pref,now)
+        articles=combine_articles(articles+extra,config=cog.digest_config)
     label='🧪 虛構範例・我的情報' if demo else '我的情報・真實新聞'
     content = rss_text(interaction.user, 'fixture' if demo else 'scope')
+    if not demo: content += '\n' + cog.store_news_scope(interaction)
     if not articles: content += '\n' + rss_text(interaction.user, 'empty')
     await interaction.followup.send(content,embed=cog.render({'kind':'digest','articles':articles},now,label) if articles else None,
                                     ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
@@ -54,7 +59,7 @@ async def show_news(cog,interaction,demo=False):
 class Choice(discord.ui.Select):
     def __init__(self,key,pref):
         self.key=key
-        super().__init__(placeholder={'platforms':'平台','stores':'商店（不限商店會包含全部）','kinds':'內容類型'}[key],
+        super().__init__(placeholder={'platforms':'平台','stores':'商店（不限商店會包含全部）','kinds':'內容類型','regions':'商店地區（與用語設定分開）'}[key],
                          min_values=1,max_values=len(OPTIONS[key]),
                          options=[discord.SelectOption(label=label,value=value,default=value in pref[key]) for value,label in OPTIONS[key].items()])
 
@@ -101,15 +106,15 @@ class PreferencesView(discord.ui.View):
             return False
         return await self.cog.personal_access(interaction)
 
-    @discord.ui.button(label='關鍵字',row=3)
+    @discord.ui.button(label='關鍵字',row=4)
     async def edit_keywords(self,interaction,button):
         pref=await asyncio.to_thread(self.cog.preferences.get,self.owner)
         await interaction.response.send_modal(KeywordModal(self.cog,self.owner,pref,interaction.user))
 
-    @discord.ui.button(label='查看我的情報',row=3,style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='查看我的情報',row=4,style=discord.ButtonStyle.primary)
     async def news(self,interaction,button):
         await show_news(self.cog,interaction)
 
-    @discord.ui.button(label='虛構資料試篩選',row=3)
+    @discord.ui.button(label='虛構資料試篩選',row=4)
     async def demo(self,interaction,button):
         await show_news(self.cog,interaction,True)
