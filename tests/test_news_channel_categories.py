@@ -1,6 +1,6 @@
 import copy
 import unittest
-from features.news_channel_categories import CHANNELS,LABELS,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature,prompt_signature
+from features.news_channel_categories import CHANNELS,LABELS,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature,prompt_signature,required_questions_ready
 
 class NewsCategoryTests(unittest.TestCase):
     def test_optional_area_expansion_preserves_other_choices_and_prompts(self):
@@ -38,6 +38,13 @@ class NewsCategoryTests(unittest.TestCase):
         self.assertEqual(prompt_signature(before),prompt_signature(after))
         after['options'][0]['role_ids']=['other']
         self.assertNotEqual(prompt_signature(before),prompt_signature(after))
+
+    def test_current_required_questions_do_not_depend_on_historical_ids(self):
+        prompts=[dict(id='new1',title='你使用哪些遊戲平台？（必選，可複選）',required=True,single_select=False,in_onboarding=True,options=[{},{}]),
+                 dict(id='new2',title='選擇想玩的遊戲（必選，可複選；也可選「暫不選擇」）',required=True,single_select=False,in_onboarding=True,options=[{},{}])]
+        self.assertTrue(required_questions_ready(prompts))
+        prompts[1]['required']=False
+        self.assertFalse(required_questions_ready(prompts))
 
     def test_roles_only_unlock_selected_channel_even_with_other_game_roles(self):
         roles=[dict(id='guild',permissions=str(VIEW)),dict(id='old',permissions='0'),dict(id='game',permissions='0'),
