@@ -256,9 +256,12 @@ class RSSDelivery(commands.Cog):
         title += '｜' + datetime.fromtimestamp(now, HK).strftime('%m/%d')
         embed = discord.Embed(title=title)
         for article in batch['articles']:
-            source = {'ps':'🔵 PS', 'xbox':'🟢 Xbox', '4gamers':'💻 綜合遊戲','steam':'Steam','epic':'Epic'}[article['source']]
+            source = {'ps':'🔵 PlayStation Blog', 'xbox':'🟢 Xbox Wire', '4gamers':'💻 4Gamers','steam':'Steam','epic':'Epic'}[article['source']]
             name = source + '｜' + discord.utils.escape_markdown(excerpt(article['title'], 80))
             description = discord.utils.escape_markdown(excerpt(article['summary'], 150))
+            published = article.get('published')
+            if published:
+                description = datetime.fromtimestamp(published, HK).strftime('%Y-%m-%d') + ' · ' + description
             offer = article.get('offer')
             if offer:
                 description = (f"{OFFER_LABELS[offer['kind']]}｜{discord.utils.escape_markdown(offer['region'])}"
@@ -329,7 +332,7 @@ class RSSDelivery(commands.Cog):
                 self.errors.pop(error_key, None)
                 return
             message = await channel.send(
-                f'📰 **{label} 情報**\n直接按下方按鈕查看情報、調整偏好或選擇新聞頻道。\n操作結果只有你看得到，無需輸入指令。',
+                f'📰 **{label} 情報**\n每日香港時間 19:00 摘要，每類最多 8 篇；沒有內容便不發送。\n按「我的情報」查看個人結果；「情報設定」分開管理頻道顯示與個人篩選。\n手機推播由 Discord 通知設定控制。\n操作結果只有你看得到，無需輸入指令。',
                 view=NewsCardPanel(self), silent=True,
                 allowed_mentions=discord.AllowedMentions.none())
             await asyncio.to_thread(self.preferences.finish_panel, channel.id, message.id)
