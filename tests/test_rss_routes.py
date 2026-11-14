@@ -77,7 +77,7 @@ async def main():
             await cog.deliver.coro(cog)
             assert all(c.send.await_count==1 for c in channels.values())
         # Production preference panels never offer fictional news.
-        assert len(PreferencesView(cog,7,DEFAULT).children)==6
+        assert len(PreferencesView(cog,7,DEFAULT).children)==7
         # Button entry delegates to the normal member/channel visibility guard.
         cog.personal_access=AsyncMock(return_value=False)
         panel=NewsCardPanel(cog)

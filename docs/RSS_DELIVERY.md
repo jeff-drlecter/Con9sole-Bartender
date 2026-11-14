@@ -1,3 +1,5 @@
+> **歷史設計及驗收紀錄，非目前正式狀態。** 文內「MonitoRSS 繼續派送／未正式取代」等舊階段敘述已過時。現行程式、部署及真人驗收界線請見 [本輪功能狀態表](ROUND_20261115_STATUS.md)，並核對該文件所在分支／部署版本。
+
 # RSS digest preparation (PR #118)
 
 Private simulation deployment is configured; MonitoRSS remains the production publisher.

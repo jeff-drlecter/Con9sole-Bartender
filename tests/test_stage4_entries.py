@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from quick_bar_fakes import interaction
-from features.menu_views import QuickBarView, SectionMenuView
+from features.menu_views import QuickBarView, SectionMenuView, LegacyMenuView
 from features.language_preferences import localize_menu
 from features.menu_embeds import build_help_embed
 
@@ -18,7 +18,7 @@ class EntryTests(unittest.IsolatedAsyncioTestCase):
             inter = interaction()
             target = MagicMock(**{method: AsyncMock()})
             inter.client.get_cog.return_value = target
-            view = QuickBarView(menu)
+            view = LegacyMenuView(menu, 'quick') if key == 'tempvc_control' else QuickBarView(menu)
             await view.handle_item(inter, next(b.item for b in view.children if b.item.id == key))
             inter.client.get_cog.assert_called_with(cog)
             getattr(target, method).assert_awaited_once_with(inter)
@@ -36,7 +36,8 @@ class EntryTests(unittest.IsolatedAsyncioTestCase):
             for row in range(5):
                 self.assertLessEqual(sum(b.row == row for b in localized.children), 3 if row in (1, 3) else 2)
             self.assertIn('我的組隊通知', {b.label for b in localized.children})
-            self.assertIn('小隊語音管理' if code == 'tw' else '小隊 call 控制', {b.label for b in localized.children})
+            self.assertIn('小隊語音', {b.label for b in localized.children})
+            self.assertNotIn('tempvc_control', {b.item.id for b in localized.children})
             self.assertIn('我的組隊通知', build_help_embed(language_member(code)).description)
             view.stop()
 

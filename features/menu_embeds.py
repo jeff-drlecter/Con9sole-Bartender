@@ -24,7 +24,7 @@ def _public_discussion_tip() -> str:
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     return discord.Embed(
         title="🍸 Con9sole 吧枱",
-        description="飲杯嘢，定搵人開局？",
+        description="約一局、查看會員卡，或輕鬆喝一杯。\n組隊訂閱在「我的組隊通知」；本局提醒在原約局卡設定。",
         color=MENU_COLOR,
     )
 
@@ -35,8 +35,8 @@ def build_main_menu_embed(user: discord.abc.User) -> discord.Embed:
 
 def build_home_menu_embed(user: discord.abc.User, *, include_thumbnail: bool = True) -> discord.Embed:
     return discord.Embed(
-        title="🍸 更多玩法",
-        description="揀一類玩法繼續。我的紀錄、社群排行、社群互動、資訊與設定。\n小任務隨心參與，唔做都唔影響吧枱功能。",
+        title="🍸 更多",
+        description="查看紀錄、參與互動，或調整個人設定。\n今日小任務亦可從會員卡進入，自由參加。",
         color=MENU_COLOR,
     )
 
@@ -45,10 +45,10 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     from features.language_preferences import language
     if language(user) != "hk":
         return discord.Embed(title="ℹ️ 使用說明", description=(
-            "使用 `/menu` 開啟吧台；請選擇 **Con9sole-Bartender** 的指令。\n\n"
+            "使用 `/menu` 開啟吧台；今日小任務可從會員卡或「更多」進入。\n\n"
             "🍹 **喝一杯／請客喝一杯**：享用飲品或邀請朋友喝一杯。\n"
-            "👥 **組隊／小隊語音**：找隊友、建立及管理臨時語音房。\n"
-            "🎮 **約一局**：現在玩、約定時間，或繼續已有約局。\n"
+            "🎧 **小隊語音**：建立臨時語音房；房間控制由語音相關面板進入。\n"
+            "🎮 **約一局**：現在玩、約定時間，或繼續已有約局；本局提醒在原卡設定。\n"
             "🔔 **我的組隊通知**：在吧台查看及管理已訂閱的遊戲通知。\n"
             "🎖️ **我的會員卡**：查看等級、經驗值、稱號與排名。\n"
             "📅 **今日小任務**：自由參加，完成後領取額外經驗值。\n"
@@ -60,10 +60,10 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="ℹ️ 幫助",
         description=(
-            "**Bartender 使用說明**\n\n🍸 `/menu` 請揀 **Con9sole-Bartender**，開啟吧枱；「更多玩法」分為我的紀錄、社群排行、社群互動、資訊與設定。\n\n"
-            "🎮 **約一局**｜而家玩、約定時間，或繼續已有約局\n"
-            "🎧 **小隊 call**｜建立臨時語音房\n"
-            "🎛️ **小隊 call 控制**｜改人數上限 / 刪除自己的小隊 call\n"
+            "**Bartender 使用說明**\n\n🍸 `/menu` 開啟吧枱；「更多」可睇紀錄、排行、互動、資訊同今日小任務。\n\n"
+            "🎮 **約一局**｜而家玩、約定時間，或繼續已有約局；呢局提醒喺原卡設定\n"
+            "🎧 **小隊語音**｜建立臨時語音房\n"
+            "🎛️ **房間控制**｜喺語音相關面板改人數上限或刪除自己嘅房間\n"
             "🔔 **我的組隊通知**｜喺吧枱查看及管理已訂閱嘅遊戲通知\n\n"
             "🎉 **打氣**｜送出隨機打氣內容\n"
             "🙌 **幫人打氣**｜揀一位成員，送一句打氣給對方\n"
@@ -73,7 +73,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
             "📊 **酒吧紀錄**｜查看自己叫酒 / 賜酒 / 收到賜酒紀錄\n"
             "🍾 **我的收藏**｜查看已解鎖酒款、稀有度進度與最近解鎖\n"
             "🏆 **酒吧排行榜**｜查看叫酒 / 賜酒 / 收酒 / 收藏榜\n"
-            "📅 **今日小任務**｜查看每日吧枱任務\n\n"
+            "📅 **今日小任務**｜由會員卡或「更多」進入\n\n"
             "🎖️ **我的會員卡**｜等級進度、酒吧收藏及等級總榜／本週排名\n"
             "🏅 **我的稱號**｜預覽選用已解鎖稱號，並同步已綁定嘅 Discord Role\n"
             "成功飲酒或打氣可獲互動 XP，與文字共用冷卻；查看資料唔加 XP。\n\n"
@@ -94,6 +94,7 @@ def build_help_embed(user: discord.abc.User) -> discord.Embed:
 def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
     from core.permissions import can_use_staff_tool
     entries = [
+        ("community_outcomes", "📈 社群成效 — 約局開局、觀測參與及資料缺漏"),
         ("squad_test", "🧪 組隊卡測試 — 只在功能測試區執行"),
         ("stream_admin", "📺 直播名單 — 直播主、檢查頻率及通知設定"),
         ("permission_audit", "🔍 權限審核 — 查看權限差異及審核結果"),
@@ -111,7 +112,7 @@ def build_admin_tool_embed(user: discord.abc.User) -> discord.Embed:
     embed = discord.Embed(
         title="🛠️ 管理及協助工具",
         description="\n".join(text for key, text in entries if can_use_staff_tool(user, key))
-        + "\n\n⬅️ 返回上一頁 — 更多玩法",
+        + "\n\n⬅️ 返回上一頁 — 更多",
         color=MENU_COLOR,
     )
     embed.set_footer(text="Admin 工具只限授權成員使用。")

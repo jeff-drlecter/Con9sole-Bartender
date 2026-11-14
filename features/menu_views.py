@@ -81,6 +81,8 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
 }
 
 NO_COOLDOWN_ITEM_IDS = {
+    "intelligence_settings",
+    "community_outcomes",
     "news_channels",
     "news",
     "language",
@@ -197,6 +199,8 @@ class PublicExploreButton(discord.ui.Button):
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
+        from features.language_preferences import language
+        hk = language(interaction.user) == "hk"
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             await send_or_followup(
                 interaction,
@@ -208,13 +212,9 @@ class PublicExploreButton(discord.ui.Button):
         if not _has_public_discussion_role(interaction.user):
             await send_or_followup(
                 interaction,
-                content=(
-                    "🌊 **公海討論區**\n\n"
-                    "公海區只會向已選擇相關身份的成員顯示。\n"
-                    "請先前往 <id:customize>，在「你想加入綜合聊天區嗎？」"
-                    "選擇 **🥜 加入綜合聊天區**。\n"
-                    "完成後即可瀏覽及參與相關話題。"
-                ),
+                content=("🌊 **公海討論區**\n\n"
+                    + ("請到 <id:customize> 揀選綜合閒聊區，再返回呢個入口。"
+                       if hk else "請到 <id:customize> 選擇綜合閒聊區，再返回這個入口。")),
                 ephemeral=True,
             )
             return
@@ -223,10 +223,8 @@ class PublicExploreButton(discord.ui.Button):
         if forum is None:
             await send_or_followup(
                 interaction,
-                content=(
-                    "🌊 你已具備公海身份，但暫時找不到可瀏覽的公海集中討論區。\n"
-                    "請確認身份設定，或向管理員查詢。"
-                ),
+                content=("🌊 暫時搵唔到你可以睇嘅公海討論區，請向 Helper 查詢。" if hk
+                    else "🌊 暫時找不到你可查看的公海討論區，請向 Helper 查詢。"),
                 ephemeral=True,
             )
             return
@@ -235,9 +233,9 @@ class PublicExploreButton(discord.ui.Button):
             interaction,
             content=(
                 "🌊 **公海討論區**\n\n"
-                "除了遊戲專區外，你亦可以在公海瀏覽不同主題、關注感興趣的內容，"
-                "或開設新帖分享寵物、飲食、音樂、電影等話題。\n\n"
-                f"前往 {forum.mention} 看看吧。"
+                + ("除咗遊戲，亦可以傾寵物、飲食、音樂同電影。\n\n" if hk
+                   else "除了遊戲，也可以聊寵物、飲食、音樂與電影。\n\n")
+                + f"前往 {forum.mention}。"
             ),
             view=wording_view(interaction.user, PublicDiscussionView(forum)),
             ephemeral=True,
@@ -302,7 +300,7 @@ class BaseMenuView(SafeView):
 
         await send_or_followup(
             interaction,
-            content="❌ 你需要 `Manage Server` 權限或 helpers role 先可以使用 Admin Tool。",
+            content=wording_text(interaction.user, "❌ 你目前嘅職責未獲授權使用呢項工具。"),
             ephemeral=True,
         )
         return False

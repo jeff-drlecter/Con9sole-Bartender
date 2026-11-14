@@ -84,7 +84,7 @@ async def main():
         menu.enforce_menu_button_cooldown = AsyncMock(return_value=False)
         view = QuickBarView(menu)
         item = next(b.item for b in view.children if b.item.id == 'squad_plans')
-        assert item.row == 1 and item.cog == 'SquadPlans'
+        assert item.row == 0 and item.cog == 'SquadPlans'
         routed = interaction(source, guild)
         feature = N(menu_entry=AsyncMock())
         routed.client = N(get_cog=lambda name: feature if name == 'SquadPlans' else None)
@@ -92,7 +92,7 @@ async def main():
         feature.menu_entry.assert_awaited_once_with(routed)
         menu.enforce_menu_button_cooldown.assert_not_awaited()
         assert view.is_persistent()
-        assert sum(b.row == 1 for b in view.children) == 2
+        assert sum(b.row == 0 for b in view.children) == 2
 asyncio.run(main())
 '''], capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)

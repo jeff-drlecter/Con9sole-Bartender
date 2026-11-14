@@ -70,6 +70,10 @@ class IntelligenceSettings(discord.ui.View):
         super().__init__(timeout=600)
         self.cog, self.owner = cog, owner
         self.filters.label = rss_text(member, 'filter_label')
+        from features.drink_views import FeatureButton
+        from features.wording import view_copy
+        self.add_item(FeatureButton(label='返回吧枱', emoji='🍸', cog='Menu', method='open_main_menu', row=1))
+        view_copy(member, self)
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner:
@@ -171,4 +175,8 @@ class PreferencesView(discord.ui.View):
     @discord.ui.button(label='虛構資料試篩選',row=4)
     async def demo(self,interaction,button):
         await show_news(self.cog,interaction,True)
+
+    @discord.ui.button(label='返回情報設定',row=4)
+    async def back(self,interaction,button):
+        await open_settings(self.cog,interaction)
 

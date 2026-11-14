@@ -529,6 +529,11 @@ class RSSDelivery(commands.Cog):
         await interaction.followup.send(embed=self.render({'kind':'digest','articles':articles}, now),
                                         ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
+    async def settings_entry(self, interaction):
+        if await self.personal_access(interaction):
+            from core.rss_personal_ui import open_settings
+            await open_settings(self, interaction)
+
     @app_commands.command(name="rss_simulate", description="在私人 RSS 模擬區測試真實新聞版面、篩選及到期提醒")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(administrator=True)

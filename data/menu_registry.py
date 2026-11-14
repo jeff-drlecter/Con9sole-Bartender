@@ -307,7 +307,7 @@ LEGACY_HOME_MENU_ITEMS: list[MenuItem] = [
 ]
 
 
-QUICK_MENU_ITEMS: list[MenuItem] = [
+PREVIOUS_QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("drink", "飲一杯", "🍹", "success", "quick", 0, "Drink"),
     MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 0, "Drink", "gift_drink_entry"),
     MenuItem("squad_plans", "約一局", "📅", "primary", "quick", 1, "SquadPlans"),
@@ -319,6 +319,20 @@ QUICK_MENU_ITEMS: list[MenuItem] = [
     MenuItem("language", "語言設定", "🌐", "secondary", "quick", 4, "LanguagePreferences", "menu_entry"),
     MenuItem("daily_bar", "今日小任務", "📅", "secondary", "quick", 2, "DailyBar"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 2, "CommunityLevels"),
+]
+
+LEGACY_QUICK_MENU_ITEMS += PREVIOUS_QUICK_MENU_ITEMS
+
+QUICK_MENU_ITEMS: list[MenuItem] = [
+    MenuItem("squad_plans", "約一局", "📅", "primary", "quick", 0, "SquadPlans"),
+    MenuItem("tempvc", "小隊語音", "🎧", "primary", "quick", 0, "TempVC"),
+    MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 1, "CommunityLevels"),
+    # This panel manages game subscriptions. Per-plan consent remains on its card.
+    MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "quick", 1, "SquadCards"),
+    MenuItem("drink", "飲一杯", "🍹", "success", "quick", 2, "Drink"),
+    MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 2, "Drink", "gift_drink_entry"),
+    MenuItem("home_menu", "更多", "🍸", "secondary", "quick", 3, "Menu", "open_home_menu_from_button"),
+    MenuItem("language", "語言設定", "🌐", "secondary", "quick", 3, "LanguagePreferences", "menu_entry"),
 ]
 
 PREVIOUS_HOME_MENU_ITEMS: list[MenuItem] = [
@@ -346,6 +360,7 @@ HOME_MENU_ITEMS: list[MenuItem] = [
     MenuItem("rankings", "社群排行", "🏆", "secondary", "home", 0, "Menu", "open_rankings_menu"),
     MenuItem("social", "社群互動", "🙌", "secondary", "home", 1, "Menu", "open_social_menu"),
     MenuItem("info", "資訊與設定", "ℹ️", "secondary", "home", 1, "Menu", "open_info_menu"),
+    MenuItem("daily_bar", "今日小任務", "📅", "secondary", "home", 1, "DailyBar"),
     MenuItem("quick_bar", "返回吧枱", "🍸", "secondary", "home", 2, "Menu", "open_main_menu"),
     MenuItem("admin_tool", "管理工具", "🛠️", "secondary", "home", 2, "Menu", "open_admin_tool_from_button", admin_only=True),
 ]
@@ -372,14 +387,15 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("confession", "無名告白", "🕯️", "secondary", "social", 1, "Confession"),
     ],
     "info": [
-        MenuItem("news_channels", "新聞頻道接收", "📰", "primary", "info", 2, "RSSDelivery", "channel_preferences_entry"),
-        MenuItem("news", "遊戲情報", "📰", "primary", "info", 2, "RSSDelivery", "menu_entry"),
+        MenuItem("news_channels", "顯示新聞頻道", "📰", "secondary", "info", 2, "RSSDelivery", "channel_preferences_entry"),
+        MenuItem("news", "我的情報", "📰", "primary", "info", 2, "RSSDelivery", "menu_entry"),
+        MenuItem("intelligence_settings", "情報設定", "⚙️", "secondary", "info", 2, "RSSDelivery", "settings_entry"),
         MenuItem("language", "語言設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
         MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
         MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),
         MenuItem("instagram", "IG", "📸", "secondary", "info", 1, "Menu", "open_instagram_from_button"),
         MenuItem("threads", "Threads", "🧵", "secondary", "info", 1, "Menu", "open_threads_from_button"),
-        MenuItem("help", "使用說明", "ℹ️", "secondary", "info", 2, "Menu", "open_help_from_button"),
+        MenuItem("help", "使用說明", "ℹ️", "secondary", "info", 3, "Menu", "open_help_from_button"),
     ],
 }
 for section, items in SECTION_MENU_ITEMS.items():
@@ -394,6 +410,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     MenuItem("squad_test", "組隊卡測試", "🧪", "secondary", "admin", 3, "SquadCards", "test_entry", admin_only=True),
     MenuItem("stream_admin", "直播名單", "📺", "secondary", "admin", 3, "StreamAlerts", admin_only=True),
     MenuItem("platform_invites", "平台邀請連結", "🔗", "secondary", "admin", 3, "Invites", "platform_entry", admin_only=True),
+    MenuItem("community_outcomes", "社群成效", "📊", "secondary", "admin", 2, "CommunityOutcomes", admin_only=True),
     MenuItem("permission_audit", "權限審核", "🔍", "secondary", "admin", 2, "PermissionAudit", admin_only=True),
     MenuItem("title_roles_admin", "稱號管理", "🏅", "secondary", "admin", 2, "TitleRoles", "admin_entry", admin_only=True),
     MenuItem("bot_health", "系統狀態", "🩺", "secondary", "admin", 2, "BotHealth", admin_only=True),
