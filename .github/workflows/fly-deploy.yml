@@ -12,7 +12,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
     environment: production
-    timeout-minutes: 15
+    timeout-minutes: 30
     runs-on: ubuntu-latest
 
     concurrency:
