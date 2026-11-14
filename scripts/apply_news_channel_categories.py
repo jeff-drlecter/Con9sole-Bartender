@@ -8,7 +8,7 @@ from urllib.parse import quote
 import aiohttp
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES,LEGACY_PROMPT,VIEW,category_prompts,category_overwrites,can_view
+from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES,LEGACY_PROMPT,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature
 import config
 
 ROOT=Path('/data/news_channel_categories')
@@ -114,7 +114,7 @@ async def main():
         print(json.dumps({'news_category_phase':'channel_permissions','assignments_completed':completed}),flush=True)
         for key,channel in channels.items():
             fresh=await api('GET',f"channels/{channel['id']}")
-            if fresh['permission_overwrites']!=channel['permission_overwrites']:
+            if overwrite_signature(fresh['permission_overwrites'])!=overwrite_signature(channel['permission_overwrites']):
                 raise ValueError('Channel overwrites changed; not overwritten')
             bot_roles=set()
             for member in members:

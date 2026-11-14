@@ -1,6 +1,6 @@
 import copy
 import unittest
-from features.news_channel_categories import CHANNELS,LABELS,VIEW,category_prompts,category_overwrites,can_view
+from features.news_channel_categories import CHANNELS,LABELS,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature
 
 class NewsCategoryTests(unittest.TestCase):
     def test_optional_area_expansion_preserves_other_choices_and_prompts(self):
@@ -23,6 +23,12 @@ class NewsCategoryTests(unittest.TestCase):
         self.assertEqual(category_prompts(result,ids),result)
         original[0]['required']=True
         with self.assertRaises(ValueError):category_prompts(original,ids)
+
+    def test_permission_comparison_ignores_order_but_rejects_changed_access(self):
+        before=[dict(id='a',type=0,allow='1024',deny='0'),dict(id='b',type=1,allow='0',deny='1024')]
+        self.assertEqual(overwrite_signature(before),overwrite_signature(list(reversed(before))))
+        changed=copy.deepcopy(before);changed[0]['allow']='0'
+        self.assertNotEqual(overwrite_signature(before),overwrite_signature(changed))
 
     def test_roles_only_unlock_selected_channel_even_with_other_game_roles(self):
         roles=[dict(id='guild',permissions=str(VIEW)),dict(id='old',permissions='0'),dict(id='game',permissions='0'),
