@@ -14,6 +14,7 @@ from features.wording import modal_copy as wording_modal, view_copy as wording_v
 from core.permissions import is_server_admin, is_verified_member
 from core.storage_paths import DATA_DIR
 from core.ui import SafeModal, SafeView
+from features.community_outcomes import test_channel
 from features.squad_plans import ACTIVE, HK, PlanBook, confirmed, counts, deadline, parse_start
 
 log = logging.getLogger(__name__)
@@ -183,7 +184,7 @@ class PlanForm(SafeModal):
                     if self.instant and teams and any(s.leader_id == interaction.user.id and not s.cancelled
                             and not teams.is_state_expired(s) for s in teams.states.values()):
                         raise ValueError('你仍有舊版即時招募，請先完成該局；原有卡片仍可使用。')
-                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, **changes)
+                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, analytics_test=test_channel(channel), **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='due' if self.instant else 'open')
                     view = PlanView(self.cog, posted)

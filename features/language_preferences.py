@@ -29,6 +29,8 @@ def preference_roles(roles, channels=()):
 
 # Only translate known Bot-owned menu copy, never names, submissions or public cards.
 TW = {
+    "約一局、查看會員卡，或輕鬆喝一杯。\n組隊訂閱在「我的組隊通知」；本局提醒在原約局卡設定。":
+        "約一局、查看會員卡，或輕鬆喝一杯。\n組隊訂閱在「我的組隊通知」；本局提醒在原約局卡設定。",
     "吧枱": "吧台", "Con9sole 吧枱": "Con9sole 吧台", "飲杯嘢，定搵人開局？": "喝一杯，還是找人一起玩？",
     "飲一杯": "喝一杯", "請人飲": "請客喝一杯", "搵人玩": "找人一起玩",
     "幫人打氣": "幫別人加油", "打氣": "加油", "小隊 call 控制": "小隊語音管理",
@@ -42,10 +44,17 @@ TW = {
     "揀選想睇嘅內容、邀請朋友，或者查看社群資訊同使用說明。": "選擇想看的內容、邀請朋友，或查看社群資訊與使用說明。",
 }
 
+HK = {
+    "約一局、查看會員卡，或輕鬆喝一杯。\n組隊訂閱在「我的組隊通知」；本局提醒在原約局卡設定。":
+        "約一局、睇會員卡，或者飲杯嘢。\n組隊訂閱喺「我的組隊通知」；呢局提醒喺原約局卡設定。",
+    "查看紀錄、參與互動，或調整個人設定。\n今日小任務亦可從會員卡進入，自由參加。":
+        "睇紀錄、參與互動，或者改個人設定。\n今日小任務亦可以由會員卡入，自由參加。",
+}
+
 
 def menu_text(text: str, code: str) -> str:
     if code == "hk":
-        return text
+        return HK.get(text, text)
     if text in TW:
         return TW[text]
     # Labels/titles with emoji prefixes only; no general substring replacement.
