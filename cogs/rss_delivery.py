@@ -21,7 +21,8 @@ from core.rss_simulation import scenarios
 from core.rss_wording import rss_text
 from core.store_sources import StoreNewsStore,epic_url,epic_offers,steam_news,reviewed_steam_offer
 from core.rss_preferences import PreferenceStore
-from core.rss_personal_ui import PersonalPanel
+from core.rss_personal_ui import PersonalPanel, NewsCardPanel
+from core.rss_routes import ROUTES, RouteConfig
 from core.rss_featured import CHART_URL, parse_chart, verified_game
 from core.rss_featured_ui import sections, render_featured
 from core.rss_trial import MAX_BYTES, SOURCES, parse_feed
@@ -43,6 +44,11 @@ class RSSDelivery(commands.Cog):
             data = json.loads(raw)
         self.digest_config = DigestConfig.from_dict(data)
         self.public_personal = os.getenv("RSS_PERSONAL_PUBLIC", "0") == "1"
+        self.category_delivery = os.getenv("RSS_CATEGORY_DELIVERY", "0") == "1"
+        if self.category_delivery and (self.digest_config.simulation or not self.public_personal):
+            raise ValueError('category delivery requires production config and public interactions')
+        self.route_stores = {}
+        self.news_card_panel = None
         self.store_news = None
         self.store_news_public = os.getenv("STORE_NEWS_PUBLIC", "0") == "1"
         self.store_config = {}
@@ -66,6 +72,7 @@ class RSSDelivery(commands.Cog):
         self.panel_checked = False
         self.chart_ready = False
         self.feed_ready = False
+        self.source_checked = {}
         self.store = None
         self.session = None
         self.errors = {}
@@ -76,6 +83,8 @@ class RSSDelivery(commands.Cog):
         if not self.sources:
             return
         self.store = DigestStore(DATA_DIR / ("rss_simulation.sqlite3" if self.digest_config.simulation else "rss_delivery.sqlite3"))
+        if self.category_delivery:
+            self.route_stores = {key: DigestStore(DATA_DIR / ('rss_route_' + key + '.sqlite3')) for key in ROUTES}
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25),
                                             headers={"User-Agent": "Con9sole-Bartender RSS/1.0"},
                                             cookie_jar=aiohttp.DummyCookieJar(), trust_env=False)
@@ -83,6 +92,8 @@ class RSSDelivery(commands.Cog):
             self.preferences = PreferenceStore(DATA_DIR / 'rss_sandbox_preferences.sqlite3')
             self.personal_panel = PersonalPanel(self)
             self.bot.add_view(self.personal_panel)
+            self.news_card_panel = NewsCardPanel(self)
+            self.bot.add_view(self.news_card_panel)
         if self.preferences:
             self.chart_poll.start()
             if self.store_config:
@@ -94,6 +105,8 @@ class RSSDelivery(commands.Cog):
     async def cog_unload(self):
         if self.personal_panel:
             self.personal_panel.stop()
+        if self.news_card_panel:
+            self.news_card_panel.stop()
         self.store_poll.cancel()
         self.chart_poll.cancel()
         self.poll.cancel()
@@ -188,7 +201,13 @@ class RSSDelivery(commands.Cog):
                             raise ValueError("feed exceeds 2 MiB decompressed limit")
                 articles = await asyncio.to_thread(parse_feed, bytes(body))
                 await asyncio.to_thread(self.store.ingest, source, articles, time.time())
+                # Do not accumulate a replacement queue while MonitoRSS is active.
+                if self.digest_config.enabled:
+                    for route, store in self.route_stores.items():
+                        if source in ROUTES[route][2]:
+                            await asyncio.to_thread(store.ingest, source, articles, time.time())
                 self.errors.pop(source, None)
+                self.source_checked[source] = time.time()
             except Exception as exc:
                 self.errors[source] = type(exc).__name__ + ": " + str(exc)[:180]
                 log.warning("RSS delivery poll %s: %s", source, self.errors[source])
@@ -252,8 +271,8 @@ class RSSDelivery(commands.Cog):
         embed.set_footer(text='來源內容節錄 · 香港時間 · 非即時逐篇推送')
         return embed
 
-    def target_channel(self):
-        channel = self.bot.get_channel(self.digest_config.channel_id)
+    def target_channel(self, channel_id=None):
+        channel = self.bot.get_channel(channel_id or self.digest_config.channel_id)
         if channel is None or not isinstance(channel, discord.TextChannel) or channel.guild.id != config.GUILD_ID or channel.guild.me is None:
             return None
         if self.digest_config.simulation:
@@ -266,6 +285,16 @@ class RSSDelivery(commands.Cog):
     async def deliver(self):
         if not self.digest_config.enabled:
             return
+        if self.category_delivery:
+            for route, (label, channel_id, sources) in ROUTES.items():
+                channel = self.target_channel(channel_id)
+                if channel is None:
+                    self.errors['route:' + route] = 'destination unavailable or missing permissions'
+                    continue
+                self.errors.pop('route:' + route, None)
+                await self.send_digest(channel, self.route_stores[route],
+                    RouteConfig(self.digest_config, route), sources & self.sources, label, NewsCardPanel(self))
+            return
         channel = self.target_channel()
         if channel is None:
             self.errors['digest'] = 'target unavailable, wrong simulation room, public room or missing permissions'
@@ -276,8 +305,13 @@ class RSSDelivery(commands.Cog):
             local=datetime.fromtimestamp(time.time(),HK)
             # The three-section digest replaces the old long evening card in sandbox.
             if local.hour==19 and local.minute<15: return
+        await self.send_digest(channel, self.store, self.digest_config, self.sources,
+            '🧪 模擬' if self.digest_config.simulation else '',
+            NewsCardPanel(self) if self.public_personal and self.preferences else None)
+
+    async def send_digest(self, channel, store, digest_config, sources, label, view):
         try:
-            batch = await asyncio.to_thread(self.store.claim_batch, self.digest_config, self.sources, time.time())
+            batch = await asyncio.to_thread(store.claim_batch, digest_config, sources, time.time())
         except Exception:
             log.exception('RSS digest claim failed')
             return
@@ -285,7 +319,8 @@ class RSSDelivery(commands.Cog):
             return
         outcome, detail = 'sent', ''
         try:
-            message = await channel.send(embed=self.render(batch, time.time(), '🧪 模擬' if self.digest_config.simulation else ''), allowed_mentions=discord.AllowedMentions.none())
+            message = await channel.send(embed=self.render(batch, time.time(), label), view=view,
+                allowed_mentions=discord.AllowedMentions.none())
             detail = str(message.id)
         except discord.HTTPException as exc:
             outcome = 'retry' if exc.status == 429 else 'uncertain' if exc.status >= 500 else 'failed'
@@ -294,7 +329,7 @@ class RSSDelivery(commands.Cog):
             outcome, detail = 'uncertain', type(exc).__name__
             log.warning('RSS digest send: %s', detail)
         try:
-            await asyncio.to_thread(self.store.finish_batch, batch['slot'], outcome, time.time(), detail)
+            await asyncio.to_thread(store.finish_batch, batch['slot'], outcome, time.time(), detail)
         except Exception:
             log.exception('RSS digest finalization failed; reserved batch will not be resent')
 
@@ -409,6 +444,15 @@ class RSSDelivery(commands.Cog):
         lines = ["RSS 摘要：" + ("模擬區運行中" if self.sources and self.digest_config.enabled and self.digest_config.simulation else "已啟用" if self.sources and self.digest_config.enabled else "公開派送關閉"),
                  "來源：" + (", ".join(sorted(self.sources)) or "未啟用收集"),
                  "19:00 沙盤精選速覽；12:30 只提醒晚間前到期嘅已核實優惠。" if self.digest_config.simulation else "19:00 每日摘要（最多 8 條）；12:30 已核實到期提醒。"]
+        if self.category_delivery:
+            lines.append('分類推送：每個頻道最多 8 條；新聞卡附私人互動按鈕。')
+            for route, (label, channel_id, sources) in ROUTES.items():
+                available = self.target_channel(channel_id) is not None
+                checked = min((self.source_checked.get(s, 0) for s in sources), default=0)
+                lines.append(f'{label}：目的地' + ('可用' if available else '不可用') +
+                    (f'；來源核對 <t:{int(checked)}:R>' if checked else '；來源尚未成功核對'))
+                lines.extend(f'  {name}：{state}（{attempts} 次）' for name, state, attempts in
+                    await asyncio.to_thread(self.route_stores[route].batch_report))
         if self.store_news is not None:
             lines.append('商店來源：'+('公開私人預覽' if self.store_news_public else '限測試區私人預覽'))
             for bucket,checked,count in await asyncio.to_thread(self.store_news.status):
@@ -437,6 +481,14 @@ class RSSDelivery(commands.Cog):
             await interaction.followup.send("未啟用 RSS 收集，暫無摘要。", ephemeral=True)
             return
         now = time.time()
+        if self.category_delivery:
+            for route, (label, channel_id, sources) in ROUTES.items():
+                articles = await asyncio.to_thread(self.store.preview,
+                    RouteConfig(self.digest_config, route), sources & self.sources, now, snapshot=True)
+                await interaction.followup.send('私人預覽｜' + label + ('；目前沒有符合條件的新聞。' if not articles else ''),
+                    embed=self.render({'kind':'digest','articles':articles}, now, label) if articles else None,
+                    view=NewsCardPanel(self), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            return
         articles = await asyncio.to_thread(self.store.preview, self.digest_config, self.sources, now)
         if not articles:
             await interaction.followup.send("目前冇符合篩選嘅新內容；唔會發空摘要。", ephemeral=True)
@@ -476,3 +528,4 @@ class RSSDelivery(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(RSSDelivery(bot))
+

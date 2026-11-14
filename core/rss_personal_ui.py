@@ -7,6 +7,30 @@ from core.rss_featured_ui import show_featured
 from core.rss_wording import rss_text
 
 
+class NewsCardPanel(discord.ui.View):
+    """Compact public card controls, restored across bot restarts."""
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    async def interaction_check(self, interaction):
+        return await self.cog.personal_access(interaction)
+
+    @discord.ui.button(label='我的情報', style=discord.ButtonStyle.primary, custom_id='rss:card:news:v1')
+    async def news(self, interaction, button):
+        await show_news(self.cog, interaction)
+
+    @discord.ui.button(label='調整偏好', custom_id='rss:card:preferences:v1')
+    async def preferences(self, interaction, button):
+        pref = await asyncio.to_thread(self.cog.preferences.get, interaction.user.id)
+        await interaction.response.send_message(rss_text(interaction.user, 'preferences'),
+            view=PreferencesView(self.cog, interaction.user.id, pref, interaction.user), ephemeral=True)
+
+    @discord.ui.button(label='新聞頻道接收', custom_id='rss:card:channels:v1')
+    async def channels(self, interaction, button):
+        await self.cog.channel_preferences_entry(interaction)
+
+
 class PersonalPanel(discord.ui.View):
     def __init__(self,cog):
         super().__init__(timeout=None)
@@ -99,6 +123,8 @@ class PreferencesView(discord.ui.View):
         super().__init__(timeout=600)
         self.cog,self.owner=cog,owner
         for key in OPTIONS: self.add_item(Choice(key,pref))
+        if not cog.digest_config.simulation:
+            self.remove_item(self.demo)
 
     async def interaction_check(self,interaction):
         if interaction.user.id!=self.owner:
@@ -118,3 +144,4 @@ class PreferencesView(discord.ui.View):
     @discord.ui.button(label='虛構資料試篩選',row=4)
     async def demo(self,interaction,button):
         await show_news(self.cog,interaction,True)
+
