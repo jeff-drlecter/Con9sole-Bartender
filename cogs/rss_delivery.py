@@ -374,6 +374,15 @@ class RSSDelivery(commands.Cog):
         await interaction.response.send_message(rss_text(interaction.user, 'entry')+'\n'+self.store_news_scope(interaction),
             view=PersonalPanel(self), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
+    async def channel_preferences_entry(self, interaction):
+        from core.news_channel_ui import open_news_channels
+        await open_news_channels(interaction)
+
+    @app_commands.command(name="news_channels", description="選擇接收 PlayStation、Xbox 或 PC 新聞頻道")
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    async def news_channels(self, interaction: discord.Interaction):
+        await self.channel_preferences_entry(interaction)
+
     @app_commands.command(name="news", description="私人查看遊戲情報、精選及個人偏好")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def news(self, interaction: discord.Interaction):

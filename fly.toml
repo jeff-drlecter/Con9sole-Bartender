@@ -20,6 +20,7 @@ auto_start_machines = true   # 有請求會自動啟動
   destination = "/data"
 
 [env]
+  NEWS_CATEGORY_MIGRATION = "20261114-v1"
   STORE_NEWS_CONFIG = "docs/store_news.json"
   STORE_NEWS_PUBLIC = "0"
   RSS_PERSONAL_PUBLIC = "1"

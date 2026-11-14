@@ -81,6 +81,7 @@ TARGET_MANAGED_COOLDOWN_ITEM_IDS = {
 }
 
 NO_COOLDOWN_ITEM_IDS = {
+    "news_channels",
     "news",
     "language",
     "squad_test",
