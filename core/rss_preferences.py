@@ -7,9 +7,10 @@ from core.rss_digest import normalized
 OPTIONS = {
     'platforms': {'ps':'PlayStation', 'xbox':'Xbox', 'pc':'PC'},
     'stores': {'any':'不限商店', 'steam':'Steam', 'epic':'Epic'},
+    'regions': {'hk':'香港商店', 'tw':'台灣商店'},
     'kinds': {'news':'新聞', 'keep':'永久限免', 'member':'會員遊戲', 'trial':'限時試玩'},
 }
-DEFAULT = {'platforms':['ps','xbox','pc'], 'stores':['any'], 'kinds':['news','keep','member','trial'], 'include':[], 'exclude':[]}
+DEFAULT = {'platforms':['ps','xbox','pc'], 'stores':['any'], 'kinds':['news','keep','member','trial'], 'include':[], 'exclude':[], 'regions':['hk','tw']}
 
 
 def validate(data):
@@ -74,7 +75,9 @@ class PreferenceStore(DeliveryStore):
     def get(self,user_id):
         with self.connect() as db:
             row=db.execute('SELECT payload FROM preferences WHERE user_id=?',(user_id,)).fetchone()
-        return json.loads(row[0]) if row else json.loads(json.dumps(DEFAULT))
+        data = json.loads(row[0]) if row else json.loads(json.dumps(DEFAULT))
+        data.setdefault('regions', ['hk','tw'])
+        return data
 
     def put(self,user_id,data):
         validate(data)
@@ -88,9 +91,11 @@ def tags(article):
     platforms=set()
     if article['source']=='ps': platforms.add('ps')
     if article['source']=='xbox': platforms.add('xbox')
+    if article['source'] in {'steam','epic'}: platforms.add('pc')
     for platform, pattern in [('ps',r'playstation|\bps[45]\b'),('xbox',r'xbox'),('pc',r'\bpc\b|steam|epic games')]:
         if re.search(pattern,text): platforms.add(platform)
     stores={s for s in ('steam','epic') if re.search(r'\b'+s+r'\b',text)}
+    if article['source'] in {'steam','epic'}: stores.add(article['source'])
     offer=article.get('offer')
     kind=offer['kind'] if offer else 'member' if any(w in text for w in ('game pass','playstation plus','ps plus')) else 'news'
     return platforms,stores,kind
@@ -99,7 +104,10 @@ def tags(article):
 def matches(article,pref):
     platforms,stores,kind=tags(article)
     text=normalized(article['title']+' '+article['summary'])
-    return (bool(platforms & set(pref['platforms'])) and kind in pref['kinds']
+    region_ok = not article.get('offer',{}).get('regions') if article.get('offer') else True
+    if article.get('offer') and article['offer'].get('regions'):
+        region_ok = bool(set(article['offer']['regions']) & set(pref.get('regions',['hk','tw'])))
+    return (region_ok and bool(platforms & set(pref['platforms'])) and kind in pref['kinds']
             and ('any' in pref['stores'] or bool(stores & set(pref['stores'])))
             and (not pref['include'] or any(normalized(w) in text for w in pref['include']))
             and not any(normalized(w) in text for w in pref['exclude']))

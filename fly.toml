@@ -20,6 +20,8 @@ auto_start_machines = true   # 有請求會自動啟動
   destination = "/data"
 
 [env]
+  STORE_NEWS_CONFIG = "docs/store_news.json"
+  STORE_NEWS_PUBLIC = "0"
   RSS_PERSONAL_PUBLIC = "1"
   HELPER_SANDBOX = "1"
   RSS_DELIVERY_SOURCES = "ps,xbox,4gamers"

@@ -132,7 +132,7 @@ async def main():
         assert sum(len(c) for c in cards)<6000
         assert all(len(c.description)<=1500 for c in cards)
         view=PreferencesView(cog,1,DEFAULT)
-        assert len(view.children)==6
+        assert len(view.children)==7
         assert await view.interaction_check(i)
         i.user.id=2
         assert not await view.interaction_check(i)

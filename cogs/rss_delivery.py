@@ -19,6 +19,7 @@ from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, excerpt
 from datetime import datetime
 from core.rss_simulation import scenarios
 from core.rss_wording import rss_text
+from core.store_sources import StoreNewsStore,epic_url,epic_offers,steam_news,reviewed_steam_offer
 from core.rss_preferences import PreferenceStore
 from core.rss_personal_ui import PersonalPanel
 from core.rss_featured import CHART_URL, parse_chart, verified_game
@@ -42,6 +43,24 @@ class RSSDelivery(commands.Cog):
             data = json.loads(raw)
         self.digest_config = DigestConfig.from_dict(data)
         self.public_personal = os.getenv("RSS_PERSONAL_PUBLIC", "0") == "1"
+        self.store_news = None
+        self.store_news_public = os.getenv("STORE_NEWS_PUBLIC", "0") == "1"
+        self.store_config = {}
+        self.store_backoff = {}
+        store_path = os.getenv("STORE_NEWS_CONFIG", "")
+        if store_path:
+            raw = Path(store_path).read_bytes()
+            if len(raw)>65536: raise ValueError("store config too large")
+            self.store_config = json.loads(raw)
+            if not isinstance(self.store_config,dict) or set(self.store_config)-{"steam_appids","steam_offers"}:
+                raise ValueError("invalid store configuration")
+            appids = self.store_config.get("steam_appids",[])
+            if not isinstance(appids,list) or len(appids)>10 or any(type(a) is not int or a<=0 for a in appids):
+                raise ValueError("invalid Steam watched AppIDs")
+            offers = self.store_config.get("steam_offers",[])
+            if not isinstance(offers,list) or len(offers)>20: raise ValueError("invalid Steam offers")
+            for entry in offers:
+                reviewed_steam_offer(entry,{},"hk",time.time())
         self.preferences = None
         self.personal_panel = None
         self.panel_checked = False
@@ -66,17 +85,93 @@ class RSSDelivery(commands.Cog):
             self.bot.add_view(self.personal_panel)
         if self.preferences:
             self.chart_poll.start()
+            if self.store_config:
+                self.store_news = StoreNewsStore(DATA_DIR / "store_news.sqlite3")
+                self.store_poll.start()
         self.poll.start()
         self.deliver.start()
 
     async def cog_unload(self):
         if self.personal_panel:
             self.personal_panel.stop()
+        self.store_poll.cancel()
         self.chart_poll.cancel()
         self.poll.cancel()
         self.deliver.cancel()
         if self.session:
             await self.session.close()
+
+    def store_news_available(self, interaction):
+        return bool(self.store_news is not None and (self.store_news_public or
+                    interaction.channel_id == self.digest_config.channel_id))
+
+    def store_news_scope(self, interaction):
+        if self.store_news_available(interaction):
+            return '商店來源試用：Epic 當期限免、Steam 指定遊戲新聞；Steam 優惠須人工核實。地區可獨立調整；優惠列出上次核對時間，實際資格以帳號商店為準。'
+        return '商店來源仍在測試區驗證，暫未加入此處的結果。'
+
+    async def fetch_store_json(self, url):
+        from urllib.parse import urlsplit
+        from email.utils import parsedate_to_datetime
+        origin = urlsplit(url).netloc
+        if self.store_backoff.get(origin,0)>time.time():
+            raise RuntimeError('store source cooldown')
+        async with self.session.get(url,allow_redirects=False) as response:
+            if response.status==429:
+                value=response.headers.get('Retry-After','1800')
+                try: delay=float(value)
+                except ValueError:
+                    try: delay=parsedate_to_datetime(value).timestamp()-time.time()
+                    except (ValueError,TypeError): delay=1800
+                self.store_backoff[origin]=time.time()+max(1800,delay)
+            response.raise_for_status()
+            if response.status!=200: raise ValueError('store redirect or unexpected status')
+            raw=bytearray()
+            async for chunk in response.content.iter_chunked(16384):
+                raw.extend(chunk)
+                if len(raw)>MAX_BYTES: raise ValueError('store response too large')
+        return json.loads(raw)
+
+    @tasks.loop(minutes=30)
+    async def store_poll(self):
+        for market in ('hk','tw'):
+            bucket='epic:'+market
+            try:
+                now=time.time()
+                rows=epic_offers(await self.fetch_store_json(epic_url(market)),market,now)
+                await asyncio.to_thread(self.store_news.replace,bucket,rows,now)
+                self.errors.pop(bucket,None)
+            except Exception as exc:
+                self.errors[bucket]=type(exc).__name__
+                log.warning('Store source unavailable: %s %s',bucket,type(exc).__name__)
+        appids=set(self.store_config.get('steam_appids',[]))
+        appids.update(e['appid'] for e in self.store_config.get('steam_offers',[]))
+        for appid in sorted(appids):
+            bucket='steam:'+str(appid)
+            try:
+                data=await self.fetch_store_json(f'https://store.steampowered.com/api/appdetails?appids={appid}&cc=hk&l=tchinese')
+                item=data.get(str(appid),{})
+                if item.get('success') is not True: raise ValueError('Steam game not available')
+                app=item['data']
+                if not verified_game(app) or app.get('steam_appid')!=appid: raise ValueError('not the expected base game')
+                if appid in self.store_config.get('steam_appids',[]):
+                    news=await self.fetch_store_json(f'https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={appid}&count=20&maxlength=1500&feeds=steam_community_announcements')
+                    now=time.time()
+                    rows=steam_news(news,appid,app['name'],now)
+                    await asyncio.to_thread(self.store_news.collect_news,bucket,rows,now)
+                for market in ('hk','tw'):
+                    entries=[e for e in self.store_config.get('steam_offers',[]) if e['appid']==appid]
+                    if not entries: continue
+                    regional=app
+                    if market!='hk':
+                        regional=(await self.fetch_store_json(f'https://store.steampowered.com/api/appdetails?appids={appid}&cc={market}&l=tchinese')).get(str(appid),{}).get('data',{})
+                    now=time.time()
+                    rows=[row for e in entries if (row:=reviewed_steam_offer(e,regional,market,now)) is not None]
+                    await asyncio.to_thread(self.store_news.replace,f'steam-offer:{appid}:{market}',rows,now)
+                self.errors.pop(bucket,None)
+            except Exception as exc:
+                self.errors[bucket]=type(exc).__name__
+                log.warning('Store source unavailable: %s %s',bucket,type(exc).__name__)
 
     @tasks.loop(minutes=20)
     async def poll(self):
@@ -141,13 +236,15 @@ class RSSDelivery(commands.Cog):
         title += '｜' + datetime.fromtimestamp(now, HK).strftime('%m/%d')
         embed = discord.Embed(title=title)
         for article in batch['articles']:
-            source = {'ps':'🔵 PS', 'xbox':'🟢 Xbox', '4gamers':'💻 綜合遊戲'}[article['source']]
+            source = {'ps':'🔵 PS', 'xbox':'🟢 Xbox', '4gamers':'💻 綜合遊戲','steam':'Steam','epic':'Epic'}[article['source']]
             name = source + '｜' + discord.utils.escape_markdown(excerpt(article['title'], 80))
             description = discord.utils.escape_markdown(excerpt(article['summary'], 150))
             offer = article.get('offer')
             if offer:
                 description = (f"{OFFER_LABELS[offer['kind']]}｜{discord.utils.escape_markdown(offer['region'])}"
                                f"｜截止 <t:{int(offer['deadline'])}:f>\n" + description)
+            if offer and offer.get('checked'):
+                description += f"\n商店核對 <t:{int(offer['checked'])}:R>"
             # Encoding brackets prevents external URLs from changing Markdown structure.
             link = '[原文／領取詳情](<' + display_link(article['link']) + '>)'
             value = description[:max(0, 599-len(link))] + '\n' + link
@@ -201,6 +298,7 @@ class RSSDelivery(commands.Cog):
         except Exception:
             log.exception('RSS digest finalization failed; reserved batch will not be resent')
 
+    @store_poll.before_loop
     @chart_poll.before_loop
     @poll.before_loop
     @deliver.before_loop
@@ -273,7 +371,7 @@ class RSSDelivery(commands.Cog):
     async def menu_entry(self, interaction):
         if not await self.personal_access(interaction):
             return
-        await interaction.response.send_message(rss_text(interaction.user, 'entry'),
+        await interaction.response.send_message(rss_text(interaction.user, 'entry')+'\n'+self.store_news_scope(interaction),
             view=PersonalPanel(self), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="news", description="私人查看遊戲情報、精選及個人偏好")
@@ -302,6 +400,10 @@ class RSSDelivery(commands.Cog):
         lines = ["RSS 摘要：" + ("模擬區運行中" if self.sources and self.digest_config.enabled and self.digest_config.simulation else "已啟用" if self.sources and self.digest_config.enabled else "公開派送關閉"),
                  "來源：" + (", ".join(sorted(self.sources)) or "未啟用收集"),
                  "19:00 沙盤精選速覽；12:30 只提醒晚間前到期嘅已核實優惠。" if self.digest_config.simulation else "19:00 每日摘要（最多 8 條）；12:30 已核實到期提醒。"]
+        if self.store_news is not None:
+            lines.append('商店來源：'+('公開私人預覽' if self.store_news_public else '限測試區私人預覽'))
+            for bucket,checked,count in await asyncio.to_thread(self.store_news.status):
+                lines.append(f'{bucket} · {count} 條 · 核對 <t:{int(checked)}:R>')
         if self.preferences:
             lines.append('個人入口：'+str(await asyncio.to_thread(self.preferences.panel_status,self.digest_config.channel_id)))
             lines.append('共用精選：'+str(await asyncio.to_thread(self.preferences.latest_featured)))

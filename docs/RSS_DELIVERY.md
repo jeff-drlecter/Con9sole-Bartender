@@ -260,3 +260,57 @@ Deploy impact: the existing single-process Bot restarts. Discord voice rooms
 remain server-side, but Bot interaction responses and background jobs can pause;
 active short-lived preference views must be reopened. Persistent RSS button IDs
 and existing SQLite databases are retained. No guarantee of zero interruption.
+
+## Steam/Epic source collectors — 14 November 2026
+
+`STORE_NEWS_CONFIG=docs/store_news.json` enables two regional Epic collectors and
+Steam official community-announcement feeds for configured AppIDs. The initial
+watched list is CS2 (730), Dota 2 (570), Apex Legends (1172470) and GTA V Legacy
+(271590); this is a bounded multi-game selection, not all Steam news. Each game
+name/type/AppID is checked against the Steam store before its feed is accepted.
+
+Collection runs every 30 minutes in the existing process, at most 10 watched games
+and 20 reviewed Steam offers. Responses are capped at 2 MiB, redirects rejected,
+and HTTP 429 honors Retry-After (at least the next 30-minute cycle). There are no
+new services, dependencies, credentials or member account links. Persisted snapshots
+live in `/data/store_news.sqlite3`, separate from the scheduled delivery queue.
+New adapters never feed automatic digests, expiry notifications or shared snapshots.
+
+Initially `STORE_NEWS_PUBLIC=0`: only private button previews in the existing test
+room incorporate these results. Other rooms continue the earlier RSS behavior.
+After real-source acceptance, `1` permits them in existing private `/news` results;
+it does not enable a new notification or public publisher. No automatic promotion.
+
+Epic reads the store's `freeGamesPromotions` endpoint separately with HK/HKD and
+TW/TWD. It is store-owned but undocumented; schema changes can break collection.
+Only active BASE_GAME / base-edition entries with a currently active zero-price
+promotion, positive original price, no voucher requirement and a valid product URL
+are classified as permanent claims. Upcoming offers, expired offers, demos, bundles,
+DLC and ordinary free-to-play games are excluded. Country-specific source results
+are not proof that every individual account is eligible; store/account restrictions
+still apply. A successful empty result removes past offers for that region.
+
+A separate member-owned regions selector defaults to both markets and never follows
+their language preference. Old preference rows gain this field without losing filters.
+Regional duplicates merge after filtering, only within the same store/promotion;
+where end times differ, the earliest verified end is shown. Offers older than two
+hours since successful collection are hidden; news snapshots older than 24h are
+hidden. The original timestamps are retained; active offers can appear outside the
+24-hour news window. The UI identifies checked time and current availability.
+
+Steam news alone never proves permanent access. `steam_offers` remains empty until
+an operator reviews a matching official Steam announcement and enters an explicit
+kind, region and timezone-aware start/end. Schema: appid, kind (keep/trial),
+starts_at, ends_at, regions (hk/tw), evidence_url, reviewed:true. Only matching
+`https://store.steampowered.com/news/app/APPID/view/GID` evidence is accepted.
+Permanent claims additionally require current regional positive original price,
+zero final price and 100% discount, on a paid base game. Trial access is an operator
+assertion from the announcement, not an inference from normal store price. Nothing
+in this implementation promises complete automatic Steam giveaway discovery.
+
+Acceptance: source parser adversarial cases, real HK/TW comparisons, region filtering,
+legacy preference migration, expired/stale removal, restart persistence, cross-store
+identity separation and read-only queue isolation. `verify_store_sources.py` checks
+real persisted source results on Fly without sending any message. Mobile interaction
+and ordinary-member live UI checks remain separate. Roll back by unsetting
+STORE_NEWS_CONFIG and restarting, retaining the SQLite data; MonitoRSS is unaffected.
