@@ -20,13 +20,11 @@ class NewsCardPanel(discord.ui.View):
     async def news(self, interaction, button):
         await show_news(self.cog, interaction)
 
-    @discord.ui.button(label='調整偏好', custom_id='rss:card:preferences:v1')
+    @discord.ui.button(label='情報設定', custom_id='rss:card:preferences:v1')
     async def preferences(self, interaction, button):
-        pref = await asyncio.to_thread(self.cog.preferences.get, interaction.user.id)
-        await interaction.response.send_message(rss_text(interaction.user, 'preferences'),
-            view=PreferencesView(self.cog, interaction.user.id, pref, interaction.user), ephemeral=True)
+        await open_settings(self.cog, interaction)
 
-    @discord.ui.button(label='新聞頻道接收', custom_id='rss:card:channels:v1')
+    @discord.ui.button(label='顯示新聞頻道', custom_id='rss:card:channels:v1')
     async def channels(self, interaction, button):
         await self.cog.channel_preferences_entry(interaction)
 
@@ -43,10 +41,9 @@ class PersonalPanel(discord.ui.View):
     async def news(self,interaction,button):
         await show_news(self.cog,interaction)
 
-    @discord.ui.button(label='調整偏好',custom_id='rss:sandbox:preferences:v1')
+    @discord.ui.button(label='情報設定',custom_id='rss:sandbox:preferences:v1')
     async def preferences(self,interaction,button):
-        pref=await asyncio.to_thread(self.cog.preferences.get,interaction.user.id)
-        await interaction.response.send_message(rss_text(interaction.user, 'preferences'),view=PreferencesView(self.cog,interaction.user.id,pref,interaction.user),ephemeral=True)
+        await open_settings(self.cog, interaction)
 
 
     @discord.ui.button(label='今日精選',custom_id='rss:sandbox:today:v1',row=1)
@@ -60,6 +57,35 @@ class PersonalPanel(discord.ui.View):
     @discord.ui.button(label='最近熱門',custom_id='rss:sandbox:hot:v1',row=1)
     async def hot(self,interaction,button):
         await show_featured(self.cog,interaction,'hot')
+
+
+async def open_settings(cog, interaction):
+    await interaction.response.send_message(rss_text(interaction.user, 'settings'),
+        view=IntelligenceSettings(cog, interaction.user.id, interaction.user), ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none())
+
+
+class IntelligenceSettings(discord.ui.View):
+    def __init__(self, cog, owner, member):
+        super().__init__(timeout=600)
+        self.cog, self.owner = cog, owner
+        self.filters.label = rss_text(member, 'filter_label')
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner:
+            await interaction.response.send_message(rss_text(interaction.user, 'own'), ephemeral=True)
+            return False
+        return await self.cog.personal_access(interaction)
+
+    @discord.ui.button(label='顯示新聞頻道')
+    async def channels(self, interaction, button):
+        await self.cog.channel_preferences_entry(interaction)
+
+    @discord.ui.button(label='個人情報篩選')
+    async def filters(self, interaction, button):
+        pref = await asyncio.to_thread(self.cog.preferences.get, interaction.user.id)
+        await interaction.response.send_message(rss_text(interaction.user, 'preferences'),
+            view=PreferencesView(self.cog, interaction.user.id, pref, interaction.user), ephemeral=True)
 
 
 async def show_news(cog,interaction,demo=False):
@@ -92,6 +118,7 @@ class Choice(discord.ui.Select):
         pref=await asyncio.to_thread(self.view.cog.preferences.get,interaction.user.id)
         pref[self.key]=list(self.values)
         await asyncio.to_thread(self.view.cog.preferences.put,interaction.user.id,pref)
+        pref=await asyncio.to_thread(self.view.cog.preferences.get,interaction.user.id)
         await interaction.response.edit_message(content=rss_text(interaction.user, 'saved'),view=PreferencesView(self.view.cog,interaction.user.id,pref,interaction.user))
 
 
