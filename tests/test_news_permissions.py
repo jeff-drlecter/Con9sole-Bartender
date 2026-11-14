@@ -16,6 +16,7 @@ def role(rid, name, **perms):
     r = Mock(spec=discord.Role)
     r.id, r.name, r.managed = rid, name, False
     r.permissions = discord.Permissions(**perms)
+    r.is_bot_managed.return_value = False
     return r
 
 

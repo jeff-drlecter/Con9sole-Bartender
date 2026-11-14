@@ -75,6 +75,8 @@ class NewsPermissions(commands.Cog):
                     heading = wording(member, '新聞權限檢查｜未修改設定', '新聞權限檢查｜未改設定')
                     detail = '\n'.join(o['name'] for o in plan['ops']) or wording(
                         member, '三個新聞頻道已符合設定，無需修改。', '三個新聞頻道已符合設定，唔使改。')
+                    if plan['blockers'] and not plan['ops']:
+                        detail = '有額外存取設定需要核對，暫不套用。'
                 else:
                     heading = wording(member, '新聞權限操作結果', '新聞權限操作結果')
                     detail = journal.summary(plan)

@@ -65,7 +65,7 @@ def build(roles, channels, guild, actor, role_ids):
             if ow.view_channel is not True or target.id in desired and role_target(target):
                 continue
             role = by_id.get(target.id) if role_target(target) else None
-            trusted = role is not None and (role.id == config.MOD_ROLE_ID or role.managed or
+            trusted = role is not None and (role.id == config.MOD_ROLE_ID or role.is_bot_managed() or
                 role.permissions.administrator or role.permissions.manage_guild or
                 role.permissions.manage_channels or role.permissions.manage_roles)
             if not trusted:
