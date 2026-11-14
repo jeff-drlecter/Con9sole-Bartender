@@ -65,6 +65,11 @@ def can_view(guild_id, roles, member, channel, owner_id=None):
     return bool(permissions & VIEW)
 
 
+def overwrite_signature(overwrites):
+    # Discord may return an equivalent overwrite set in a different list order.
+    return sorted((str(o['id']),int(o['type']),int(o['allow']),int(o['deny'])) for o in overwrites)
+
+
 def category_overwrites(guild_id, channel, chosen_role, all_news_roles, privileged_roles, bot_roles):
     result=deepcopy(channel.get('permission_overwrites',[]))
     for o in result:
