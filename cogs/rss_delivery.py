@@ -116,7 +116,7 @@ class RSSDelivery(commands.Cog):
 
     def store_news_available(self, interaction):
         return bool(self.store_news is not None and (self.store_news_public or
-                    interaction.channel_id == self.digest_config.channel_id))
+                    (self.digest_config.simulation and interaction.channel_id == self.digest_config.channel_id)))
 
     def store_news_scope(self, interaction):
         if self.store_news_available(interaction):

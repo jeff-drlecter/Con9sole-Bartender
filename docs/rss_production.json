@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "simulation": false,
   "channel_id": 1364201334798291000,
   "max_items": 8,
