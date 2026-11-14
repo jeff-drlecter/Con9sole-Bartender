@@ -78,7 +78,7 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         people={uid:types.SimpleNamespace(id=uid,bot=uid==13,display_name=f'Player {uid}') for uid in range(10,15)}
         for uid in people: storage.toggle(self.topic['id'],1,uid)
         destination=types.SimpleNamespace(id=30,send=AsyncMock(return_value=types.SimpleNamespace(id=501)),permissions_for=lambda m:permitted)
-        guild=types.SimpleNamespace(id=1,get_member=lambda uid:None if uid==14 else people.get(uid))
+        guild=types.SimpleNamespace(id=1,get_member=lambda uid:None if uid==14 else people.get(uid), fetch_member=AsyncMock(side_effect=lambda uid:None if uid==14 else people.get(uid)))
         channel=types.SimpleNamespace(id=20,guild=guild,members=[people[11]],permissions_for=lambda m:denied if m.id==12 else permitted)
         cog=object.__new__(SquadCards); cog.bot=types.SimpleNamespace(get_channel=lambda _:destination);cog.interest_baseline=set();cog.lock=asyncio.Lock();cog.state={"sessions":{}};cog.refresh_interest_cards=AsyncMock()
         session={'id':'s1','destination':30,'message':99,'interest_topic':self.topic}

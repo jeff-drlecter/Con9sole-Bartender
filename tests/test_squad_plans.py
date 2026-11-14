@@ -142,7 +142,7 @@ async def check():
              start=2000000000, party=3, capacity=5, members=[4], message=9)
     assert PlanView(None, p).is_persistent()
     assert PlanEntry(None).is_persistent()
-    assert len(PlanView(None, p).children) == 4
+    assert len(PlanView(None, p).children) == 5
     assert len(PlanForm(None, SimpleNamespace(id=2, category=None)).children) == 5
     assert '4／5' in card(p).fields[0].name
     view = ManageView(None, 'test', False, False)

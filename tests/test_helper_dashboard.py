@@ -62,6 +62,11 @@ class DashboardTests(unittest.TestCase):
         rooms=[NS(category_id=c.id,category=c,name='room',members=[user]) for c in (category,hidden)]
         channels={1:category,2:hidden,10:text,20:private}
         guild=NS(get_channel=lambda cid:channels.get(cid),voice_channels=rooms)
+        guild.default_role=NS(id=1)
+        for source in [text,private,*rooms]:
+            source.guild=guild
+            source.overwrites={}
+            source.permissions_for=lambda role:NS(view_channel=True,read_message_history=True,connect=True)
         cog=NS(channel=NS(guild=guild),game_categories=lambda g:{1,2},pulse_source=lambda source:source is text,
                window=NS(counts=lambda now:{10:dict(users={99},messages=3),20:dict(users={99},messages=10)}))
         embed=dashboard_embed(cog)

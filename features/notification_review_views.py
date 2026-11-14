@@ -147,7 +147,12 @@ class ResolveModal(SafeModal):
             changed=await asyncio.to_thread(store.resolve,levels.ledger,inter.guild_id,row,self.action,inter.user.id,str(self.reason.value),message_id)
             if not changed:raise ValueError('狀態已更新；請重新整理名單，避免重複處理。')
             if squad:
-                await squad._notify_interested_locked(channel,session,retry_batch=row['batch'])
+                from contextlib import AsyncExitStack
+                async with AsyncExitStack() as stack:
+                    plans = inter.client.get_cog('SquadPlans') if session.get('plan_id') else None
+                    if getattr(plans, 'lock', None):
+                        await stack.enter_async_context(plans.lock)
+                    await squad._notify_interested_locked(channel,session,retry_batch=row['batch'])
         if self.action=='retry' and row['kind']=='weekly':
             await levels.winners.callback(levels,inter,period=row['period'],publish=True)
         else:
