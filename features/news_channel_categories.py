@@ -65,6 +65,17 @@ def can_view(guild_id, roles, member, channel, owner_id=None):
     return bool(permissions & VIEW)
 
 
+def required_questions_ready(prompts):
+    titles=('你使用哪些遊戲平台？（必選，可複選）','選擇想玩的遊戲（必選，可複選；也可選「暫不選擇」）')
+    for title in titles:
+        found=[p for p in prompts if p['title']==title]
+        if len(found)!=1: return False
+        p=found[0]
+        if not p.get('required') or p.get('single_select') or not p.get('in_onboarding') or len(p.get('options',[]))<2:
+            return False
+    return True
+
+
 def prompt_signature(prompt):
     """Compare editable behavior, not read-only/default/null response metadata."""
     options=[]
