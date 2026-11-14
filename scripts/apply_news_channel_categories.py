@@ -8,7 +8,7 @@ from urllib.parse import quote
 import aiohttp
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES,LEGACY_PROMPT,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature
+from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES,LEGACY_PROMPT,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature,prompt_signature
 import config
 
 ROOT=Path('/data/news_channel_categories')
@@ -48,6 +48,48 @@ async def main():
         channels={k:await api('GET',f'channels/{cid}') for k,cid in CHANNELS.items()}
         if any(c['guild_id']!=str(config.GUILD_ID) or c['type'] not in (0,5) for c in channels.values()):
             raise ValueError('Unexpected target channels')
+        existing={key:next((r['id'] for r in roles if r['name']==name and not r['managed'] and int(r['permissions'])==0),None)
+                  for key,name in ROLE_NAMES.items()}
+        already_categorized=all(existing.values()) and any(set(LABELS.values()) <= {o['title'] for o in p['options']} for p in before['prompts'])
+        # A previous run may have completed the writes and stopped at strict metadata verification.
+        if already_categorized:
+            category_prompts(before['prompts'],existing)
+            privileged={str(r['id']) for r in roles if int(r['permissions']) & (8|32)}|{str(config.MOD_ROLE_ID),*map(str,config.HELPER_ROLE_IDS)}
+            ordinary=[r['id'] for r in roles if not r.get('managed') and r['id'] not in privileged|set(existing.values())]
+            for key,channel in channels.items():
+                for choice in ([],*[ [rid] for rid in existing.values()],list(existing.values())):
+                    member=dict(user=dict(id='0'),roles=ordinary+choice)
+                    if can_view(config.GUILD_ID,roles,member,channel)!=(existing[key] in choice):
+                        raise ValueError('Previously written news permissions require review')
+            all_channels=await api('GET',base+'/channels')
+            if any(c['id'] not in set(map(str,CHANNELS.values())) and any(o['type']==0 and o['id'] in existing.values() for o in c.get('permission_overwrites',[])) for c in all_channels):
+                raise ValueError('Category roles have unrelated channel access')
+            original=json.loads((ROOT/'before.json').read_text())
+            area_id=next(p['id'] for p in before['prompts'] if p['title']=='想開啟哪些區域？（選填，可複選）')
+            differences=[]
+            for prompt in original['onboarding']['prompts']:
+                if prompt['id'] in (area_id,LEGACY_PROMPT): continue
+                current=next((p for p in before['prompts'] if p['id']==prompt['id']),None)
+                if current is None:
+                    differences.append(prompt['title']);continue
+                if prompt_signature(current)!=prompt_signature(prompt): differences.append(prompt['title'])
+            if differences:
+                # Keep diagnostics private: do not publish question text or role mappings.
+                (ROOT/'unrelated-question-differences.json').write_text(json.dumps({'before':original['onboarding']['prompts'],'current':before['prompts']},ensure_ascii=False))
+                # The historical backup predates independent optional-area/streaming edits.
+                # Recovery is read-only: retain current unrelated questions, never restore that snapshot.
+                critical={'1363098911048339468','1279023252903301224'}
+                for original_prompt in original['onboarding']['prompts']:
+                    if original_prompt['id'] not in critical: continue
+                    current=next((p for p in before['prompts'] if p['id']==original_prompt['id']),None)
+                    if current is None or prompt_signature(current)!=prompt_signature(original_prompt):
+                        raise ValueError('Required game/platform question differences require review')
+                print(json.dumps({'news_category_recovery':'preserved_current_unrelated_questions','historical_differences':len(differences)}),flush=True)
+            temporary=STATE.with_suffix('.tmp')
+            temporary.write_text(json.dumps(dict(version=1,role_ids=existing,channel_ids=CHANNELS),indent=2))
+            temporary.replace(STATE)
+            print(json.dumps({'news_categories':'verified_after_metadata_normalization','categories':list(LABELS.values()),'modeled_access':'pass','native_options':'verified','announcements_sent':0},ensure_ascii=False))
+            return
         # Plan before any mutation, including exact optional-area/legacy question checks.
         category_prompts(before['prompts'],{k:'0' for k in CHANNELS})
         members=[]
@@ -139,7 +181,9 @@ async def main():
         # Confirm every unrelated question is byte-equivalent at the JSON value level.
         target=next(p['id'] for p in wanted if p['title']=='想開啟哪些區域？（選填，可複選）')
         unchanged=[p for p in before['prompts'] if p['id'] not in (target,LEGACY_PROMPT)]
-        if any(p not in actual['prompts'] for p in unchanged): raise ValueError('Unrelated onboarding question changed')
+        if any(not any(prompt_signature(p)==prompt_signature(q) for q in actual['prompts']) for p in unchanged):
+            (ROOT/'unrelated-question-differences.json').write_text(json.dumps({'before':before['prompts'],'current':actual['prompts']},ensure_ascii=False))
+            raise ValueError('Unrelated editable onboarding question changed')
         temporary=STATE.with_suffix('.tmp')
         temporary.write_text(json.dumps(dict(version=1,role_ids=selected,channel_ids=CHANNELS),indent=2))
         temporary.replace(STATE)

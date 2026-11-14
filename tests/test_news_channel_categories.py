@@ -1,6 +1,6 @@
 import copy
 import unittest
-from features.news_channel_categories import CHANNELS,LABELS,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature
+from features.news_channel_categories import CHANNELS,LABELS,VIEW,category_prompts,category_overwrites,can_view,overwrite_signature,prompt_signature
 
 class NewsCategoryTests(unittest.TestCase):
     def test_optional_area_expansion_preserves_other_choices_and_prompts(self):
@@ -29,6 +29,15 @@ class NewsCategoryTests(unittest.TestCase):
         self.assertEqual(overwrite_signature(before),overwrite_signature(list(reversed(before))))
         changed=copy.deepcopy(before);changed[0]['allow']='0'
         self.assertNotEqual(overwrite_signature(before),overwrite_signature(changed))
+
+    def test_question_comparison_keeps_mappings_but_ignores_default_metadata(self):
+        before=dict(id='q',title='Question',single_select=False,required=False,in_onboarding=False,
+            options=[dict(id='o',title='Choice',description=None,role_ids=['b','a'],channel_ids=[],emoji=None)])
+        after=copy.deepcopy(before);after['options'][0].update(description='',role_ids=['a','b'],emoji={})
+        after['read_only_metadata']='new'
+        self.assertEqual(prompt_signature(before),prompt_signature(after))
+        after['options'][0]['role_ids']=['other']
+        self.assertNotEqual(prompt_signature(before),prompt_signature(after))
 
     def test_roles_only_unlock_selected_channel_even_with_other_game_roles(self):
         roles=[dict(id='guild',permissions=str(VIEW)),dict(id='old',permissions='0'),dict(id='game',permissions='0'),
