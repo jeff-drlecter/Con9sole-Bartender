@@ -394,6 +394,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     MenuItem("squad_test", "組隊卡測試", "🧪", "secondary", "admin", 3, "SquadCards", "test_entry", admin_only=True),
     MenuItem("stream_admin", "直播名單", "📺", "secondary", "admin", 3, "StreamAlerts", admin_only=True),
     MenuItem("platform_invites", "平台邀請連結", "🔗", "secondary", "admin", 3, "Invites", "platform_entry", admin_only=True),
+    MenuItem("community_outcomes", "社群成效", "📊", "secondary", "admin", 2, "CommunityOutcomes", admin_only=True),
     MenuItem("permission_audit", "權限審核", "🔍", "secondary", "admin", 2, "PermissionAudit", admin_only=True),
     MenuItem("title_roles_admin", "稱號管理", "🏅", "secondary", "admin", 2, "TitleRoles", "admin_entry", admin_only=True),
     MenuItem("bot_health", "系統狀態", "🩺", "secondary", "admin", 2, "BotHealth", admin_only=True),
