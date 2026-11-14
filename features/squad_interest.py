@@ -162,7 +162,7 @@ def forget_card(message_id):
         conn.execute('DELETE FROM squad_interest_cards WHERE message_id=?', (message_id,))
 
 
-def reserve(session_id, scope, eligible, *, now=None):
+def reserve(session_id, scope, eligible, *, now=None, plan_users=()):
     """Claim before posting, consuming one-shots; uncertain sends never replay."""
     initialize()
     current = time.time() if now is None else now
@@ -175,15 +175,21 @@ def reserve(session_id, scope, eligible, *, now=None):
         if not conn.execute('INSERT OR IGNORE INTO squad_interest_attempts VALUES (?,?,?)',
                             (session_id, scope, current)).rowcount:
             return []
-        for user_id in eligible:
+        reserved = {uid for (raw,) in conn.execute(
+            'SELECT users FROM squad_interest_delivery WHERE session_id=?', (session_id,))
+            for uid in json.loads(raw)}
+        for user_id in dict.fromkeys(eligible):
+            if user_id in reserved:
+                continue
             row = conn.execute('''SELECT kind,excluded_session FROM squad_interest_members
                 WHERE scope=? AND user_id=?''', (scope, user_id)).fetchone()
-            if not row or row[1] == session_id:
+            subscribed = row is not None and row[1] != session_id
+            if not subscribed and user_id not in plan_users:
                 continue
             selected.append(user_id)
-            if row[0] == 'once':
+            if subscribed and row[0] == 'once':
                 conn.execute('DELETE FROM squad_interest_members WHERE scope=? AND user_id=?', (scope, user_id))
-            else:
+            elif subscribed:
                 conn.execute('UPDATE squad_interest_members SET last_notified=? WHERE scope=? AND user_id=?',
                              (current, scope, user_id))
         for index in range(0,len(selected),20):

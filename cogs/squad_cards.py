@@ -3,6 +3,7 @@ from __future__ import annotations
 from features.wording import text as wording_text, view_copy as wording_view, modal_copy as wording_modal
 
 import asyncio
+from contextlib import AsyncExitStack
 import logging
 import os
 import time
@@ -562,7 +563,7 @@ class SquadCards(commands.Cog):
         self.bot = bot
         self.path = os.getenv("SQUAD_CARDS_PATH", str(DATA_DIR / "squad_cards.json"))
         self.state = load_json_object(self.path, lambda: {"settings": {}, "sessions": {}})
-        self.interest_baseline = {s["id"] for s in self.state["sessions"].values() if s.get("message")}
+        self.interest_baseline = {s["id"] for s in self.state["sessions"].values() if s.get("id")}
         self.lock = asyncio.Lock()
         self.arrivals = {}
         self.last_error = None
@@ -857,7 +858,11 @@ class SquadCards(commands.Cog):
     async def notify_interested(self, channel, session):
         try:
             async with shared_async_lock('subscription-delivery',channel.guild.id if channel else config.GUILD_ID,session['id']):
-                await self._notify_interested_locked(channel,session)
+                async with AsyncExitStack() as stack:
+                    plans = getattr(self.bot, 'get_cog', lambda _: None)('SquadPlans')
+                    if session.get('plan_id') and getattr(plans, 'lock', None):
+                        await stack.enter_async_context(plans.lock)
+                    await self._notify_interested_locked(channel,session)
         except Exception:
             log.exception('Could not start subscription delivery: session=%s',session.get('id'))
 
@@ -873,10 +878,23 @@ class SquadCards(commands.Cog):
             destination = self.bot.get_channel(session['destination'])
             guild = channel.guild
             ids = await run_stats(squad_interest.members, value['id'])
+            from features.squad_plans import reminder_recipients, notification_exclusions
+            plans = getattr(self.bot, 'get_cog', lambda _: None)('SquadPlans')
+            plan = plans.book.get(session['plan_id']) if plans and session.get('plan_id') else None
+            if session.get('plan_id') and (not plan or plan['status'] != 'live' or plan.get('session') != session['id']):
+                return
+            plan_users = reminder_recipients(plan) if plan else set()
+            excluded = notification_exclusions(plan) if plan else set()
+            ids = sorted((set(ids) | plan_users) - excluded)
+            if not humans(channel) or session.get('ended') is not None:
+                return
             present = {m.id for m in humans(channel)}
             eligible = []
             for uid in ids:
-                member = guild.get_member(uid)
+                try:
+                    member = await guild.fetch_member(uid)
+                except discord.HTTPException:
+                    continue
                 if member is None or member.bot or uid in present:
                     continue
                 voice_perms = channel.permissions_for(member)
@@ -885,7 +903,7 @@ class SquadCards(commands.Cog):
                     eligible.append(uid)
             await run_stats(squad_interest.remember, value)
             if retry_batch is None:
-                await run_stats(squad_interest.reserve, session['id'], value['id'], eligible)
+                await run_stats(squad_interest.reserve, session['id'], value['id'], eligible, plan_users=plan_users)
             await run_stats(squad_interest.delivery_context,session['id'],value['id'],
                             dict(guild=guild.id,channel=destination.id,card=session['message'],voice=channel.id))
             batches = await run_stats(squad_interest.pending_deliveries, session['id'], value['id'])
@@ -903,7 +921,14 @@ class SquadCards(commands.Cog):
                     present={m.id for m in humans(channel)}
                     allowed=[]
                     for uid in batch:
-                        member=guild.get_member(uid)
+                        current_plan = plans.book.get(session['plan_id']) if plan else None
+                        if current_plan and (uid in notification_exclusions(current_plan) or
+                                (uid in plan_users and uid not in reminder_recipients(current_plan))):
+                            continue
+                        try:
+                            member = await guild.fetch_member(uid)
+                        except discord.HTTPException:
+                            continue
                         if member and not member.bot and uid not in present:
                             vp=channel.permissions_for(member)
                             if vp.view_channel and vp.connect and destination.permissions_for(member).view_channel:
@@ -956,6 +981,8 @@ class SquadCards(commands.Cog):
                     latest=await run_stats(squad_interest.latest_card_post,session['id'])
                     if latest and latest['state']=='sent' and latest['message_id'] and not session.get('plan_id'):
                         session['message']=latest['message_id']
+                if not members:
+                    getattr(self, 'startup_occupied', set()).discard(key)
                 if not members or (session and session.get('ended') is not None):
                     if session:
                         if channel is not None and session.get('message') and session.get('ended') is None:
@@ -979,6 +1006,8 @@ class SquadCards(commands.Cog):
                                    first_member=min(members, key=lambda m: getattr(self, "arrivals", {}).get(
                                        (channel.id, m.id), now)).id)
                     self.state["sessions"][key] = session
+                    if key in getattr(self, "startup_occupied", set()):
+                        self.interest_baseline.add(session["id"])
                 session.pop('empty_since', None)
                 before = dict(session["participants"])
                 session["participants"].update({str(m.id): m.display_name for m in members})
@@ -1029,6 +1058,8 @@ class SquadCards(commands.Cog):
                 await self.refresh_interest_cards(value)
             except Exception:
                 log.exception("Could not hide legacy subscription fields: topic=%s", value["id"])
+        guild = self.bot.get_guild(config.GUILD_ID)
+        self.startup_occupied = {str(c.id) for c in getattr(guild, "voice_channels", []) if humans(c)}
         # Unpublished timers restart: offline time cannot establish continuous presence.
         for session in self.state["sessions"].values():
             session.pop('empty_since', None)
