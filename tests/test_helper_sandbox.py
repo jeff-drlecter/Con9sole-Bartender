@@ -73,7 +73,7 @@ async def main():
             assert not await cog.access(i)
             i.channel_id=123
         panel=HelperPanel(cog)
-        assert panel.is_persistent() and len(panel.children)==5
+        assert panel.is_persistent() and len(panel.children)==6
         for n in range(20): cog.store.create(n,time.time())
         embed=await cog.demo_embed()
         assert len(embed)<6000 and all(len(f.value)<=1024 for f in embed.fields)

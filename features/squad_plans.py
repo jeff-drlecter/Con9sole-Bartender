@@ -90,7 +90,10 @@ class PlanBook:
                     or p.get('message') is not None and (type(p['message']) is not int or p['message'] <= 0)
                     or p.get('capacity') is not None and (type(p['capacity']) is not int or p['capacity'] <= p['party'])):
                 raise ValueError('Invalid squad plan content; original file preserved')
-            for field in ('late', 'unconfirmed'):
+            withdrawn = p.get('withdrawn', [])
+            if not isinstance(withdrawn, list) or any(type(uid) is not int or uid <= 0 for uid in withdrawn):
+                raise ValueError('Invalid squad reminder withdrawals; original file preserved')
+            for field in ('late', 'unconfirmed', 'reminders'):
                 values = p.get(field, [])
                 if not isinstance(values, list) or any(type(uid) is not int or uid not in p['members'] for uid in values):
                     raise ValueError('Invalid squad plan RSVP state; original file preserved')
@@ -140,7 +143,7 @@ class PlanBook:
             plan = dict(id=key, guild=guild, channel=channel, owner=owner,
                         game=game, mode=mode, start=start, party=party,
                         capacity=capacity, members=[], status='posting', message=None, dirty=False,
-                        instant=instant, late=[], unconfirmed=[], revision=0)
+                        instant=instant, late=[], unconfirmed=[], reminders=[], withdrawn=[], revision=0)
             state = copy.deepcopy(self.state)
             state['plans'][key] = plan
             self._write(state)
@@ -167,6 +170,8 @@ class PlanBook:
                 raise ValueError('此約局已結束，請重新約一局。')
             p.setdefault('late', [])
             p.setdefault('unconfirmed', [])
+            p.setdefault('reminders', [])
+            p.setdefault('withdrawn', [])
             if action in {'edit', 'cancel'}:
                 if p['status'] == 'live':
                     raise ValueError('本局已在進行中；請從語音房管理目前場次。')
@@ -191,6 +196,17 @@ class PlanBook:
                     p['instant'] = instant
                     if material or p['status'] != 'gathering':
                         p['status'] = 'due' if p['start'] <= self.clock() else 'open'
+            elif action in {'remind_on', 'remind_off'}:
+                if user not in confirmed(p):
+                    raise ValueError('請先報名或重新確認此約局。')
+                if action == 'remind_on':
+                    if p['status'] == 'live':
+                        raise ValueError('本局已開始；不會補發開局提醒。')
+                    p['reminders'] = sorted(set(p['reminders']) | {user})
+                    p['withdrawn'] = [uid for uid in p['withdrawn'] if uid != user]
+                else:
+                    p['reminders'] = [uid for uid in p['reminders'] if uid != user]
+                    p['withdrawn'] = sorted(set(p['withdrawn']) | {user})
             elif action in {'join', 'late'}:
                 if user == p['owner']:
                     raise ValueError('你已計入「已有人數」，無需重複加入。')
@@ -209,6 +225,8 @@ class PlanBook:
                 if user not in p['members']:
                     raise ValueError('你尚未按卡加入；發起人可修改原有隊伍人數。')
                 p['members'].remove(user)
+                p['reminders'] = [uid for uid in p['reminders'] if uid != user]
+                p['withdrawn'] = sorted(set(p['withdrawn']) | {user})
                 p['late'] = [uid for uid in p['late'] if uid != user]
                 p['unconfirmed'] = [uid for uid in p['unconfirmed'] if uid != user]
             else:
@@ -298,3 +316,19 @@ class PlanBook:
                     changed = True
             if changed:
                 self._write(state)
+
+
+def reminder_recipients(plan):
+    """Explicit consent, confirmed for the current revision; old records default off."""
+    return set(confirmed(plan)) & set(plan.get('reminders', [])) - set(plan.get('withdrawn', []))
+
+
+def notification_exclusions(plan):
+    return set(plan.get('withdrawn', [])) | set(plan.get('unconfirmed', []))
+
+
+def public_status(plan):
+    """02 read-only summary: no identities, roster, or consent data."""
+    return dict(id=plan['id'], status=plan['status'], game=plan['game'], mode=plan['mode'],
+                start=plan['start'], registered=len(confirmed(plan)), party=plan['party'],
+                capacity=plan['capacity'], attendance=None, revision=plan.get('revision', 0))

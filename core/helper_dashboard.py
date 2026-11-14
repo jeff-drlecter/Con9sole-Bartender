@@ -3,9 +3,10 @@ import time
 import discord
 import config
 from core.helper_overview import bounded_lines
+from core.helper_plans import public_source
 
 
-def dashboard_embed(cog):
+def dashboard_embed(cog, plans=None):
     now=time.time()
     embed=discord.Embed(title='📊 社群動態 Dashboard',
         description=f'更新 <t:{int(now)}:t> · 每 2 分鐘更新\n查看各區活動；需要接應時按下方按鈕。')
@@ -16,7 +17,7 @@ def dashboard_embed(cog):
         groups={}
         for cid,count in cog.window.counts(now).items():
             source=guild.get_channel(cid)
-            if not source or not cog.pulse_source(source): continue
+            if not source or not cog.pulse_source(source) or not public_source(source): continue
             group=groups.setdefault(source.category_id,dict(users=set(),messages=0))
             group['users'].update(count['users'])
             group['messages']+=count['messages']
@@ -28,6 +29,7 @@ def dashboard_embed(cog):
         rooms={}
         for room in guild.voice_channels:
             if room.category_id not in categories or room.name==config.TEMP_VC_HUB_NAME: continue
+            if not public_source(room, voice=True): continue
             if any(w in room.category.name.casefold() for w in ('admin','管理','hidden','archive','封存','金主','staff','private','私密','測試')): continue
             people={m.id for m in room.members if not m.bot}
             if not people: continue
@@ -39,5 +41,8 @@ def dashboard_embed(cog):
             voice.append(f"**{name}** · {count['rooms']} 間／{len(count['people'])} 人")
     embed.add_field(name='💬 文字活動｜近 30 分鐘',value=bounded_lines(chat,'暫未觀察到活動。',8),inline=False)
     embed.add_field(name='🎙️ 目前語音',value=bounded_lines(voice,'暫無活動中的語音房。',8),inline=False)
+    value = ('概覽暫未就緒。' if plans is None else
+             f'可公開摘要：待開局 {plans[0]} 局／招募未滿 {plans[1]} 局（可重疊）。')
+    embed.add_field(name='📅 待開局／招募未滿',value=value+'\n按下方按鈕查看你有權存取的約局。',inline=False)
     embed.set_footer(text='僅顯示已納入的社群遊戲區及公海概況；不轉貼原文或成員名單。個人詳情按原有權限顯示。文字統計自 Bot 啟動後開始。')
     return embed

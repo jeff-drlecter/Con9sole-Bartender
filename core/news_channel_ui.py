@@ -60,6 +60,9 @@ class NewsChannelSelect(discord.ui.Select):
                 if selected!=chosen: raise ValueError('尚未確認設定，請重新開啟選單檢查。')
                 content=('✅ 已儲存新聞頻道選擇。可隨時更改；手機通知由 Discord 頻道通知設定控制。'
                     if language(fresh)!='hk' else '✅ 已儲存新聞頻道選擇。可隨時再改；手機通知跟返 Discord 頻道通知設定。')
+                if not selected:
+                    content += ('\n已隱藏全部新聞分類。日後可從伺服器的 <id:customize> 重新選擇；不必進入新聞頻道。'
+                        if language(fresh)!='hk' else '\n已隱藏全部新聞分類。之後可以喺伺服器嘅 <id:customize> 揀返，唔使入新聞頻道。')
                 await interaction.followup.send(content,view=NewsChannelView(fresh.id,selected),ephemeral=True,
                     allowed_mentions=discord.AllowedMentions.none())
             except (ValueError,discord.HTTPException,FileNotFoundError) as exc:
