@@ -60,6 +60,11 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl status --app con9sole-bartender
 
+      - name: Apply backed-up news channel categories once
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/apply_news_channel_categories.py'
+
       - name: Verify RSS sandbox panel when enabled
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
