@@ -70,6 +70,7 @@ class RSSDelivery(commands.Cog):
         self.preferences = None
         self.personal_panel = None
         self.panel_checked = False
+        self.public_panels_checked = set()
         self.chart_ready = False
         self.feed_ready = False
         self.source_checked = {}
@@ -292,6 +293,7 @@ class RSSDelivery(commands.Cog):
                     self.errors['route:' + route] = 'destination unavailable or missing permissions'
                     continue
                 self.errors.pop('route:' + route, None)
+                await self.ensure_news_panel(channel, label)
                 await self.send_digest(channel, self.route_stores[route],
                     RouteConfig(self.digest_config, route), sources & self.sources, label, NewsCardPanel(self))
             return
@@ -308,6 +310,34 @@ class RSSDelivery(commands.Cog):
         await self.send_digest(channel, self.store, self.digest_config, self.sources,
             '🧪 模擬' if self.digest_config.simulation else '',
             NewsCardPanel(self) if self.public_personal and self.preferences else None)
+
+    async def ensure_news_panel(self, channel, label):
+        """A usable entry even before the first non-empty scheduled digest."""
+        if (not self.category_delivery or not self.digest_config.enabled
+                or self.digest_config.simulation or not self.public_personal
+                or not self.preferences or channel.id in self.public_panels_checked):
+            return
+        self.public_panels_checked.add(channel.id)
+        error_key = 'entry:' + str(channel.id)
+        try:
+            if not await asyncio.to_thread(self.preferences.claim_panel, channel.id):
+                status = await asyncio.to_thread(self.preferences.panel_status, channel.id)
+                if not status or status[0] != 'posted':
+                    raise RuntimeError('entry send requires manual verification')
+                # Persistent views are registered in cog_load; no edit or repost.
+                await channel.fetch_message(status[1])
+                self.errors.pop(error_key, None)
+                return
+            message = await channel.send(
+                f'📰 **{label} 情報**\n直接按下方按鈕查看情報、調整偏好或選擇新聞頻道。\n操作結果只有你看得到，無需輸入指令。',
+                view=NewsCardPanel(self), silent=True,
+                allowed_mentions=discord.AllowedMentions.none())
+            await asyncio.to_thread(self.preferences.finish_panel, channel.id, message.id)
+            self.errors.pop(error_key, None)
+        except Exception as exc:
+            # Reserve before sending, so timeouts/restarts never duplicate an entry.
+            self.errors[error_key] = type(exc).__name__ + ': entry requires manual verification'
+            log.exception('RSS news channel entry requires verification: %s', channel.id)
 
     async def send_digest(self, channel, store, digest_config, sources, label, view):
         try:

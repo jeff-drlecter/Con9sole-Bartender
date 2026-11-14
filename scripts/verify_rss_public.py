@@ -63,6 +63,14 @@ def main():
             perms = effective_permissions(guild_id, roles, member, channel)
             required = (1 << 10) | (1 << 11) | (1 << 14)
             assert perms & 8 or perms & required == required, f'{route} missing publisher permissions'
+            if config['enabled']:
+                with sqlite3.connect('file:/data/rss_sandbox_preferences.sqlite3?mode=ro', uri=True) as db:
+                    panel = db.execute('SELECT state,message_id FROM panels WHERE channel_id=?', (channel_id,)).fetchone()
+                assert panel and panel[0] == 'posted', f'{route} has no public interaction entry'
+                message = get(f'channels/{channel_id}/messages/{panel[1]}')
+                assert message['author']['id'] == app['id']
+                controls = {c.get('custom_id') for row in message.get('components', []) for c in row.get('components', [])}
+                assert {'rss:card:news:v1', 'rss:card:preferences:v1', 'rss:card:channels:v1'} <= controls
             with sqlite3.connect(f'file:/data/rss_route_{route}.sqlite3?mode=ro', uri=True) as db:
                 assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
                 db.execute('SELECT slot,state FROM digest_batches LIMIT 0')

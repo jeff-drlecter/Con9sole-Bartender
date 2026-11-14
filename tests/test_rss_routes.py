@@ -39,6 +39,8 @@ async def main():
         cog.preferences = PreferenceStore(Path(tmp)/'prefs.db')
         cog.store = DigestStore(Path(tmp)/'all.db')
         cog.route_stores = {k:DigestStore(Path(tmp)/(k+'.db')) for k in ROUTES}
+        # Entry bootstrapping has independent empty-queue/restart tests.
+        cog.ensure_news_panel = AsyncMock()
         channels = {cid:S(send=AsyncMock(return_value=S(id=cid))) for _,cid,_ in ROUTES.values()}
         cog.target_channel = lambda cid=None: channels.get(cid)
         now = datetime(2026,11,14,19,0,tzinfo=HK).timestamp()

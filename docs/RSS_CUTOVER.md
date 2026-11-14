@@ -12,6 +12,14 @@ includes persistent My News, Preferences and News Channels buttons. Results are
 ephemeral and use the existing member/channel access guard. No new DMs, role
 mentions, announcements or automatic crossposting are introduced.
 
+Each category also receives one compact, silent control entry as soon as delivery
+is enabled, even when its queue is empty or outside the scheduled window.
+The persistent preference database records its message ID before subsequent
+restarts can publish another entry. Uncertain sends and deleted/missing entries
+are reported as `entry:<channel_id>` errors for manual inspection, not retried.
+This closes the cutover gap where private admin previews worked but members had
+no buttons in the actual read-only news channels.
+
 At 19:00 Asia/Hong_Kong each category sends at most eight eligible articles.
 The existing 12:30 verified-expiry reminder window remains; without a reviewed
 offer there is no reminder. Empty categories do not send an empty card.
