@@ -65,6 +65,18 @@ def can_view(guild_id, roles, member, channel, owner_id=None):
     return bool(permissions & VIEW)
 
 
+def prompt_signature(prompt):
+    """Compare editable behavior, not read-only/default/null response metadata."""
+    options=[]
+    for option in prompt.get('options',[]):
+        emoji=option.get('emoji') or {}
+        options.append((str(option.get('id','')),option['title'],option.get('description') or '',
+            tuple(sorted(map(str,option.get('role_ids',[])))),tuple(sorted(map(str,option.get('channel_ids',[])))),
+            str(emoji.get('id') or ''),emoji.get('name') or ''))
+    return (str(prompt['id']),prompt['title'],bool(prompt.get('single_select')),bool(prompt.get('required')),
+            bool(prompt.get('in_onboarding')),tuple(sorted(options)))
+
+
 def overwrite_signature(overwrites):
     # Discord may return an equivalent overwrite set in a different list order.
     return sorted((str(o['id']),int(o['type']),int(o['allow']),int(o['deny'])) for o in overwrites)
