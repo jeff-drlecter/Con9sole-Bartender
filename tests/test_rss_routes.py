@@ -25,6 +25,10 @@ async def main():
         cog.category_delivery = True
         cog.digest_config = DigestConfig.from_dict(dict(channel_id=123, simulation=False, enabled=True))
         cog.sources = {'ps','xbox','4gamers'}
+        cog.store_news = object()
+        cog.store_news_public = False
+        assert not cog.store_news_available(S(channel_id=123))
+        cog.store_news = None
         cog.preferences = PreferenceStore(Path(tmp)/'prefs.db')
         cog.store = DigestStore(Path(tmp)/'all.db')
         cog.route_stores = {k:DigestStore(Path(tmp)/(k+'.db')) for k in ROUTES}
