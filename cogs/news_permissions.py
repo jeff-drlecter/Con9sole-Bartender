@@ -9,6 +9,7 @@ from discord.ext import commands
 
 import config
 from core.news_channel_ui import settings
+from core.news_channel_inventory import fetch_news_channels
 from features import anti_scam_fix as journal, news_permissions as policy
 from features.language_preferences import language
 
@@ -57,7 +58,7 @@ class NewsPermissions(commands.Cog):
         async with audit.lock:
             try:
                 if action == 'preview':
-                    plan = policy.build(await inter.guild.fetch_roles(), await inter.guild.fetch_channels(),
+                    plan = policy.build(await inter.guild.fetch_roles(), await fetch_news_channels(inter.guild),
                                         inter.guild_id, inter.user.id, settings())
                     await asyncio.to_thread(journal.save, plan)
                 else:

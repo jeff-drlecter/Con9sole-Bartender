@@ -36,3 +36,11 @@ restore, changed snapshots, authority revocation, ambiguous HTTP/write outcomes,
 restore conflicts, member/unknown role grants, missing/synced channels, invalid
 roles, official-channel exclusion and panel ownership. These are program tests,
 not ordinary-member or iPhone visibility tests.
+
+Live validation exposed an unrelated type-20 channel that causes discord.py's
+`Guild.fetch_channels` to reject the entire guild response. News controls now use
+a fresh raw channel inventory through the existing Bot HTTP client. Every
+unrelated channel's explicit overwrites remain in scope checks, including unknown
+types; only the three known text/announcement channels become editable objects.
+An unknown type on a news target still fails closed. This also repairs the member
+news selector's inventory read. Other subsystems' inventory readers are unchanged.
