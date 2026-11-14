@@ -36,6 +36,14 @@ async def main():
         base=f'guilds/{config.GUILD_ID}'
         guild=await api('GET',base)
         roles=await api('GET',base+'/roles')
+        identity=await api('GET','users/@me')
+        me=await api('GET',base+f"/members/{identity['id']}")
+        permissions=0
+        for role in roles:
+            if role['id']==str(config.GUILD_ID) or role['id'] in me['roles']:
+                permissions|=int(role['permissions'])
+        if not (permissions & 8) and permissions & ((1<<28)|32|16)!=((1<<28)|32|16):
+            raise ValueError('Bot lacks required onboarding/role/channel management permissions')
         before=await api('GET',base+'/onboarding')
         channels={k:await api('GET',f'channels/{cid}') for k,cid in CHANNELS.items()}
         if any(c['guild_id']!=str(config.GUILD_ID) or c['type'] not in (0,5) for c in channels.values()):
@@ -76,15 +84,34 @@ async def main():
         fresh=await api('GET',base+'/onboarding')
         if fresh!=before: raise ValueError('Onboarding changed during preparation; not overwritten')
         wanted=category_prompts(before['prompts'],selected)
-        # Retain existing readers per platform; unrelated roles are never replaced.
-        for key,reader_ids in current_readers.items():
-            for member in members:
-                if member['user']['id'] not in reader_ids or member['user'].get('bot') or set(member['roles']) & privileged or member['user']['id']==guild['owner_id']:
-                    continue
+        planned=sum(1 for key,reader_ids in current_readers.items() for m in members
+                    if m['user']['id'] in reader_ids and not m['user'].get('bot')
+                    and not set(m['roles']) & privileged and m['user']['id']!=guild['owner_id']
+                    and selected[key] not in m['roles'])
+        print(json.dumps({'news_category_phase':'assignments','remaining':planned}),flush=True)
+        completed=0
+        # Bounded workers; reread each member once and only add missing roles.
+        # Never replace a whole role list or replay completed assignments on resume.
+        semaphore=asyncio.Semaphore(3)
+        async def preserve_member(member):
+            nonlocal completed
+            if member['user'].get('bot') or set(member['roles']) & privileged or member['user']['id']==guild['owner_id']:
+                return
+            needed=[key for key,reader_ids in current_readers.items()
+                    if member['user']['id'] in reader_ids and selected[key] not in member['roles']]
+            if not needed: return
+            async with semaphore:
                 current_member=await api('GET',base+f"/members/{member['user']['id']}")
-                if not can_view(config.GUILD_ID,roles,current_member,channels[key],guild['owner_id']):
-                    continue # do not restore a news opt-out made during migration
-                await api('PUT',base+f"/members/{member['user']['id']}/roles/{selected[key]}")
+                for key in needed:
+                    if not can_view(config.GUILD_ID,roles,current_member,channels[key],guild['owner_id']):
+                        continue
+                    if selected[key] not in current_member['roles']:
+                        await api('PUT',base+f"/members/{member['user']['id']}/roles/{selected[key]}")
+                    completed+=1
+                    if completed%50==0:
+                        print(json.dumps({'news_category_phase':'assignments','completed':completed,'planned':planned}),flush=True)
+        await asyncio.gather(*(preserve_member(member) for member in members))
+        print(json.dumps({'news_category_phase':'channel_permissions','assignments_completed':completed}),flush=True)
         for key,channel in channels.items():
             fresh=await api('GET',f"channels/{channel['id']}")
             if fresh['permission_overwrites']!=channel['permission_overwrites']:
