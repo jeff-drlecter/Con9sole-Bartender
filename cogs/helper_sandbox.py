@@ -32,6 +32,11 @@ class HelperPanel(discord.ui.View):
     async def live(self,i,button):
         await show_overview(self.cog,i)
 
+    @discord.ui.button(label='待開局／招募未滿',custom_id='helper:plans:v1',row=0)
+    async def plans(self,i,button):
+        from core.helper_plans import show_plans
+        await show_plans(self.cog,i)
+
     @discord.ui.button(label='查看示例',custom_id='helper:sandbox:create:v1',row=2)
     async def create(self,i,button):
         await i.response.send_message('【虛構 log 示例】\n20:10 · MH｜💬 3 人、12 則 · 🆘 1 則疑似求助\n20:12 · FC｜🎙️ 1 個 call、4 人\n20:14 · GTA｜🤝 1 則搵隊友',ephemeral=True)
@@ -326,7 +331,8 @@ class HelperSandbox(commands.Cog):
 
     async def demo_embed(self):
         from core.helper_dashboard import dashboard_embed
-        return dashboard_embed(self)
+        from core.helper_plans import shared_counts
+        return dashboard_embed(self, plans=await shared_counts(self))
 
     async def publish_pulse(self):
         if not self.pulse or not self.channel: return
