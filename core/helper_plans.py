@@ -20,7 +20,7 @@ def public_source(channel, *, voice=False):
     A role-gated game area is NOT public merely because the Bot can read it.
     Do not infer authorization from channel/category names or cached members.
     """
-    if not channel or isinstance(channel, discord.Thread):
+    if not channel or isinstance(channel, discord.Thread) or getattr(channel, 'nsfw', False):
         return False
     try:
         needed = ('view_channel', 'connect') if voice else ('view_channel', 'read_message_history')
@@ -82,26 +82,20 @@ async def shared_counts(cog):
 
 
 async def fresh_access(cog, interaction):
-    """Recheck Dashboard access as well as source access on every private action."""
-    if (not cog.enabled or cog.channel is None or interaction.guild_id != config.GUILD_ID
-            or interaction.guild is None or interaction.channel_id != cog.channel.id):
-        return None
-    try:
-        member = await interaction.guild.fetch_member(interaction.user.id)
-        channel = await interaction.guild.fetch_channel(cog.channel.id)
-    except discord.HTTPException:
-        return None
-    p = channel.permissions_for(member)
-    roles = {*config.HELPER_ROLE_IDS, cog.tester_id}
-    if (channel.guild.id == config.GUILD_ID and p.view_channel and p.read_message_history
-            and (member.guild_permissions.administrator or any(r.id in roles for r in member.roles))):
-        return member
-    return None
+    from core.helper_access import member_for
+    return await member_for(cog, interaction)
 
 
 async def authorized_status(plans, guild, user_id, key):
     before = plans.book.get(key)
     if not before or not relevant(before, guild.id, time.time()):
+        return None
+    try:
+        source = await guild.fetch_channel(before['channel'])
+        if (not isinstance(source, discord.TextChannel) or source.guild.id != guild.id
+                or source.nsfw):
+            return None
+    except discord.HTTPException:
         return None
     summary = await plans.member_status(guild, user_id, key)
     current = plans.book.get(key)
@@ -117,7 +111,7 @@ def clean(value):
 
 
 def detail(summary, member=None):
-    state = {'open':'預約中', 'due':'待開局', 'gathering':'集合中', 'live':'進行中'}[summary['status']]
+    state = {'open':'預約中', 'due':'待開局', 'gathering':'集合中', 'live':'語音已開局'}[summary['status']]
     total = summary['party'] + summary['registered']
     capacity = summary['capacity']
     missing = '未設定目標人數' if capacity is None else f'尚欠 {max(0, capacity-total)} 人'

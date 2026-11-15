@@ -42,7 +42,7 @@ async def main():
     assert len(card)<6000
     assert [f.name for f in card.fields][0]=='🆘 需要接應'
     assert '虛構示例' in example_overview(now).title
-    cog=SimpleNamespace(window=SimpleNamespace(started=now),live_embed=lambda member:activity,attention_lines=lambda member,now:[],access=AsyncMock(return_value=True))
+    cog=SimpleNamespace(window=SimpleNamespace(started=now),private_activity=AsyncMock(return_value=(activity,[])),access=AsyncMock(return_value=True))
     view=OverviewView(cog,1)
     i=SimpleNamespace(user=SimpleNamespace(id=1),response=SimpleNamespace(defer=AsyncMock(),send_message=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()),edit_original_response=AsyncMock())
     assert await view.interaction_check(i)

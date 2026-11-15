@@ -1,5 +1,7 @@
 # 04 → 01／06：社群成效統計及獎勵 review
 
+> **2026-11-15 狀態校正：** 原統計已隨 #171 合併為 2922760，Fly Deploy 43635343478 success。以下是原 review 歷史；本輪改房間開局率、補自然語音及觀測覆蓋，詳見新交接。 本輪完整現況／待決／驗收界線以 [COMMUNITY_ROUND2.md](COMMUNITY_ROUND2.md) 及整合 PR 的部署證據為準。
+
 ## 基準、授權與交付
 
 核對 main `fa433dd80dd8dcf24313d06277e74e87d58b8f06`，03 Draft PR #166 head `5ca1a9c90141c732ac60ec7cb493ee8be2612253` 及 `docs/SIGNUP_TO_START_HANDOFF.md`。03 尚未合併；本分支不猜測已部署。使用既有 PlanBook `live/ended + session` 關聯，唯讀讀取 SquadCards 當下成員；不改提醒、語音開局、收據或約局狀態機。沒有使用 02 的成員摘要作出席證據（其 attendance=None）。

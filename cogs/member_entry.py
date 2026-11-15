@@ -12,7 +12,7 @@ from core.storage_paths import DATA_DIR
 
 ENTRY_COPY = (
     '🎮 **找隊友，約一局**\n'
-    '先選擇遊戲，再開啟功能或發起預約。沒有合適遊戲也可向 Helper 查詢。\n'
+    '選擇遊戲後約一局；找不到合適遊戲可按「求助／建議」，或先觀望。\n'
     '下方操作只向自己顯示；提交約局後才會在所選頻道公開。'
 )
 GUIDE_NAMES = {'bartender使用指南', '組隊與語音指南', '如何加入不同遊戲分區✅'}
@@ -37,8 +37,9 @@ class MemberEntryView(SafeView):
     def __init__(self):
         super().__init__(timeout=None)
         for action, label in [('games', '🎮 選擇遊戲'), ('menu', '🍸 開啟功能'),
-                              ('plan', '📅 約一局'), ('language', '🌐 語言設定')]:
-            button = discord.ui.Button(label=label, custom_id=f'entry:{action}:v1', row=0 if action in {'games', 'menu'} else 1)
+                              ('plan', '📅 約一局'), ('language', '🌐 語言設定'),
+                              ('help', '求助／建議'), ('observe', '先觀望')]:
+            button = discord.ui.Button(label=label, custom_id=f'entry:{action}:v1', row=0 if action in {'games', 'menu'} else 2 if action in {'help', 'observe'} else 1)
             async def callback(interaction, action=action):
                 await self.open(interaction, action)
             button.callback = callback
@@ -49,10 +50,9 @@ class MemberEntryView(SafeView):
                 or not interaction.channel.permissions_for(interaction.user).view_channel):
             await interaction.response.send_message('請在可查看的社群頻道使用。', ephemeral=True)
             return
-        if action == 'games':
-            await interaction.response.send_message(
-                '🎮 前往 <id:customize> 選擇遊戲。未選擇時，部分遊戲討論區及語音不會開放。\n'
-                '找不到想玩的遊戲，可選「暫不選擇／找不到想玩的遊戲」並向 Helper 查詢。', ephemeral=True)
+        if action in {'games', 'help', 'observe'}:
+            from core.newcomer_routes import show_route
+            await show_route(interaction, action)
             return
         name = {'menu': 'Menu', 'plan': 'SquadPlans', 'language': 'LanguagePreferences'}[action]
         cog = interaction.client.get_cog(name)

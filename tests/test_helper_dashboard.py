@@ -42,6 +42,10 @@ class DashboardTests(unittest.TestCase):
                 cog.refresh.assert_awaited_once()
                 channel.send.assert_not_called()
                 channel.edit.assert_not_called()
+                cog.store.set('dashboard_panel','')
+                with self.assertRaises(RuntimeError): await cog.bootstrap()
+                channel.send.assert_not_called()
+                cog.store.set('dashboard_panel','999')
                 for change in ('saved_identity','guild','public','helper_history'):
                     cog.store.set('dashboard_channel',ROOM_ID)
                     guild.id=config.GUILD_ID

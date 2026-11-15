@@ -100,7 +100,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_entry_is_persistent_and_opens_private_personal_menu(self):
         view = MemberEntryView()
         self.assertTrue(view.is_persistent())
-        self.assertEqual(len({b.custom_id for b in view.children}), 4)
+        self.assertEqual(len({b.custom_id for b in view.children}), 6)
         i = interaction(channel(2, 'bartender使用指南', writable=False))
         menu = N(open_main_menu=AsyncMock())
         i.client = N(get_cog=lambda name: menu if name == 'Menu' else None)

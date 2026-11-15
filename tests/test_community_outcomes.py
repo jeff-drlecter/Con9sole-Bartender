@@ -168,3 +168,86 @@ class InventoryTests(unittest.TestCase):
             store=Outcomes(Path(tmp)/'stats.sqlite3')
             r=store.report(1,[dict(id='p',guild=1,channel=1,created_at=1,start=2,status='posting')],0,10000)
             self.assertEqual((r['new'],r['unpublished'],r['excluded']),(0,1,0))
+
+
+class RoundTwoEvidenceTests(unittest.TestCase):
+    setUp = OutcomesTests.setUp
+    plan = OutcomesTests.plan
+    report = OutcomesTests.report
+
+    def test_state_contract_never_turns_intent_or_legacy_into_attendance(self):
+        from features.squad_outcome_state import evidence, session_origin
+        for state in ('open','due','gathering','history','started'):
+            result=evidence(self.plan(status=state, members=[1,2], party=8), as_of=self.now)
+            self.assertEqual(result['outcome'], 'unknown')
+            self.assertIsNone(result['attendance'])
+            self.assertIsNone(result['co_participation'])
+        self.assertEqual(session_origin(dict(id='s',message=123),None,1), 'natural')
+        self.assertEqual(session_origin(dict(id='s',message=123,plan_id='missing'),None,1), 'unknown')
+        self.assertEqual(session_origin(dict(id='s'),None,1), 'waiting')
+
+    def test_natural_is_separate_and_sequential_people_do_not_imply_coplay(self):
+        self.store.observe(1,'natural',None,[human(1)])
+        self.now += 60
+        self.store.observe(1,'natural',None,[human(2)])
+        r=self.report([self.plan()])
+        self.assertEqual((r['attendance'],r['natural_sessions'],r['natural_attendance']), (0,1,2))
+        self.assertEqual(r['opened'],1)
+        self.assertIn('共同參與門檻尚未啟用', display(r))
+        self.assertIn('出席未知（沒有可用觀測）', display(r))
+        self.assertNotIn('成局率',display(r))
+        self.assertIn('暫時冇可用觀測',display(r,'hk'))
+        self.assertLess(len(display(r)), 2000)
+
+    def test_observation_clock_coverage_and_test_natural_exclusion(self):
+        self.store.heartbeat('run-a',success=True)
+        self.now += 100
+        self.store=Outcomes(self.path,clock=lambda:self.now)
+        self.store.heartbeat('run-b',success=False)
+        self.store.observe(1,'test-natural',None,[human(2)],test=True)
+        r=self.report([])
+        self.assertEqual((r['last_success'],r['observation_failures'],r['natural_sessions']), (200000,1,0))
+        self.assertEqual(r['natural_since'], 200000)
+        # Restart failures cannot establish any observation during the gap.
+        self.assertIn('重啟／漏接未知', display(r))
+
+    def test_session_uniques_are_not_concurrent_and_period_is_half_open(self):
+        self.store.observe(1,'s1','a',[human(1)])
+        self.now+=1
+        self.store.observe(1,'s1','a',[human(2)])
+        r=self.report([self.plan(),self.plan('at-end',created_at=self.now)])
+        self.assertEqual((r['new'],r['per_session'],r['attendance']), (1,[2],2))
+        self.assertIsNone(__import__('features.squad_outcome_state',fromlist=['evidence']).evidence(self.plan(),as_of=self.now)['co_participation'])
+
+
+class RoundTwoPrivateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_report_is_private_unknown_not_zero(self):
+        from cogs.community_outcomes import CommunityOutcomes
+        cog=object.__new__(CommunityOutcomes)
+        cog.authorized=AsyncMock(return_value=True)
+        cog.bot=NS(get_cog=lambda _: NS(book=NS(all=lambda: [])))
+        cog.excluded=set()
+        def broken(*a,**k): raise OSError('fixture unavailable')
+        cog.store=NS(report=broken)
+        inter=NS(guild_id=1,guild=NS(),user=human(1),response=NS(defer=AsyncMock()),followup=NS(send=AsyncMock()))
+        await CommunityOutcomes.report.callback(cog,inter)
+        self.assertTrue(inter.followup.send.call_args.kwargs['ephemeral'])
+        self.assertIn('未將缺漏當作零', inter.followup.send.call_args.args[0])
+
+    async def test_natural_sampler_never_recovers_accumulated_roster_or_unknown_link(self):
+        from cogs.community_outcomes import CommunityOutcomes
+        cog=object.__new__(CommunityOutcomes)
+        channel=NS(id=10,name='普通遊戲',category=None,members=[human(3)])
+        session=dict(id='s1',message=123,participants={'777':'historical'})
+        cards=NS(state={'sessions':{'10':session}})
+        plans=NS(book=NS(get=lambda _:None))
+        guild=NS(id=1,afk_channel=None,get_channel=lambda _:channel)
+        cog.bot=NS(is_ready=lambda:True,get_guild=lambda _:guild,get_cog=lambda n:cards if n=='SquadCards' else plans)
+        cog.excluded=set()
+        with tempfile.TemporaryDirectory() as tmp:
+            cog.store=Outcomes(Path(tmp)/'out.sqlite3',clock=lambda:100)
+            await cog.observe()
+            session['plan_id']='missing';channel.members=[human(4)]
+            await cog.observe()
+            r=cog.store.report(1,[],0,101)
+            self.assertEqual((r['natural_sessions'],r['natural_attendance']), (1,1))

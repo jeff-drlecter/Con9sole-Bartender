@@ -1,3 +1,7 @@
+# Round 2 update
+
+See [HELPER_ENTRY_ROUND2.md](HELPER_ENTRY_ROUND2.md) for the current Bot authorization and retired pulse policy. Tester channel overwrites described below are historical and require a separate private audit; they are not a requirement for startup.
+
 # Helper 社群動態 Dashboard
 
 Channel: `1570639281225994301` (`📊｜社群動態`) under 管理團隊.
