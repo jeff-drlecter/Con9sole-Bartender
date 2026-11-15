@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from core.channel_names import plain_channel_name, is_squad_chat_name
 from features.wording import modal_copy as wording_modal, view_copy as wording_view
 from core.permissions import is_server_admin, is_verified_member
 from core.storage_paths import DATA_DIR
@@ -72,9 +73,9 @@ def game_hint(channel):
 
 def squad_channel(channel):
     return isinstance(channel, discord.TextChannel) and getattr(channel, 'category_id', None) != config.TEMPLATE_CATEGORY_ID and (
-        channel.name.endswith('-吹水組隊') or channel.name == '公海吹水'
+        is_squad_chat_name(channel.name) or plain_channel_name(channel.name) == '公海吹水'
         or ('測試' in getattr(getattr(channel, 'category', None), 'name', '')
-            and channel.name.endswith('體驗交流'))
+            and plain_channel_name(channel.name).endswith('體驗交流'))
     )
 
 

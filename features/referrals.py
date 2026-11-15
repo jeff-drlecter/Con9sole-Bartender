@@ -9,8 +9,9 @@ SOURCE_CHANNELS = {
     'threads-invitation': 'Threads', 'discord-invitation': 'Discord',
     'ttv-invitation': 'Twitch', 'psn-invitation': 'PSN', 'ig-invitation': 'Instagram',
     'wwm-invitation': 'WWM', 'yt-invitation': 'YouTube', 'lihkg-invitation': 'LIHKG',
-    'rules': '其他：rules', '接待大堂（sorting-hat）': '其他：接待大堂',
+    'rules': '其他：rules', 'rules📜': '其他：rules', '接待大堂（sorting-hat）': '其他：接待大堂',
     '🆔留game-tag（非聊天）': '其他：留 game tag',
+    '留game-tag（非聊天）🆔': '其他：留 game tag',
 }
 
 
