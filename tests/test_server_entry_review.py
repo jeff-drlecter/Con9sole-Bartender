@@ -54,7 +54,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         with patch('cogs.squad_plans.is_verified_member', return_value=True):
             await SquadPlans.choose_destination(N(), i)
         self.assertIn('<id:customize>', i.response.send_message.await_args.args[0])
-        self.assertNotIn('view', i.response.send_message.await_args.kwargs)
+        self.assertIn('view', i.response.send_message.await_args.kwargs)
 
     async def test_ended_plan_roster_is_read_only_and_rechecks_source_permissions(self):
         with tempfile.TemporaryDirectory() as folder:
