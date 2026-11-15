@@ -63,3 +63,12 @@ class ChannelEmojiTests(unittest.TestCase):
                          [('123',dict(name='站務-意見箱📮'))])
         snap['channels'].append(channel(124,'站務-意見箱'))
         self.assertEqual(build_plan(snap,'all')['actions'],[])
+
+    def test_information_emoji_has_letter_category_but_exact_target_is_idempotent(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(123,'官方資訊-discordℹ️')])
+        plan=build_plan(snap,'all')
+        self.assertEqual(plan['actions'],[])
+        self.assertEqual(plan['unchanged'],1)
+        self.assertFalse(any(x.startswith('官方資訊-discord:') for x in plan['blocked']))
+        snap['channels'].append(channel(124,'官方資訊-discord'))
+        self.assertIn('官方資訊-discord: missing or ambiguous',build_plan(snap,'all')['blocked'])

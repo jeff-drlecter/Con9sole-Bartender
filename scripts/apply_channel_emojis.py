@@ -50,7 +50,7 @@ def build_plan(snapshot,scope):
             add(c,c['name'].removesuffix('💬').rstrip()+'💬','squad_chat')
     if scope=='all':
         for base,emoji in PROPOSED.items():
-            matches=[c for c in eligible if plain_channel_name(c['name'])==base]
+            matches=[c for c in eligible if c['name']==base+emoji or plain_channel_name(c['name'])==base]
             if len(matches)!=1:
                 plan['blocked'].append(base+': missing or ambiguous');continue
             if base in KNOWN_IDS and str(matches[0]['id'])!=KNOWN_IDS[base]:
