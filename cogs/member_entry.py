@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from core.channel_names import plain_channel_name, is_squad_chat_name
 from core.permissions import is_server_admin
 from core.ui import SafeView
 from core.json_storage import atomic_write_json
@@ -15,7 +16,7 @@ ENTRY_COPY = (
     '選擇遊戲後約一局；找不到合適遊戲可按「求助／建議」，或先觀望。\n'
     '下方操作只向自己顯示；提交約局後才會在所選頻道公開。'
 )
-GUIDE_NAMES = {'bartender使用指南', '組隊與語音指南', '如何加入不同遊戲分區✅'}
+GUIDE_NAMES = {'bartender使用指南', '組隊與語音指南', '如何加入不同遊戲分區'}
 
 
 def game_entry_moves(guild):
@@ -23,7 +24,7 @@ def game_entry_moves(guild):
     for category in guild.categories:
         if category.id == config.TEMPLATE_CATEGORY_ID or category.name in {'封存', 'sample-template'}:
             continue
-        chats = [c for c in category.text_channels if c.name.endswith('-吹水組隊')]
+        chats = [c for c in category.text_channels if is_squad_chat_name(c.name)]
         if len(chats) != 1:
             continue
         chat = chats[0]
@@ -114,7 +115,7 @@ class MemberEntry(commands.Cog):
                 or not is_server_admin(await guild.fetch_member(interaction.user.id))):
             await interaction.response.send_message('只限本社群管理員。', ephemeral=True)
             return
-        if not isinstance(channel, discord.TextChannel) or channel.name not in GUIDE_NAMES:
+        if not isinstance(channel, discord.TextChannel) or plain_channel_name(channel.name) not in GUIDE_NAMES:
             await interaction.response.send_message('請在遊戲加入指南、組隊與語音指南或 bartender使用指南設定入口。', ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)

@@ -1,0 +1,56 @@
+from copy import deepcopy
+from types import SimpleNamespace as N
+import unittest
+from unittest.mock import patch
+import config
+from core.channel_names import plain_channel_name, is_squad_chat_name
+from scripts.apply_channel_emojis import build_plan,GUILD
+from cogs.squad_plans import squad_channel
+from cogs.member_entry import game_entry_moves,GUIDE_NAMES
+from features.referrals import SOURCE_CHANNELS
+
+
+def channel(cid,name,kind=0,parent='7'):
+    return dict(id=str(cid),guild_id=GUILD,name=name,type=kind,parent_id=parent,position=0,
+                permission_overwrites=[dict(id=GUILD,type=0,allow='0',deny='1024')])
+
+class ChannelEmojiTests(unittest.TestCase):
+    def test_squad_eligibility_old_and_new_names_keep_same_gates(self):
+        class Text:
+            def __init__(self,name,parent=7,category_name='game'):
+                self.name=name;self.category_id=parent;self.category=N(name=category_name)
+        with patch('cogs.squad_plans.discord.TextChannel',Text):
+            for name in ('fc-吹水組隊','fc-吹水組隊💬','🏀nba-吹水組隊💬'):
+                self.assertTrue(squad_channel(Text(name)))
+                self.assertFalse(squad_channel(Text(name,config.TEMPLATE_CATEGORY_ID)))
+            self.assertFalse(squad_channel(Text('fc-吹水組隊-archive')))
+            self.assertFalse(squad_channel(Text('fc-吹水組隊🔒')))
+            self.assertTrue(squad_channel(Text('體驗交流💬',category_name='功能測試區')))
+            self.assertFalse(squad_channel(Text('體驗交流💬')))
+    def test_game_order_and_existing_guides_remain_recognized(self):
+        first=N(id=1,name='official',position=0,_sorting_bucket=0)
+        chat=N(id=2,name='fc-吹水組隊💬',position=1,_sorting_bucket=0)
+        cat=N(id=7,name='FC',text_channels=[first,chat],channels=[first,chat])
+        self.assertEqual(game_entry_moves(N(categories=[cat])),[chat])
+        for name in ('如何加入不同遊戲分區✅','如何加入不同遊戲分區🧭'):
+            self.assertIn(plain_channel_name(name),GUIDE_NAMES)
+        self.assertEqual(SOURCE_CHANNELS['rules'],SOURCE_CHANNELS['rules📜'])
+        self.assertEqual(SOURCE_CHANNELS['🆔留game-tag（非聊天）'],SOURCE_CHANNELS['留game-tag（非聊天）🆔'])
+    def test_name_only_idempotent_and_excludes_voice_template_archive(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(7,'game',4,None),channel(8,'存檔區',4,None),
+            channel(1,'🏀nba-吹水組隊'),channel(2,'fc-吹水組隊💬'),channel(3,'voice-吹水組隊',2),
+            channel(4,'template-吹水組隊',parent=str(config.TEMPLATE_CATEGORY_ID)),channel(5,'old-吹水組隊',parent='8')])
+        before=deepcopy(snap);plan=build_plan(snap,'chats')
+        self.assertEqual(snap,before)
+        self.assertEqual((len(plan['actions']),plan['unchanged'],plan['matched_chats']),(1,1,2))
+        self.assertEqual(plan['actions'][0]['body'],dict(name='🏀nba-吹水組隊💬'))
+        snap['channels'][2]['name']='🏀nba-吹水組隊💬'
+        self.assertEqual(build_plan(snap,'chats')['actions'],[])
+    def test_fixed_names_need_unique_identity_and_never_rename_category(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(config.RULES_CHANNEL_ID,'rules'),
+             channel(2,'📺成員直播',5),channel(3,'成員直播',4),channel(4,'🧪｜體驗交流'),channel(5,'體驗交流💬')])
+        plan=build_plan(snap,'all');names={a['body']['name'] for a in plan['actions']}
+        self.assertEqual(names,{'rules📜','成員直播📺'})
+        self.assertIn('體驗交流: missing or ambiguous',plan['blocked'])
+        snap['channels'][0]['id']='99'
+        self.assertIn('rules: configured ID differs',build_plan(snap,'all')['blocked'])
