@@ -39,7 +39,7 @@ class PulseTests(unittest.TestCase):
             store.record('chat:3',2001,10,100,'chat',1,3)
             self.assertIsNotNone(store.claim(2041))
 
-    def test_shared_log_contains_only_eligible_game_metadata(self):
+    def test_retired_publisher_preserves_pending_history_without_sending(self):
         import subprocess,sys
         result=subprocess.run([sys.executable,'-c',r'''
 import asyncio,tempfile,os
@@ -76,14 +76,14 @@ async def main():
    cog.store.observe(3,11,1,130,'求助',130)
    cog.pulse.record('voice:1',140,10,0,'voice',value=dict(rooms=1,people=4))
    await cog.publish_pulse()
-   sent=cog.channel.send.call_args
-   assert '💬 1 人、1 則' in sent.args[0]
-   assert '🆘 1 則疑似求助' in sent.args[0]
-   assert '🎙️ 1 個 call、4 人' in sent.args[0]
-   assert 'private' not in sent.args[0] and '<@' not in sent.args[0]
-   assert sent.kwargs['allowed_mentions'].everyone is False
+   cog.channel.send.assert_not_awaited()
    await cog.publish_pulse()
-   assert cog.channel.send.await_count==1
+   await cog.record_pulse(SimpleNamespace(), 'chat')
+   await cog.record_voice_pulse(guild, 10)
+   cog.channel.send.assert_not_awaited()
+   with cog.pulse.connect() as db:
+    assert db.execute('SELECT COUNT(*) FROM pulse_events').fetchone()[0] == 4
+    assert db.execute('SELECT COUNT(*) FROM pulse_batches').fetchone()[0] == 0
 asyncio.run(main())
 '''],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

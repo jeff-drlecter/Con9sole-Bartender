@@ -61,14 +61,18 @@ async def main():
         cog.store=HelperStore(Path(tmp)/'helper.db')
         cog.enabled=True
         cog.tester_id=55
-        cog.channel=SimpleNamespace(id=123,permissions_for=lambda member:SimpleNamespace(view_channel=True))
-        member=SimpleNamespace(id=1,guild_permissions=SimpleNamespace(administrator=False),roles=[SimpleNamespace(id=55)])
-        i=SimpleNamespace(user=member,guild_id=config.GUILD_ID,channel_id=123,response=SimpleNamespace(send_message=AsyncMock()))
+        cog.channel=SimpleNamespace(id=123,permissions_for=lambda member:SimpleNamespace(view_channel=True,read_message_history=True))
+        member=SimpleNamespace(id=1,guild_permissions=SimpleNamespace(administrator=False),roles=[SimpleNamespace(id=config.HELPER_ROLE_IDS[0])])
+        i=SimpleNamespace(user=member,guild_id=config.GUILD_ID,channel_id=123,response=SimpleNamespace(send_message=AsyncMock(),is_done=lambda:False))
+        i.guild=SimpleNamespace(id=config.GUILD_ID,voice_channels=[],fetch_member=AsyncMock(return_value=member),fetch_channel=AsyncMock(return_value=cog.channel))
+        cog.channel.guild=i.guild
         with patch('cogs.helper_sandbox.discord.Member',SimpleNamespace):
             assert await cog.access(i)
             member.roles=[]
             assert not await cog.access(i)
             member.roles=[SimpleNamespace(id=55)]
+            assert not await cog.access(i)
+            member.roles=[SimpleNamespace(id=config.HELPER_ROLE_IDS[0])]
             i.channel_id=999
             assert not await cog.access(i)
             i.channel_id=123

@@ -13,8 +13,7 @@ from core.helper_sandbox import ActivityWindow
 from core.helper_detection import DetectionStore,detect_help
 from core.helper_detection_ui import show_pending
 from core.helper_overview import show_overview,example_overview,BackToOverview
-from core.helper_pulse import PulseStore,summarize,fragments
-from zoneinfo import ZoneInfo
+from core.helper_access import member_for, source_for, DEMO_ROOM_ID
 
 log=logging.getLogger(__name__)
 ROOM_ID=1570639281225994301
@@ -26,7 +25,11 @@ class HelperPanel(discord.ui.View):
         super().__init__(timeout=None)
         self.cog=cog
 
-    async def interaction_check(self,i): return await self.cog.access(i)
+    async def interaction_check(self,i):
+        if (i.channel_id == DEMO_ROOM_ID
+                and (i.data or {}).get('custom_id') == 'helper:sandbox:create:v1'):
+            return await self.cog.access(i, demo=True)
+        return await self.cog.access(i)
 
     @discord.ui.button(label='我的總覽',custom_id='helper:sandbox:live:v1',style=discord.ButtonStyle.primary,row=0)
     async def live(self,i,button):
@@ -39,7 +42,11 @@ class HelperPanel(discord.ui.View):
 
     @discord.ui.button(label='查看示例',custom_id='helper:sandbox:create:v1',row=2)
     async def create(self,i,button):
-        await i.response.send_message('【虛構 log 示例】\n20:10 · MH｜💬 3 人、12 則 · 🆘 1 則疑似求助\n20:12 · FC｜🎙️ 1 個 call、4 人\n20:14 · GTA｜🤝 1 則搵隊友',ephemeral=True)
+        if i.channel_id == DEMO_ROOM_ID:
+            if not await self.cog.access(i, demo=True): return
+        elif not await self.cog.access(i): return
+        await i.response.send_message(embed=example_overview(time.time()), ephemeral=True,
+                                      allowed_mentions=discord.AllowedMentions.none())
 
     @discord.ui.button(label='待接應',custom_id='helper:sandbox:manage:v1',style=discord.ButtonStyle.success,row=0)
     async def manage(self,i,button):
@@ -112,15 +119,13 @@ class HelperSandbox(commands.Cog):
     async def cog_load(self):
         if not self.enabled: return
         self.store=DetectionStore(DATA_DIR/'helper_sandbox.sqlite3')
-        self.pulse=PulseStore(DATA_DIR/'helper_pulse.sqlite3')
-        await asyncio.to_thread(self.store.set,'pulse_version','1')
+        await asyncio.to_thread(self.store.set,'pulse_version','disabled-round2')
         await asyncio.to_thread(self.store.set,'detector_version','1')
         await asyncio.to_thread(self.store.set,'overview_version','1')
         self.panel=HelperPanel(self)
         self.bot.add_view(self.panel)
         self.tick.start()
         self.backfill.start()
-        self.pulse_tick.start()
 
     async def cog_unload(self):
         self.pulse_tick.cancel()
@@ -162,10 +167,6 @@ class HelperSandbox(commands.Cog):
         if isinstance(message.channel,discord.Thread) and message.id!=message.channel.id:
             await asyncio.to_thread(self.store.reply,message.channel.id,message.author.id)
         await asyncio.to_thread(self.store.observe,message.id,message.channel.id,message.author.id,message.created_at.timestamp(),detect_help(self.help_text(message)),time.time())
-        if emit and self.pulse and detect_help(self.help_text(message)):
-            row=await asyncio.to_thread(self.store.detection,message.id)
-            if row and row['state'] in {'open','claimed','handoff'}:
-                await self.record_pulse(message,'help')
 
     def pulse_source(self,channel):
         if not self.help_source(channel): return False
@@ -174,18 +175,12 @@ class HelperSandbox(commands.Cog):
         name=(parent.category.name+' '+parent.name).casefold()
         return not any(word in name for word in ('admin','管理','hidden','archive','封存','金主','staff','private','私密','測試'))
 
-    async def record_pulse(self,message,kind):
-        if not self.pulse or not self.pulse_source(message.channel): return
-        parent=message.channel.parent if isinstance(message.channel,discord.Thread) else message.channel
-        key=f'{kind}:{message.id}'
-        if kind=='newcomer': key=f'newcomer:{message.author.id}:{int(time.time()//86400)}'
-        await asyncio.to_thread(self.pulse.record,key,time.time(),parent.category_id,message.channel.id,kind,message.author.id,message.id)
+    async def record_pulse(self, message, kind):
+        # Compatibility no-op: never accumulate a backlog for the retired publisher.
+        return
 
-    async def record_attention_pulse(self,message):
-        if not self.pulse or not self.pulse_source(message.channel): return
-        for kind in {'lfg','newcomer'}:
-            if any(r['message']==message.id and r['kind']==kind and not (kind=='lfg' and r['replied']) for r in self.window.attention):
-                await self.record_pulse(message,kind)
+    async def record_attention_pulse(self, message):
+        return
 
     def observe_attention(self,message):
         if not self.help_source(message.channel) or message.author.bot: return
@@ -222,8 +217,6 @@ class HelperSandbox(commands.Cog):
         if isinstance(message.channel,discord.TextChannel) and self.is_game(message.channel):
             self.window.add(message.channel.id,message.author.id,time.time())
         self.observe_attention(message)
-        await self.record_pulse(message,'chat')
-        await self.record_attention_pulse(message)
         await self.observe_help(message)
 
     @commands.Cog.listener()
@@ -276,35 +269,35 @@ class HelperSandbox(commands.Cog):
         if before.channel and not any(not m.bot for m in before.channel.members): self.window.voice_started.pop(before.channel.id,None)
         if after.channel and self.is_game(after.channel) and sum(not m.bot for m in after.channel.members)==1:
             self.window.voice_started.setdefault(after.channel.id,now)
-        for category_id in {c.category_id for c in (before.channel,after.channel) if c and c.name!=config.TEMP_VC_HUB_NAME}:
-            await self.record_voice_pulse(member.guild,category_id)
 
-    async def record_voice_pulse(self,guild,category_id):
-        if not self.pulse or category_id not in self.game_categories(guild): return
-        category=guild.get_channel(category_id)
-        if not category or any(w in category.name.casefold() for w in ('admin','管理','hidden','archive','封存','金主','staff')): return
-        occupied=[c for c in guild.voice_channels if c.category_id==category_id and c.name!=config.TEMP_VC_HUB_NAME and any(not m.bot for m in c.members)]
-        people={m.id for c in occupied for m in c.members if not m.bot}
-        now=time.time()
-        await asyncio.to_thread(self.pulse.record,f'voice:{category_id}:{int(now*1000000)}',now,category_id,0,'voice',0,0,dict(rooms=len(occupied),people=len(people)))
+    async def record_voice_pulse(self, guild, category_id):
+        return
 
-    async def access(self,i):
-        valid=(self.enabled and self.channel is not None and i.guild_id==config.GUILD_ID and i.channel_id==self.channel.id
-               and isinstance(i.user,discord.Member) and self.channel.permissions_for(i.user).view_channel
-               and (i.user.guild_permissions.administrator or any(r.id in {*config.HELPER_ROLE_IDS,self.tester_id} for r in i.user.roles)))
-        if not valid: await i.response.send_message(f'請到 <#{ROOM_ID}> 使用 Helper Dashboard。',ephemeral=True)
+    async def access(self, i, *, demo=False):
+        valid = await member_for(self, i, demo=demo) is not None
+        if not valid:
+            text = '目前無法使用此入口。正式功能只供有權限的 Helper；測試請使用原示範區的「查看示例」。'
+            if i.response.is_done():
+                await i.edit_original_response(content=text, embed=None, view=None)
+            else:
+                # Clear stale PRIVATE details, but never alter the shared Dashboard.
+                if getattr(getattr(i, 'message', None), 'flags', None) and i.message.flags.ephemeral:
+                    await i.response.edit_message(content=text, embed=None, view=None)
+                else:
+                    await i.response.send_message(text, ephemeral=True)
         return valid
 
     async def bootstrap(self):
         guild=self.bot.get_guild(config.GUILD_ID)
         if not guild: return
         rss=guild.get_channel(RSS_ROOM)
-        tester=discord.utils.get(guild.roles,name='🧪 Tester')
+        testers=[role for role in guild.roles if role.name=='🧪 Tester']
+        tester=testers[0] if len(testers)==1 else None
         helpers=[guild.get_role(r) for r in config.HELPER_ROLE_IDS]
         helpers=[r for r in helpers if r]
-        if not rss or not rss.category or not tester or not helpers or not guild.me: raise RuntimeError('Missing verified sandbox category/roles')
-        self.tester_id=tester.id
-        await asyncio.to_thread(self.store.set,'tester_role',tester.id)
+        if not helpers or not guild.me: raise RuntimeError('Missing Helper roles/bot')
+        self.tester_id=tester.id if tester else None
+        if tester: await asyncio.to_thread(self.store.set,'tester_role',tester.id)
         key=await asyncio.to_thread(self.store.get,'dashboard_channel')
         # Existing deployment: identify the owned channel by immutable identity.
         # Names/topics are editable display copy, not access or ownership markers.
@@ -315,17 +308,13 @@ class HelperSandbox(commands.Cog):
                 or channel.guild.id!=config.GUILD_ID
                 or channel.permissions_for(guild.default_role).view_channel):
             raise RuntimeError('Unsafe or missing helper sandbox target')
-        for role in [tester,*helpers]:
+        for role in helpers:
             if not channel.permissions_for(role).view_channel or not channel.permissions_for(role).read_message_history:
-                raise RuntimeError('Helper/Tester sandbox access missing')
+                raise RuntimeError('Helper Dashboard access missing')
         await asyncio.to_thread(self.store.set,'dashboard_channel',ROOM_ID)
         self.channel=channel
         message_id=await asyncio.to_thread(self.store.get,'dashboard_panel')
-        if not message_id:
-            if not await asyncio.to_thread(self.store.reserve,'dashboard_panel'): return
-            message=await channel.send(embed=await self.demo_embed(),view=HelperPanel(self),allowed_mentions=discord.AllowedMentions.none())
-            await asyncio.to_thread(self.store.set,'dashboard_panel',message.id)
-            log.info('Helper sandbox ready channel=%s message=%s',channel.id,message.id)
+        if not message_id: raise RuntimeError('Missing owned Dashboard panel; inspect rather than repost')
         elif message_id=='reserved': raise RuntimeError('Unconfirmed panel creation; requires inspection')
         else: await self.refresh()
 
@@ -335,44 +324,8 @@ class HelperSandbox(commands.Cog):
         return dashboard_embed(self, plans=await shared_counts(self))
 
     async def publish_pulse(self):
-        if not self.pulse or not self.channel: return
-        guild=self.channel.guild
-        if self.channel.permissions_for(guild.default_role).view_channel: return
-        batch=await asyncio.to_thread(self.pulse.claim,time.time())
-        if not batch: return
-        try:
-            valid=[]
-            for event in batch['events']:
-                category=guild.get_channel(event['category'])
-                if not category or event['category'] not in self.game_categories(guild): continue
-                if any(w in category.name.casefold() for w in ('admin','管理','hidden','archive','封存','金主','staff')): continue
-                if event['kind']!='voice':
-                    source=self.bot.get_channel(event['channel']) or guild.get_thread(event['channel'])
-                    if not self.pulse_source(source): continue
-                    if event['kind']=='help':
-                        row=await asyncio.to_thread(self.store.detection,event['message'])
-                        if not row or row['state'] not in {'open','claimed','handoff'}: continue
-                valid.append(event)
-            lines=[]
-            groups=summarize(valid)
-            for category_id,group in groups:
-                category=guild.get_channel(category_id)
-                label=discord.utils.escape_markdown(category.name[:40])
-                at=datetime.fromtimestamp(group['at'],ZoneInfo('Asia/Hong_Kong')).strftime('%H:%M')
-                line=f'{at} · **{label}**｜'+' · '.join(fragments(group))
-                if len('\n'.join(lines+[line]))>1750: break
-                lines.append(line)
-            if len(lines)<len(groups): lines.append(f'另有 {len(groups)-len(lines)} 個遊戲區有活動。')
-            if not lines:
-                await asyncio.to_thread(self.pulse.finish,batch['bucket'],'skipped')
-                return
-            message=await self.channel.send('\n'.join(lines),allowed_mentions=discord.AllowedMentions.none())
-            await asyncio.to_thread(self.pulse.finish,batch['bucket'],'sent',message.id)
-            await asyncio.to_thread(self.store.set,'pulse_latest',message.id)
-            log.info('Helper pulse log posted: channel=%s message=%s',self.channel.id,message.id)
-        except Exception as exc:
-            await asyncio.to_thread(self.pulse.finish,batch['bucket'],'uncertain',0,type(exc).__name__)
-            log.exception('Helper pulse send uncertain; not automatically resent')
+        # Intentionally no send, claim, prune or delete. Preserve the legacy DB/history.
+        return
 
     @tasks.loop(minutes=1)
     async def pulse_tick(self):
@@ -381,14 +334,14 @@ class HelperSandbox(commands.Cog):
             await self.publish_pulse()
         except Exception: log.exception('Helper pulse loop needs inspection')
 
-    def live_embed(self,member):
+    def live_embed(self,member, sources=None):
         guild=member.guild
         now=time.time()
         categories=self.game_categories(guild)
         grouped={}
         for channel_id,count in self.window.counts(now).items():
-            ch=guild.get_channel(channel_id)
-            if not ch or ch.category_id not in categories: continue
+            ch=(sources.get(channel_id) if sources is not None else guild.get_channel(channel_id))
+            if not ch or ch.category_id not in categories or getattr(ch, 'nsfw', False): continue
             permissions=ch.permissions_for(member)
             if not permissions.view_channel or not permissions.read_message_history: continue
             group=grouped.setdefault(ch.category_id,{'users':set(),'messages':0,'channels':[]})
@@ -404,7 +357,9 @@ class HelperSandbox(commands.Cog):
         voice=[]
         for ch in guild.voice_channels:
             if ch.category_id not in categories or ch.name==config.TEMP_VC_HUB_NAME: continue
-            permissions=ch.permissions_for(member)
+            authorized = sources.get(ch.id) if sources is not None else ch
+            if not authorized or getattr(authorized, 'nsfw', False): continue
+            permissions=authorized.permissions_for(member)
             if not permissions.view_channel or not permissions.connect: continue
             members=[m for m in ch.members if not m.bot]
             if not members: continue
@@ -419,6 +374,25 @@ class HelperSandbox(commands.Cog):
         if now<self.window.truncated_until: note+=' 活動量超過暫存上限，計數不完整。'
         embed.set_footer(text=note)
         return embed
+
+    async def private_activity(self, i):
+        member = await member_for(self, i)
+        if member is None:
+            return discord.Embed(description='目前無法查看。'), []
+        try:
+            sources = {c.id: c for c in await i.guild.fetch_channels()}
+        except discord.HTTPException:
+            return discord.Embed(description='暫時無法核對來源權限。'), []
+        lines = []
+        for row in list(reversed(self.window.attention))[:50]:
+            if row['at'] < time.time()-1800 or (row['kind']=='lfg' and row['replied']): continue
+            channel = await source_for(self, i.guild, member, row['channel'])
+            if channel is None: continue
+            label = '近期加入成員發言' if row['kind']=='newcomer' else '招募，未觀察到直接回覆'
+            room = discord.utils.escape_mentions(discord.utils.escape_markdown(channel.name[:40]))
+            lines.append(f'**{room}** · {label} · [查看原訊息](https://discord.com/channels/{config.GUILD_ID}/{channel.id}/{row["message"]})')
+            if len(lines) == 8: break
+        return self.live_embed(member, sources=sources), lines
 
     async def refresh(self):
         async with self.lock:

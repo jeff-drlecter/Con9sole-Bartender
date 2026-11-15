@@ -94,14 +94,22 @@ async def main():
    await cog.on_message(message)
    cog.bot.get_channel=lambda cid:ch
    i=SimpleNamespace(user=SimpleNamespace(visible=False,history=True,id=8),guild=SimpleNamespace(get_thread=lambda cid:None),response=SimpleNamespace(defer=AsyncMock()),followup=SimpleNamespace(send=AsyncMock()))
+   cog.access=AsyncMock(return_value=True)
+   cog.private_activity=AsyncMock(return_value=(discord.Embed(), []))
+   guild=ch.guild
+   guild.fetch_channel=AsyncMock(return_value=ch)
+   guild.fetch_member=AsyncMock(return_value=i.user)
+   i.guild=guild
+   import core.helper_detection_ui as ui
+   ui.member_for=AsyncMock(side_effect=lambda c, interaction:interaction.user)
    await show_pending(cog,i)
    ch.fetch_message.assert_not_awaited()
-   assert len(i.followup.send.call_args.kwargs['embed'].fields)==0
+   assert len(i.followup.send.call_args.kwargs['embed'].fields)==1
    i.user.visible=True
    message.jump_url='https://discord.com/channels/1/10/200'
    await show_pending(cog,i)
    assert i.followup.send.call_args.kwargs['ephemeral'] is True
-   assert len(i.followup.send.call_args.kwargs['embed'].fields)==1
+   assert len(i.followup.send.call_args.kwargs['embed'].fields)==2
 asyncio.run(main())
 '''],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

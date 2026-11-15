@@ -70,7 +70,7 @@ async def main():
     guild=S(id=config.GUILD_ID,default_role=S(id=1),fetch_member=AsyncMock(return_value=member))
     def channel(cid,visible):
         ch=MagicMock(spec=discord.TextChannel)
-        ch.id=cid;ch.guild=guild;ch.overwrites={}
+        ch.id=cid;ch.guild=guild;ch.overwrites={};ch.nsfw=False
         ch.permissions_for=lambda who:S(view_channel=visible,read_message_history=True)
         return ch
     source=channel(10,True);hidden=channel(20,False);board=channel(30,True)
@@ -187,9 +187,13 @@ async def main():
     channel=MagicMock(spec=discord.TextChannel)
     channel.permissions_for=lambda m:discord.Permissions(view_channel=True,read_message_history=True,send_messages=False)
     guild=S(id=config.GUILD_ID,fetch_member=AsyncMock(return_value=member),fetch_channel=AsyncMock(return_value=channel))
+    channel.guild=guild;channel.nsfw=False
     row=await authorized_status(cog,guild,2,'real')
     assert row and row[0]['permissions']['read'] and not row[0]['permissions']['join']
     assert not row[0]['permissions']['cancel'] and 'members' not in row[0]
+    channel.nsfw=True
+    assert await authorized_status(cog,guild,2,'real') is None
+    channel.nsfw=False
     channel.permissions_for=lambda m:discord.Permissions(view_channel=False,read_message_history=True)
     assert await authorized_status(cog,guild,2,'real') is None
     channel.permissions_for=lambda m:discord.Permissions(view_channel=True,read_message_history=False)

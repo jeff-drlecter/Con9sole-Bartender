@@ -41,12 +41,12 @@ async def build_overview(cog,i):
     from core.helper_detection_ui import visible_candidates
     now=time.time()
     pending=await visible_candidates(cog,i,limit=3)
-    activity=cog.live_embed(i.user)
-    attention=cog.attention_lines(i.user,now)
+    activity,attention=await cog.private_activity(i)
     return render_overview(pending,activity,attention,now,cog.window.started)
 
 
 async def show_overview(cog,i,edit=False):
+    if not await cog.access(i): return
     await i.response.defer(ephemeral=True)
     embed=await build_overview(cog,i)
     view=OverviewView(cog,i.user.id)
@@ -85,7 +85,10 @@ class OverviewView(OwnerView):
         await show_pending(self.cog,i,closed=True)
     @discord.ui.button(label='完整活動',row=1)
     async def activity(self,i,button):
-        await i.response.send_message(embed=self.cog.live_embed(i.user),view=BackToOverview(self.cog,i.user.id),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
+        if not await self.cog.access(i): return
+        await i.response.defer(ephemeral=True)
+        activity, _ = await self.cog.private_activity(i)
+        await i.followup.send(embed=activity,view=BackToOverview(self.cog,i.user.id),ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
 
 def example_overview(now):

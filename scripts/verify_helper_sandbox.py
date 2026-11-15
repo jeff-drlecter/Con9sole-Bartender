@@ -29,9 +29,9 @@ def main():
     assert channel['id']=='1570639281225994301' and channel['type']==0, 'Unexpected helper sandbox channel'
     overwrites={r['id']:r for r in channel['permission_overwrites']}
     assert int(overwrites[channel['guild_id']]['deny']) & 1024, 'Channel must remain private'
-    for role in [settings['tester_role'],'1279071042249162856']:
+    for role in ['1279071042249162856']:
         allowed=int(overwrites[role]['allow'])
-        assert allowed & 1024 and allowed & 65536, 'Helper/Tester view/history missing'
+        assert allowed & 1024 and allowed & 65536, 'Helper view/history missing'
     for _ in range(24):
         message=get(f"channels/{settings['dashboard_channel']}/messages/{settings['dashboard_panel']}")
         if message.get('embeds') and '社群動態 Dashboard' in message['embeds'][0].get('title',''): break
@@ -56,7 +56,10 @@ def main():
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         count=db.execute("SELECT COUNT(*) FROM detected_help WHERE state IN ('open','claimed','handoff')").fetchone()[0]
     print('Stored automatic help candidates:',count)
-    print('Verified Helpers and Tester view/history permissions; everyone denied; five controls present.')
+    with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
+        pulse_version=db.execute("SELECT value FROM settings WHERE key='pulse_version'").fetchone()
+    assert pulse_version and pulse_version[0] == 'disabled-round2', 'Legacy publisher retirement not loaded'
+    print('Verified Helper view/history and retired pulse marker; Tester channel separation requires the private permission audit.')
 
 
 if __name__=='__main__': main()

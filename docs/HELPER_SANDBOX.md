@@ -1,5 +1,7 @@
 # Helper activity and automatic help detection sandbox
 
+> Round 2 policy supersedes the historical sharing/Tester/pulse descriptions below. See [HELPER_ENTRY_ROUND2.md](HELPER_ENTRY_ROUND2.md). The live board is Helper/Admin only at the Bot boundary; the old pulse publisher is retired. Discord permission changes remain a separate reviewed step.
+
 Enabled by `HELPER_SANDBOX=1` in the existing private `helper-模擬區`.
 Helpers and 🧪 Tester retain view/history access; ordinary members cannot enter.
 No game-category access is changed. The former request-creation demonstration is
@@ -88,7 +90,7 @@ The `睇示例` button opens a clearly fictional four-section card, never insert
 fake requests/activity into the live queue, and allows returning to the real
 Overview. This supports mobile layout testing even when the server is quiet.
 
-## Primary experience: server pulse log
+## Historical implementation: server pulse log (retired in Round 2)
 
 The shared sandbox now publishes short chronological activity logs automatically,
 so Helpers can scan unread messages without opening a dashboard. Existing private

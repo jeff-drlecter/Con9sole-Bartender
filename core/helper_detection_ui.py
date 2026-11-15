@@ -2,6 +2,7 @@ import asyncio
 import time
 import discord
 from core.helper_detection import detect_help
+from core.helper_access import member_for, source_for
 
 
 def short(text,length=140):
@@ -9,16 +10,17 @@ def short(text,length=140):
 
 
 async def visible_candidates(cog,i,closed=False,limit=8):
+    member = await member_for(cog, i)
+    if member is None: return []
     rows=await asyncio.to_thread(cog.store.candidates,time.time(),closed)
     visible=[]
     checked=0
     # Permission-filter before fetching: no hidden-channel counts or excerpts leak.
     for row in rows:
-        channel=cog.bot.get_channel(row['channel_id'])
-        if channel is None: channel=i.guild.get_thread(row['channel_id'])
-        if not cog.can_read_source(channel,i.user): continue
         checked+=1
         if checked>20: break
+        channel=await source_for(cog,i.guild,member,row['channel_id'])
+        if channel is None: continue
         try: message=await channel.fetch_message(row['message_id'])
         except discord.NotFound:
             await asyncio.to_thread(cog.store.withdraw,row['message_id'],time.time())
@@ -27,12 +29,14 @@ async def visible_candidates(cog,i,closed=False,limit=8):
         if not closed and not detect_help(cog.help_text(message)):
             await asyncio.to_thread(cog.store.withdraw,row['message_id'],time.time())
             continue
+        if await source_for(cog,i.guild,member,row['channel_id']) is None: continue
         visible.append((row,message))
         if len(visible)>=limit: break
     return visible
 
 
 async def show_pending(cog,i,closed=False):
+    if not await cog.access(i): return
     await i.response.defer(ephemeral=True)
     visible=await visible_candidates(cog,i,closed)
     embed=discord.Embed(title='🆘 求助處理記錄' if closed else '🆘 待接應｜自動偵測、待人確認',description='只顯示你有權閱讀嘅原訊息。關鍵字可能誤判；「有人回覆」唔代表已解決。')
@@ -43,6 +47,10 @@ async def show_pending(cog,i,closed=False):
         reply='有人回覆' if row['replied'] else '未觀察到直接回覆'
         content=short(cog.help_text(message)) or '（內容已變更）'
         embed.add_field(name=name,value=f"{content}\n[去原訊息]({message.jump_url}) · {reply}{owner}\n{row['reason']} · <t:{int(row['created'])}:R>",inline=False)
+    if not closed:
+        _, attention = await cog.private_activity(i)
+        from core.helper_overview import bounded_lines
+        embed.add_field(name='招募／新人接應', value=bounded_lines(attention, '暫無可顯示的項目。'), inline=False)
     if not visible: embed.description+='\n目前冇可顯示嘅項目。只掃指定遊戲吹水／討論區；唔代表所有問題已解決。'
     from core.helper_overview import BackToOverview
     await i.followup.send(embed=embed,view=DetectionView(cog,i.user.id,visible) if visible and not closed else BackToOverview(cog,i.user.id),
@@ -53,6 +61,12 @@ class CandidateSelect(discord.ui.Select):
     def __init__(self,visible):
         super().__init__(placeholder='選擇需要接應嘅訊息',options=[discord.SelectOption(label=(message.channel.name+'｜'+short(message.content,60))[:100],value=str(row['message_id'])) for row,message in visible])
     async def callback(self,i):
+        member = await member_for(self.view.cog, i)
+        row = await asyncio.to_thread(self.view.cog.store.detection, int(self.values[0]))
+        if not member or not row or await source_for(self.view.cog, i.guild, member, row['channel_id']) is None:
+            self.view.selected = None
+            await i.response.edit_message(content='來源權限已變更，請重新開啟待接應。', embed=None, view=None)
+            return
         self.view.selected=int(self.values[0])
         await i.response.edit_message(content='已選擇；按「我跟進」後，到原頻道回覆。')
 
@@ -68,11 +82,13 @@ class DetectionView(discord.ui.View):
             return False
         return await self.cog.access(i)
     async def act(self,i,action):
+        if not await self.cog.access(i): return
         await i.response.defer(ephemeral=True)
         row=await asyncio.to_thread(self.cog.store.detection,self.selected) if self.selected else None
-        channel=(self.cog.bot.get_channel(row['channel_id']) or i.guild.get_thread(row['channel_id'])) if row else None
-        if not row or not self.cog.can_read_source(channel,i.user):
-            await i.followup.send('請先選擇你仍有權閱讀嘅訊息。',ephemeral=True)
+        member = await member_for(self.cog, i)
+        channel = await source_for(self.cog,i.guild,member,row['channel_id']) if row and member else None
+        if channel is None:
+            await i.edit_original_response(content='請先選擇你仍有權閱讀嘅訊息。',embed=None,view=None)
             return
         try:
             message=await channel.fetch_message(row['message_id'])
@@ -80,13 +96,17 @@ class DetectionView(discord.ui.View):
                 await asyncio.to_thread(self.cog.store.withdraw,row['message_id'],time.time())
                 await i.followup.send('原訊息已變更，不再符合求助條件。',ephemeral=True)
                 return
-            label=await asyncio.to_thread(self.cog.store.act,self.selected,i.user.id,action,time.time(),i.user.guild_permissions.administrator)
+            member = await member_for(self.cog, i)
+            if member is None or await source_for(self.cog,i.guild,member,row['channel_id']) is None:
+                await i.edit_original_response(content='權限已變更，未作更改。', embed=None, view=None)
+                return
+            label=await asyncio.to_thread(self.cog.store.act,self.selected,member.id,action,time.time(),member.guild_permissions.administrator)
             await i.followup.send(label+'。\n'+message.jump_url,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
         except discord.NotFound:
             await asyncio.to_thread(self.cog.store.withdraw,row['message_id'],time.time())
-            await i.followup.send('原訊息已刪除。',ephemeral=True)
+            await i.edit_original_response(content='原訊息已刪除。',embed=None,view=None)
         except discord.HTTPException:
-            await i.followup.send('暫時無法核對原訊息，未作更改。',ephemeral=True)
+            await i.edit_original_response(content='暫時無法核對原訊息，未作更改。',embed=None,view=None)
         except ValueError as exc: await i.followup.send(str(exc),ephemeral=True)
     @discord.ui.button(label='返回 Overview',row=2)
     async def back(self,i,button):
