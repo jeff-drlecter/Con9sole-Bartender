@@ -11,7 +11,7 @@ on:
       scope:
         description: Approved channel scope
         type: choice
-        options: [chats, all]
+        options: [chats, all, official]
         default: chats
         required: true
       review_digest:
