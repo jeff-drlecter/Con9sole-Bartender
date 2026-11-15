@@ -1,3 +1,5 @@
+> 歷史交付／驗收快照：本文的版本及待辦不代表現況。請先看 [現行整合狀態與證據](CURRENT_INTEGRATION_STATUS.md)；保留原文供追溯。
+
 # 新聞體驗整理｜2026-11-15
 
 > **2026-11-15 狀態校正：** 原程式已隨 #169（053b3e4）部署，#171（2922760）再補返回路徑。部署 workflow 現為只讀 migration 驗證，不會重套權限。iPhone 本輪按 Jeff 指示略過。以下為原 review 歷史。 本輪完整現況／待決／驗收界線以 [COMMUNITY_ROUND2.md](COMMUNITY_ROUND2.md) 及整合 PR 的部署證據為準。

@@ -146,7 +146,7 @@ class PlanBook:
                         instant=instant, late=[], unconfirmed=[], reminders=[], withdrawn=[], revision=0)
             state = copy.deepcopy(self.state)
             state['plans'][key] = plan
-            plan.update(created_at=self.clock(), analytics_test=bool(analytics_test))
+            plan.update(created_at=self.clock(), analytics_test=bool(analytics_test), origin='instant' if instant else 'scheduled')
             self._write(state)
             return copy.deepcopy(plan)
 
@@ -236,6 +236,25 @@ class PlanBook:
             p['revision'] = p.get('revision', 0) + 1
             self._write(state)
             return copy.deepcopy(p)
+
+    def set_reminder(self,key,user,enabled,*,expected_revision):
+        with self.lock:
+            p=self.get(key)
+            if p['revision']!=expected_revision: raise ValueError('revision_changed')
+            if enabled:return self.act(key,user,'remind_on')
+            if user not in p['members']:raise ValueError('not_registered')
+            p['reminders']=[u for u in p.get('reminders',[]) if u!=user]
+            p['withdrawn']=sorted(set(p.get('withdrawn',[]))|{user})
+            p['revision']+=1
+            state=copy.deepcopy(self.state);state['plans'][key]=p;self._write(state)
+            return p
+
+    def availability(self,key,value):
+        with self.lock:
+            state=copy.deepcopy(self.state);p=state['plans'][key]
+            p['availability']=value
+            if value in {'card_deleted','denied','unknown_result'}:p['dirty']=False
+            self._write(state)
 
     def clean(self, key, revision=None):
         with self.lock:

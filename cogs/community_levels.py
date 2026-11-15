@@ -248,7 +248,9 @@ class CommunityLevels(commands.Cog):
                 interaction.guild_id, interaction.user.id, task.key, stamp, joined=joined))
         proof = await asyncio.to_thread(self.ledger.event_proof, interaction.guild_id,
             f'daily-task:{calendar(stamp)[0]}:{interaction.user.id}')
-        if proof:
+        if proof and proof[2] < joined:
+            reward = 'ℹ️ 今天的獎勵收據屬於重新加入前；不代表本輪已入帳，不會重複發放。'
+        elif proof:
             reward = '✅ 已入帳 +5 XP（計入本週排名）'
         elif valid_completion or progress >= task.target:
             reward = '⏳ 已完成，獎勵待核對；符合計分資格後重新整理即可重試。'

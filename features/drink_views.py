@@ -319,6 +319,10 @@ class FeatureButton(discord.ui.Button):
 
         cog = interaction.client.get_cog(self.cog_name)
         if cog is None:
+            if self.cog_name in ('SquadCards','SquadPlans'):
+                from core.newcomer_routes import show_next_steps
+                await show_next_steps(interaction,reason='unavailable')
+                return
             await send_or_followup(
                 interaction,
                 content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),

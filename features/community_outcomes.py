@@ -47,13 +47,19 @@ class Outcomes:
                     guild INTEGER, session TEXT, user INTEGER, first_seen REAL,
                     PRIMARY KEY(guild,session,user));
             ''')
+            from features.observed_returns import migrate
+            migrate(db)
             db.execute('INSERT OR IGNORE INTO outcome_meta VALUES(?,?)', ('since', self.clock()))
             db.execute('INSERT OR IGNORE INTO outcome_meta VALUES(?,?)', ('natural_since', self.clock()))
             db.execute('INSERT OR IGNORE INTO outcome_meta VALUES(?,?)', ('coplay_since', self.clock()))
 
-    def heartbeat(self, run, *, success):
+    def heartbeat(self, run, *, success, guild=None):
         """Record observation coverage only; offline intervals are never filled in."""
         now = self.clock()
+        if guild is not None:
+            from features.observed_returns import coverage_sample
+            with connect_sqlite(self.path) as db:
+                coverage_sample(db, guild, run, now, success)
         with connect_sqlite(self.path) as db:
             db.execute("INSERT OR IGNORE INTO outcome_observer_runs VALUES(?,?,NULL,0)", (run, now))
             if success:
@@ -61,18 +67,35 @@ class Outcomes:
             else:
                 db.execute("UPDATE outcome_observer_runs SET failures=failures+1 WHERE run=?", (run,))
 
-    def observe(self, guild, session, plan, members, *, test=False):
+    def observe(self, guild, session, plan, members, *, test=False, source=None):
         """Caller supplies current Gateway humans only, never accumulated names/RSVPs."""
         now = self.clock()
         with connect_sqlite(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute('''INSERT INTO outcome_sessions VALUES(?,?,?,?,?)
+            previous = db.execute('SELECT source_channel,voice_channel,origin FROM outcome_sessions WHERE guild=? AND session=?', (guild,session)).fetchone()
+            if source and previous:
+                if previous[0] is None:
+                    return  # Preserve all legacy rows; today's source cannot explain old attendance.
+                if previous != (source['channel'],source['voice'],source['origin']):
+                    raise ValueError('Session source changed; observation is unknown')
+            db.execute('''INSERT INTO outcome_sessions (guild,session,plan,first_seen,test) VALUES(?,?,?,?,?)
                 ON CONFLICT(guild,session) DO UPDATE SET
                 plan=COALESCE(outcome_sessions.plan,excluded.plan),
                 test=MAX(outcome_sessions.test,excluded.test)''',
                 (guild, session, plan, now, int(test)))
+            if source:
+                # Do not backfill pre-migration attendance with today's source.
+                # Preserve legacy session rows as unknown until a genuinely new session.
+                db.execute('''UPDATE outcome_sessions SET source_channel=?,voice_channel=?,origin=?,plan_origin=?
+                    WHERE guild=? AND session=? AND first_seen=? AND source_channel IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM outcome_attendance WHERE guild=? AND session=?)''',
+                    (source['channel'],source['voice'],source['origin'],source.get('plan_origin'),
+                     guild,session,now,guild,session))
             db.executemany('INSERT OR IGNORE INTO outcome_attendance VALUES(?,?,?,?)',
                           [(guild, session, m.id, now) for m in members if not m.bot])
+            day = datetime.fromtimestamp(now, HK).date().isoformat()
+            db.executemany('INSERT OR IGNORE INTO outcome_visits VALUES(?,?,?,?,?)',
+                          [(guild,session,m.id,day,now) for m in members if not m.bot])
 
     def mark_coplay(self, guild, session, voice, qualified):
         from features.co_participation import RULE
@@ -102,19 +125,34 @@ class Outcomes:
         with connect_sqlite(self.path) as db:
             since = db.execute("SELECT stamp FROM outcome_meta WHERE key='since'").fetchone()[0]
             natural_since = db.execute("SELECT stamp FROM outcome_meta WHERE key='natural_since'").fetchone()[0]
-            rows = db.execute('''SELECT s.plan,s.session,a.user,a.first_seen,s.first_seen FROM outcome_sessions s
+            origin_filter = 's.source_channel IS NOT NULL AND s.voice_channel IS NOT NULL'
+            source_args = []
+            if excluded:
+                marks = ','.join('?' for _ in excluded)
+                origin_filter += f' AND s.source_channel NOT IN ({marks}) AND s.voice_channel NOT IN ({marks})'
+                source_args = list(excluded)*2
+            plan_marks = ','.join('?' for _ in ids) or 'NULL'
+            rows = db.execute(f"""SELECT s.plan,s.session,a.user,a.first_seen,s.first_seen FROM outcome_sessions s
                 JOIN outcome_attendance a ON a.guild=s.guild AND a.session=s.session
-                WHERE s.guild=? AND s.test=0''', (guild,)).fetchall()
-        # Cohort attendance, bounded at report time; repeat joins count once/session.
+                WHERE a.guild=? AND a.first_seen<=? AND s.test=0 AND {origin_filter}
+                AND (s.plan IN ({plan_marks}) OR (s.plan IS NULL AND s.first_seen>=? AND s.first_seen<?))""",
+                (guild,as_of,*source_args,*ids,start,end)).fetchall()
         pairs = {(session, user) for plan, session, user, stamp, _ in rows
                  if plan in ids and stamp <= as_of}
         natural = {(session, user) for plan, session, user, stamp, first in rows
                    if plan is None and start <= first < end and stamp <= as_of}
         with connect_sqlite(self.path) as db:
             coplay_since = db.execute("SELECT stamp FROM outcome_meta WHERE key='coplay_since'").fetchone()[0]
-            milestones = db.execute("""SELECT s.plan,s.session,s.first_seen,c.qualified FROM outcome_coplay c
+            milestones = db.execute(f"""SELECT s.plan,s.session,s.first_seen,c.qualified FROM outcome_coplay c
                 JOIN outcome_sessions s ON s.guild=c.guild AND s.session=c.session
-                WHERE s.guild=? AND s.test=0""", (guild,)).fetchall()
+                WHERE s.guild=? AND c.qualified<=? AND s.test=0 AND {origin_filter}
+                AND (s.plan IN ({plan_marks}) OR (s.plan IS NULL AND s.first_seen>=? AND s.first_seen<?))""",
+                (guild,as_of,*source_args,*ids,start,end)).fetchall()
+            unknown_source = db.execute('''SELECT COUNT(*) FROM outcome_attendance a
+                JOIN outcome_sessions s ON s.guild=a.guild AND s.session=a.session
+                WHERE a.guild=? AND a.first_seen>=? AND a.first_seen<? AND
+                (s.source_channel IS NULL OR s.voice_channel IS NULL OR s.origin IS NULL)''',
+                (guild,start,end)).fetchone()[0]
             coverage = db.execute("SELECT MAX(last_success), COALESCE(SUM(failures),0) FROM outcome_observer_runs").fetchone()
         users = {user for _, user in pairs}
         per_user = {u: sum(v == u for _, v in pairs) for u in users}
@@ -133,7 +171,7 @@ class Outcomes:
                     coplay=len({plan for plan, _, _, stamp in milestones if plan in ids and stamp <= as_of}),
                     natural_coplay=sum(plan is None and start <= first < end and stamp <= as_of
                                        for plan, _, first, stamp in milestones),
-                    coplay_since=coplay_since, last_success=coverage[0], observation_failures=coverage[1], natural_since=natural_since,
+                    unknown_source=unknown_source, coplay_since=coplay_since, last_success=coverage[0], observation_failures=coverage[1], natural_since=natural_since,
                     undated=sum(p.get('created_at') is None for p in clean),
                     excluded=len(all_plans)-len(clean)-unpublished, unpublished=unpublished, since=since,
                     first_created=min((p['created_at'] for p in clean if p.get('created_at') is not None), default=None))
@@ -156,6 +194,7 @@ def display(r, code='neutral'):
             f"本批約局語音：{attendance}\n有到場觀測 {r['attendance_sessions']} 局；每局去重 {per_session}。其餘出席未知。\n"
             f"自然語音局（首次觀測在期間內）：{natural}；觀測始於 {stamp(r['natural_since'])}，不加入開局率。\n"
             f"無建立日期歷史 {r['undated']} 筆；排除可辨識測試 {r['excluded']} 筆；未發布 {r['unpublished']} 筆。\n"
+            f"來源未能核實的歷史到場 {r['unknown_source']} 筆，未納入到場／共同參與統計。\n"
             f"觀測庫始於 {stamp(r['since'])}；最近成功抽樣 {last}；累計記錄的抽樣錯誤 {r['observation_failures']} 次。\n"
             '5 秒抽樣及 Gateway 事件只提供已觀測下限；重啟／漏接未知，開始日期不代表全程覆蓋。\n'
             '開局＝至少一位真人通過既有約 30 秒流程；不等於成功組隊或滿員。\n'

@@ -37,8 +37,9 @@ async def main():
     source = channel(1, '新成員')
     target = channel(2, 'fc-吹水組隊')
     hidden = channel(4, 'gta-吹水組隊', False)
-    guild = N(text_channels=[source, target, hidden], me=N(id=9),
+    guild = N(id=config.GUILD_ID, fetch_member=AsyncMock(return_value=N(id=3,bot=False)), fetch_roles=AsyncMock(return_value=[]), fetch_channel=AsyncMock(side_effect=lambda ident:{1:source,2:target,4:hidden}[ident]), text_channels=[source, target, hidden], me=N(id=9),
               get_channel=lambda ident: {1:source, 2:target, 4:hidden}.get(ident))
+    for ch in (source,target,hidden):ch.guild=guild
     with tempfile.TemporaryDirectory() as directory, \
          patch('cogs.squad_plans.is_verified_member', return_value=True), \
          patch('cogs.squad_plans.is_server_admin', return_value=False):

@@ -146,8 +146,11 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_overview_checks_owner_and_only_cancels_that_owner(self):
         store.toggle(self.scope,1,10,'always');store.toggle(self.scope,1,11,'always')
         cog=self.cog();cog.menu_entry=AsyncMock()
-        view=SubscriptionView(cog,1,10,store.own_preferences(1,10))
+        view=SubscriptionView(cog,1,10,store.own_preferences(1,10),channel_id=100)
         inter=interaction();inter.user.id=11
+        from private_ui_fakes import attach
+        inter.channel.permissions_for.return_value=discord.Permissions(view_channel=True,read_message_history=True)
+        attach(inter,{10:inter.user})
         self.assertFalse(await view.interaction_check(inter))
         inter.user.id=10;self.assertTrue(await view.interaction_check(inter))
         select=next(c for c in view.children if isinstance(c,discord.ui.Select))
@@ -213,9 +216,12 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancel_acknowledges_before_waiting_for_reconcile_lock(self):
         store.toggle(self.scope,1,10,'always')
         cog=self.cog();cog.menu_entry=AsyncMock()
-        view=SubscriptionView(cog,1,10,store.own_preferences(1,10))
+        view=SubscriptionView(cog,1,10,store.own_preferences(1,10),channel_id=100)
         select=next(c for c in view.children if isinstance(c,discord.ui.Select));select._values=[self.scope]
         inter=interaction()
+        from private_ui_fakes import attach
+        inter.channel.permissions_for.return_value=discord.Permissions(view_channel=True,read_message_history=True)
+        attach(inter)
         async with cog.lock:
             pending=asyncio.create_task(select.callback(inter))
             await asyncio.sleep(0)

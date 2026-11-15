@@ -87,7 +87,7 @@ class SignupStart(unittest.IsolatedAsyncioTestCase):
         session=dict(id='s',destination=30,message=99,interest_topic=self.topic,plan_id=self.key)
         await cog.notify_interested(voice,session)
         self.assertEqual(dest.send.await_count,1)
-        self.assertEqual(dest.send.await_args.kwargs['allowed_mentions'].to_dict(),{'users':[2],'parse':[]})
+        self.assertEqual(dest.send.await_args.kwargs['allowed_mentions'].to_dict(),{'users':[2,3,4],'parse':[]})
         await cog.notify_interested(voice,session)
         self.assertEqual(dest.send.await_count,1)
         self.assertIn(5,interest.members(self.topic['id']))
@@ -150,9 +150,9 @@ class SignupStart(unittest.IsolatedAsyncioTestCase):
         i=N(user=member,response=N(send_modal=AsyncMock(),send_message=AsyncMock()))
         with patch('cogs.squad_plans.allowed',return_value=True):
             await choices.children[1].callback(i)
-        form=i.response.send_modal.await_args.args[0]
-        self.assertEqual(form.game.default,'EA SPORTS FC')
-        self.assertEqual(form.party.default,'2');self.assertEqual(form.missing.default,'2')
+        draft=i.response.send_message.await_args.kwargs['view']
+        self.assertEqual(draft.seed['game'],'EA SPORTS FC')
+        self.assertEqual(draft.seed['party'],1);self.assertEqual(draft.seed['missing'],2)
         self.act(2,'join');view=ReminderView(cog,self.key,member)
         self.assertFalse(view.children[0].disabled);self.assertTrue(view.children[1].disabled)
         i.user=N(id=3);i.guild_id=1;i.channel_id=30

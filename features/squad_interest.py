@@ -40,6 +40,8 @@ def initialize():
             conn.execute("ALTER TABLE squad_interest_delivery ADD COLUMN revision TEXT NOT NULL DEFAULT ''")
         if 'context' not in delivery_columns:
             conn.execute("ALTER TABLE squad_interest_delivery ADD COLUMN context TEXT NOT NULL DEFAULT '{}'")
+        if 'origins' not in delivery_columns:
+            conn.execute("ALTER TABLE squad_interest_delivery ADD COLUMN origins TEXT NOT NULL DEFAULT '{}'")
         columns = {r[1] for r in conn.execute('PRAGMA table_info(squad_interest_members)')}
         for name, definition in [('kind', "TEXT NOT NULL DEFAULT 'always'"),
                                  ('excluded_session', "TEXT NOT NULL DEFAULT ''")]:
@@ -167,6 +169,7 @@ def reserve(session_id, scope, eligible, *, now=None, plan_users=()):
     initialize()
     current = time.time() if now is None else now
     selected = []
+    origins = {}
     with connect_sqlite(STATS_DB) as conn:
         conn.execute('BEGIN IMMEDIATE')
         scope = _scope(conn, scope)
@@ -187,14 +190,17 @@ def reserve(session_id, scope, eligible, *, now=None, plan_users=()):
             if not subscribed and user_id not in plan_users:
                 continue
             selected.append(user_id)
+            origins[str(user_id)] = dict(game=subscribed, plan=user_id in plan_users)
             if subscribed and row[0] == 'once':
                 conn.execute('DELETE FROM squad_interest_members WHERE scope=? AND user_id=?', (scope, user_id))
             elif subscribed:
                 conn.execute('UPDATE squad_interest_members SET last_notified=? WHERE scope=? AND user_id=?',
                              (current, scope, user_id))
         for index in range(0,len(selected),20):
-            conn.execute('INSERT OR IGNORE INTO squad_interest_delivery(session_id,scope,batch,users,state) VALUES(?,?,?,?,?)',
-                         (session_id,scope,index//20,json.dumps(selected[index:index+20]),'pending'))
+            batch = selected[index:index+20]
+            conn.execute('INSERT OR IGNORE INTO squad_interest_delivery(session_id,scope,batch,users,state,origins) VALUES(?,?,?,?,?,?)',
+                         (session_id,scope,index//20,json.dumps(batch),'pending',
+                          json.dumps({str(uid): origins[str(uid)] for uid in batch})))
     return selected
 
 
@@ -215,10 +221,23 @@ def delivery_context(session_id,scope,context):
                      (json.dumps(context),session_id,scope))
 
 
-def claim_delivery(session_id,scope,batch):
+def claim_delivery(session_id,scope,batch, *, require_origins=False):
     initialize()
     with connect_sqlite(STATS_DB) as conn:
+        conn.execute('BEGIN IMMEDIATE')
         scope=_scope(conn,scope)
+        if require_origins:
+            row = conn.execute('SELECT users,origins FROM squad_interest_delivery WHERE session_id=? AND scope=? AND batch=?',
+                               (session_id, scope, batch)).fetchone()
+            if not row:
+                return None
+            origins = json.loads(row[1])
+            if any(not isinstance(origins.get(str(uid)), dict) or
+                   any(type(origins[str(uid)].get(key)) is not bool for key in ('game', 'plan'))
+                   for uid in json.loads(row[0])):
+                # Preserve legacy/partial evidence unchanged. Do not classify,
+                # claim, consume again, or silently mark it as sent.
+                return None
         revision=uuid.uuid4().hex
         changed=conn.execute("UPDATE squad_interest_delivery SET state='uncertain',revision=? WHERE session_id=? AND scope=? AND batch=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=squad_interest_delivery.session_id)",
                               (revision,session_id,scope,batch)).rowcount
@@ -250,16 +269,36 @@ def cancel(scope, guild_id, user_id):
         _cancel_receipt(conn,scope,user_id)
 
 
-def delivery_users(session_id, scope, batch, revision):
+def delivery_users(session_id, scope, batch, revision, *, plan_users=None):
     """Fence the claimed revision and recheck withdrawals immediately before send."""
     initialize()
     with connect_sqlite(STATS_DB) as conn:
         scope = _scope(conn,scope)
-        row = conn.execute("SELECT d.users,a.attempted_at FROM squad_interest_delivery d JOIN squad_interest_attempts a ON a.session_id=d.session_id AND a.scope=d.scope WHERE d.session_id=? AND d.scope=? AND d.batch=? AND d.revision=? AND d.state='uncertain' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)",
+        row = conn.execute("SELECT d.users,a.attempted_at,d.origins FROM squad_interest_delivery d JOIN squad_interest_attempts a ON a.session_id=d.session_id AND a.scope=d.scope WHERE d.session_id=? AND d.scope=? AND d.batch=? AND d.revision=? AND d.state='uncertain' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)",
                            (session_id,scope,batch,revision)).fetchone()
         if not row:return []
-        return [uid for uid in json.loads(row[0]) if not conn.execute(
-            'SELECT 1 FROM squad_interest_cancellations WHERE scope=? AND user_id=? AND stamp>=?',(scope,uid,row[1])).fetchone()]
+        origins = json.loads(row[2])
+        # Game withdrawal does not veto a separately opted-in plan reminder.
+        # The dispatcher / 03 MUST still recheck that plan consent before POST.
+        # Legacy receipts have no provenance: retain their existing fail-closed veto.
+        allowed = []
+        for uid in json.loads(row[0]):
+            origin = origins.get(str(uid))
+            cancelled = conn.execute(
+                'SELECT 1 FROM squad_interest_cancellations WHERE scope=? AND user_id=? AND stamp>=?',
+                (scope, uid, row[1])).fetchone()
+            if plan_users is None:
+                # Compatibility for provenance-only inspection; the dispatcher
+                # always supplies the current plan consent under its plan lock.
+                accepted = (origin or {}).get('plan') is True or not cancelled
+            else:
+                # An old receipt without origin cannot establish either consent.
+                accepted = bool(origin) and (
+                    (origin.get('game') is True and not cancelled) or
+                    (origin.get('plan') is True and uid in plan_users))
+            if accepted:
+                allowed.append(uid)
+        return allowed
 
 
 def own_preferences(guild_id, user_id):
@@ -267,11 +306,23 @@ def own_preferences(guild_id, user_id):
     with connect_sqlite(STATS_DB) as conn:
         rows = {scope:dict(id=scope,label=label,kind=kind) for scope,label,kind in conn.execute(
             'SELECT t.scope,t.label,m.kind FROM squad_interest_topics t JOIN squad_interest_members m ON m.scope=t.scope WHERE t.guild_id=? AND m.user_id=?',(guild_id,user_id))}
-        # reserve consumes a once preference before POST; keep queued receipts visible.
-        for scope,label,users,attempted in conn.execute("SELECT d.scope,t.label,d.users,a.attempted_at FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_interest_attempts a ON a.scope=d.scope AND a.session_id=d.session_id WHERE t.guild_id=? AND d.state='pending' AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)",(guild_id,)):
-            if user_id in json.loads(users) and not conn.execute('SELECT 1 FROM squad_interest_cancellations WHERE scope=? AND user_id=? AND stamp>=?',(scope,user_id,attempted)).fetchone():
-                rows.setdefault(scope,dict(id=scope,label=label,kind='pending'))
+        # A receipt combines game and plan consent. Only attributable game
+        # receipts belong here; never infer origin from a consumed preference.
+        for scope,label,users,attempted,origins,state in conn.execute("SELECT d.scope,t.label,d.users,a.attempted_at,d.origins,d.state FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope JOIN squad_interest_attempts a ON a.scope=d.scope AND a.session_id=d.session_id WHERE t.guild_id=? AND d.state IN ('pending','uncertain') AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)",(guild_id,)):
+            if (user_id in json.loads(users) and json.loads(origins).get(str(user_id), {}).get('game') is True
+                    and not conn.execute('SELECT 1 FROM squad_interest_cancellations WHERE scope=? AND user_id=? AND stamp>=?',(scope,user_id,attempted)).fetchone()):
+                row=rows.setdefault(scope,dict(id=scope,label=label,kind='pending'))
+                row['pending']=True
+                if state == 'uncertain':row['uncertain']=True
         return sorted(rows.values(),key=lambda x:x['label'].casefold())
+
+
+def unattributed_deliveries(guild_id, user_id):
+    """Read-only migration evidence; old mixed receipts cannot be guessed/backfilled."""
+    initialize()
+    with connect_sqlite(STATS_DB) as conn:
+        return sum(user_id in json.loads(users) and str(user_id) not in json.loads(origins)
+                   for users,origins in conn.execute("SELECT d.users,d.origins FROM squad_interest_delivery d JOIN squad_interest_topics t ON t.scope=d.scope WHERE t.guild_id=? AND d.state IN ('pending','uncertain') AND NOT EXISTS(SELECT 1 FROM squad_ended_sessions e WHERE e.session_id=d.session_id)", (guild_id,)))
 
 
 def end_session(session_id):

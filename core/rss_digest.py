@@ -191,6 +191,17 @@ class DigestStore(DeliveryStore):
         with self.connect() as db:
             return self.select(db,kind,config,sources,now,snapshot=snapshot)
 
+    def schedule_result(self, config, sources, now):
+        current = slot(now)
+        if not current: return 'outside_window'
+        name, kind = current
+        with self.connect() as db:
+            old = db.execute('SELECT state FROM digest_batches WHERE slot=?', (name,)).fetchone()
+            if old: return old[0]
+            if self.select(db, kind, config, sources, now): return 'ready'
+            rows = db.execute("SELECT source,published FROM articles WHERE state='pending' AND published>=? AND published<=?", (now-86400, now+300)).fetchall()
+            return 'filtered_empty' if any(r['source'] in sources for r in rows) else 'empty'
+
     def claim_batch(self, config, sources, now):
         current=slot(now)
         if not current: return None

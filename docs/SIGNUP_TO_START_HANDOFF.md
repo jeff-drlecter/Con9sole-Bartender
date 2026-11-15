@@ -1,3 +1,5 @@
+> 歷史交付／驗收快照：本文的版本及待辦不代表現況。請先看 [現行整合狀態與證據](CURRENT_INTEGRATION_STATUS.md)；保留原文供追溯。
+
 # 03 報名到開局 → 06 部署／02 介面交接
 
 > **2026-11-15 狀態校正：** 原程式已隨 #170 合併為 fede4d7，Fly Deploy 43634179965 success。以下未部署／Draft 字句為歷史狀態，不能作目前狀態。 本輪完整現況／待決／驗收界線以 [COMMUNITY_ROUND2.md](COMMUNITY_ROUND2.md) 及整合 PR 的部署證據為準。
