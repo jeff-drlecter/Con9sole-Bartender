@@ -144,9 +144,10 @@ class RSSDelivery(commands.Cog):
         condition = source_condition(rows, self.sources, time.time(), 86400)
         if interaction is not None and self.store_news_available(interaction):
             stores, bad = safe_snapshot(self.store_news)
-            keys = ['epic:hk','epic:tw'] + ['steam:'+str(i) for i in self.store_config.get('steam_appids',[])]
-            extra = source_condition(stores, keys, time.time(), 7200)
-            if bad or extra != 'ok': return 'partial'
+            epic = source_condition(stores, ['epic:hk','epic:tw'], time.time(), 7200)
+            steam_keys = ['steam:'+str(i) for i in self.store_config.get('steam_appids',[])]
+            steam = source_condition(stores, steam_keys, time.time(), 86400)
+            if bad or epic != 'ok' or steam != 'ok': return 'partial'
         return condition
 
     def store_news_available(self, interaction):
