@@ -11,3 +11,5 @@ Jeff 在頻道建議及各遊戲「吹水組隊 💬」討論後授權 apply。�
 手動 `Channel emoji names` workflow：main-only、production，部署後先 audit，檢閱去識別候選摘要，再於 30 分鐘內套用精確 digest。原頻道及覆寫快照留 `/data/channel_emoji_suffixes/`（0700／0600）。角色與分類先 fresh 比對，逐頻道比較原值；只 PATCH name，寫前 journal、寫後 GET 確認其他欄位不變。未知寫入不重播，需 status／重新 audit。沒有任意 API 或 shell 輸入。
 
 若需回復，從私有快照取原 name，先確認現在仍為這次 after，再只還原 name；不得整批覆蓋權限或重建頻道。持久按鈕、排程、卡片、訂閱及訊息連結仍按原 channel ID 運作。main 合併前完整 CI，部署仍經現有資料備份及健康檢查。最終 commit、CI、部署與 audit/apply 證據更新於本次 PR body 及本地交接紀錄。
+
+正式 audit 顯示「站務-意見箱」與 `config.SUPPORT_CHANNEL_ID` 不同；兩者不能當同一入口。意見箱依唯一原名確認，保留設定中的求助入口名稱及所有權限。

@@ -24,7 +24,8 @@ PROPOSED={
 }
 KNOWN_IDS={
  '如何加入不同遊戲分區':str(config.GUIDE_CHANNEL_ID), 'rules':str(config.RULES_CHANNEL_ID),
- '新成員-加入-打招呼':str(config.WELCOME_CHANNEL_ID), '站務-意見箱':str(config.SUPPORT_CHANNEL_ID),
+ '新成員-加入-打招呼':str(config.WELCOME_CHANNEL_ID),
+ # SUPPORT is a separate help destination, not the uniquely named suggestion box.
  'ps-news':'1364201334798290994','xbox-news':'1379699174668505098','電腦-news':'1364210080043630612',
 }
 
