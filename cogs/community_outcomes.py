@@ -3,6 +3,7 @@ import asyncio
 import logging
 import time
 import os
+import uuid
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -10,6 +11,8 @@ import config
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
 from features.community_outcomes import Outcomes, display, window, test_channel
+from features.language_preferences import language
+from features.squad_outcome_state import session_origin
 from features.wording import text as wording_text
 
 log = logging.getLogger(__name__)
@@ -21,6 +24,7 @@ class CommunityOutcomes(commands.Cog):
         self.store = Outcomes(DATA_DIR / 'community_outcomes.sqlite3')
         # Explicit known test IDs allow historical exclusion after rename/deletion.
         self.excluded = {int(v) for v in os.getenv('OUTCOMES_TEST_CHANNEL_IDS', '').split(',') if v.strip()}
+        self.run_id = uuid.uuid4().hex
         self.sample.start()
 
     def cog_unload(self):
@@ -36,19 +40,25 @@ class CommunityOutcomes(commands.Cog):
         for key, session in list(cards.state['sessions'].items()):
             channel = guild.get_channel(int(key))
             p = plans.book.get(session.get('plan_id'))
-            if (not channel or channel == guild.afk_channel or session.get('ended') is not None
-                    or not p or p['guild'] != guild.id or p['status'] != 'live' or p.get('session') != session['id']):
+            origin = session_origin(session, p, guild.id)
+            if not channel or channel == guild.afk_channel or origin not in ('linked', 'natural'):
                 continue
-            await asyncio.to_thread(self.store.observe, guild.id, session['id'], p['id'],
-                list(channel.members), test=bool(p.get('analytics_test') or test_channel(channel)
-                    or test_channel(guild.get_channel(p['channel'])) or p['channel'] in self.excluded
-                    or channel.id in self.excluded))
+            await asyncio.to_thread(self.store.observe, guild.id, session['id'], p['id'] if p else None,
+                list(channel.members), test=bool(test_channel(channel) or channel.id in self.excluded
+                    or (p and (p.get('analytics_test') or p.get('test') or p.get('is_test')
+                               or test_channel(guild.get_channel(p['channel'])) or p['channel'] in self.excluded))))
+        if getattr(self, 'run_id', None):
+            await asyncio.to_thread(self.store.heartbeat, self.run_id, success=True)
 
     @tasks.loop(seconds=5)
     async def sample(self):
         try:
             await self.observe()
         except Exception:
+            try:
+                await asyncio.to_thread(self.store.heartbeat, self.run_id, success=False)
+            except Exception:
+                pass  # A failed store cannot record its own outage; keep retrying.
             log.exception('Outcome observation unavailable; no attendance inferred')
 
     @sample.before_loop
@@ -88,7 +98,7 @@ class CommunityOutcomes(commands.Cog):
             return
         plans = self.bot.get_cog('SquadPlans')
         if not plans:
-            await inter.followup.send('約局資料未就緒，無法提供統計。', ephemeral=True)
+            await inter.followup.send(wording_text(inter.user, '約局資料未就緒，無法提供統計。'), ephemeral=True)
             return
         now = time.time()
         start, end = window(period, now)
@@ -96,12 +106,17 @@ class CommunityOutcomes(commands.Cog):
         # Also exclude identifiable historical test destinations without rewriting them.
         excluded = self.excluded | {p['channel'] for p in snapshot
             if test_channel(inter.guild.get_channel(p['channel']))}
-        result = await asyncio.to_thread(self.store.report, inter.guild_id, snapshot, start, end,
-                                         excluded_channels=excluded, as_of=now)
-        if not await self.authorized(inter):
-            await inter.followup.send('權限已改變，統計未送出。', ephemeral=True)
+        try:
+            result = await asyncio.to_thread(self.store.report, inter.guild_id, snapshot, start, end,
+                                             excluded_channels=excluded, as_of=now)
+        except Exception:
+            log.exception('Outcome report unavailable; missing data must not become zero')
+            await inter.followup.send(wording_text(inter.user, '統計資料暫時無法讀取，請稍後再試；未將缺漏當作零。'), ephemeral=True)
             return
-        await inter.followup.send(wording_text(inter.user, display(result)), ephemeral=True,
+        if not await self.authorized(inter):
+            await inter.followup.send(wording_text(inter.user, '權限已改變，統計未送出。'), ephemeral=True)
+            return
+        await inter.followup.send(wording_text(inter.user, display(result, language(inter.user))), ephemeral=True,
                                   allowed_mentions=discord.AllowedMentions.none())
 
 

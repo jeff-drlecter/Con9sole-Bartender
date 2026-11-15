@@ -111,7 +111,7 @@ def clean(value):
 
 
 def detail(summary, member=None):
-    state = {'open':'預約中', 'due':'待開局', 'gathering':'集合中', 'live':'進行中'}[summary['status']]
+    state = {'open':'預約中', 'due':'待開局', 'gathering':'集合中', 'live':'語音已開局'}[summary['status']]
     total = summary['party'] + summary['registered']
     capacity = summary['capacity']
     missing = '未設定目標人數' if capacity is None else f'尚欠 {max(0, capacity-total)} 人'

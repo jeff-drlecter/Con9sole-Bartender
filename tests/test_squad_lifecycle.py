@@ -128,7 +128,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                 return cls()
         embeds = []
         def make_embed(**kwargs):
-            embed = types.SimpleNamespace(**kwargs, fields=[], add_field=lambda **kw: embed.fields.append(kw))
+            embed = __import__('discord').Embed(**kwargs)
             embeds.append(embed)
             return embed
         fake_discord = types.SimpleNamespace(
@@ -176,7 +176,8 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertIn('🎮 Clubs Rush', embeds[-1].description)
         self.assertEqual(embeds[-1].fields, [])
         self.assertIn('16 分鐘', embeds[-1].description)
-        self.assertIn('參與 2 人', embeds[-1].description)
+        self.assertIn('累計曾到場 2 人', embeds[-1].description)
+        self.assertIn('不代表同時遊玩', embeds[-1].footer.text)
         self.assertNotIn('A、B', embeds[-1].description)
         self.assertLessEqual(len(embeds[-1].description.splitlines()), 3)
         self.assertIsNone(message.edit.call_args.kwargs['view'])

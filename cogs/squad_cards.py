@@ -642,7 +642,7 @@ class SquadCards(commands.Cog):
         game_mode = " · ".join(part for part in (game, mode) if part)
         if game_mode:
             lines.append(f"🎮 {game_mode}")
-        lines.append(f"👥 {'參與 ' if ended else ''}{len(names)} 人")
+        lines.append(f"👥 {'累計曾到場 ' if ended else '目前在房 '}{len(names)} 人")
         if ended:
             minutes = max(0, int((session["ended"] - session["started"]) // 60))
             hours, remaining = divmod(minutes, 60)
@@ -651,6 +651,8 @@ class SquadCards(commands.Cog):
         else:
             lines.append(f"📍 <#{channel.id}>")
         embed = discord.Embed(title=title, description="\n".join(lines), colour=colour)
+        if ended:
+            embed.set_footer(text='曾到場不代表同時遊玩；時長為房間場次時間。')
         value = interest_topic(channel, session)
         if value:
             session['last_interest_topic']=value
@@ -731,7 +733,7 @@ class SquadCards(commands.Cog):
         async with shared_async_lock('squad-footprint', config.GUILD_ID, session['id']):
             await original.edit(content='本局已結束 · 正在整理足跡', embed=None,
                                 view=None, allowed_mentions=discord.AllowedMentions.none())
-            # A brief solo visit is not a completed group session.
+            # Legacy footprint eligibility is presentation only, not proof of concurrent play.
             qualified = len(session['participants']) >= 2 and session['ended'] - session['started'] >= 60
             if not qualified:
                 await original.edit(content='本局已結束', embed=None, view=None,

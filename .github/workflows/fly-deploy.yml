@@ -100,6 +100,11 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_helper_sandbox.py'
 
+      - name: Verify community data health and operational policy without private statistics
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl ssh console --app con9sole-bartender -C 'python scripts/verify_community_runtime.py'
+
       - name: Verify application runs without root privileges
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

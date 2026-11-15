@@ -52,10 +52,10 @@ def main():
     print(f"Verified helper sandbox https://discord.com/channels/{channel['guild_id']}/{channel['id']}/{message['id']}")
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         scan=db.execute("SELECT value FROM settings WHERE key='detector_scan'").fetchone()
-    print('Initial detection scan:',scan[0] if scan else 'still running')
+    print('Initial detection scan marker:', 'present' if scan else 'pending')
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         count=db.execute("SELECT COUNT(*) FROM detected_help WHERE state IN ('open','claimed','handoff')").fetchone()[0]
-    print('Stored automatic help candidates:',count)
+    print('Private help store readable; candidate totals withheld.')
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
         pulse_version=db.execute("SELECT value FROM settings WHERE key='pulse_version'").fetchone()
     assert pulse_version and pulse_version[0] == 'disabled-round2', 'Legacy publisher retirement not loaded'

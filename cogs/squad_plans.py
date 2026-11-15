@@ -106,10 +106,10 @@ def card(plan):
     accepted = confirmed(plan)
     total = plan['party'] + len(accepted)
     state = {'open': '預約中', 'due': '招募中' if plan.get('instant') else '待開局',
-             'gathering': '集合中', 'live': '進行中', 'history': '歷史預約・開局情況未核實',
+             'gathering': '集合中', 'live': '語音已開局', 'history': '歷史預約・開局情況未核實',
              'expired': '未開局', 'ended': '已結束', 'started': '已到開始時間', 'cancelled': '已取消'}[plan['status']]
     if plan['status'] in {'open', 'due'} and plan['capacity'] is not None and total >= plan['capacity']:
-        state += '・名額已滿'
+        state += '・報名名額已滿'
     safe = discord.utils.escape_markdown
     embed = discord.Embed(title=f"📅 {safe(plan['game'])} · {state}", colour=0x5865F2)
     embed.description = f"🕙 <t:{plan['start']}:F> · <t:{plan['start']}:R>\n🎮 平台／模式：{safe(plan['mode']) if plan['mode'] else '未填寫'}"
@@ -117,7 +117,7 @@ def card(plan):
     if plan['status'] in ACTIVE:
         remaining = max(0, plan['capacity'] - total) if plan['capacity'] is not None else None
         embed.description += f'\n🙋 尚欠 {remaining} 人' if remaining is not None else '\n🙋 招募人數不限'
-    embed.add_field(name=f'👥 已有 {total}{target} 人',
+    embed.add_field(name=f'👥 預計 {total}{target} 人',
                     value=f"發起人原有 {plan['party']} 人（包括自己）\n按卡確認 {len(accepted)} 人 · 稍後到 {len(set(accepted) & set(plan.get('late', [])))} 人"
                     + (f"\n待重新確認 {len(plan.get('unconfirmed', []))} 人" if plan.get('unconfirmed') else ''), inline=False)
     # Keep the participant roster behind the private list button.
@@ -126,7 +126,7 @@ def card(plan):
         embed.add_field(name='本局語音', value=f"<#{plan['voice']}>", inline=False)
     if plan.get('footprint'):
         url = f"https://discord.com/channels/{plan['guild']}/{plan['channel']}/{plan['footprint']}"
-        embed.add_field(name='本局足跡', value=f'[查看實際參與紀錄]({url})', inline=False)
+        embed.add_field(name='本局足跡', value=f'[查看語音足跡]({url})', inline=False)
     embed.set_footer(text='原有隊友無需重複報名 · 報名不等於到場 · 發起人從名單／選項開局')
     return embed
 

@@ -1,5 +1,7 @@
 # 02 → 06：Helper 資料範圍、新人入口及測試區（第二輪）
 
+> **2026-11-15 狀態校正：** Part 1 實作為 PR #172／1e39801；接手時 Draft、未部署。已完整納入本輪整合分支；當時「不合併／不部署」限制已由 Jeff 第二輪明確授權取代。正式角色／頻道／年齡限制仍未授權套用。 本輪完整現況／待決／驗收界線以 [COMMUNITY_ROUND2.md](COMMUNITY_ROUND2.md) 及整合 PR 的部署證據為準。
+
 2026-11-15，Asia/Hong_Kong。基線／最新 main：`2922760653488f03eacc0b728476d575aa19fd66`。GitHub main Fly Deploy `43635343478` completed/success；未直接登入 Fly 程序／DB 驗證。獨立分支 `codex/helper-scope-entry-round2`；本輪**不合併、不部署、不發 Discord 訊息、不改正式角色／頻道／年齡限制**。
 
 ## 發現及修正
