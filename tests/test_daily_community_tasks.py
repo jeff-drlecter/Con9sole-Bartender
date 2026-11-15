@@ -129,6 +129,23 @@ class DailyCommunityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.cog.ledger.profile(1,10)['total'],0)
 
 
+    async def test_same_day_rejoin_does_not_claim_old_reward_is_new_credit(self):
+        stamp=self.now.timestamp()
+        old_join=(self.now-timedelta(days=1)).timestamp()
+        self.cog.ledger.ensure_membership(1,10,old_join,stamp-700)
+        self.cog.ledger.daily_bonus(1,10,'2026-11-10',stamp-600)
+        self.cog.ledger.member_left(1,10,stamp-120,joined=old_join)
+        self.cog.ledger.ensure_membership(1,10,stamp-60,stamp,previous_join=old_join)
+        self.inter.user.joined_at=self.now-timedelta(minutes=1)
+        before=self.cog.ledger.profile(1,10)['total']
+        status=await self.cog.daily_task_status(self.inter)
+        self.assertNotIn('✅ 已入帳',status['reward_state'])
+        self.assertIn('不會重複發放',status['reward_state'])
+        self.assertIsNone(await self.cog.task_credit(self.inter))
+        self.assertIsNone(self.cog.ledger.daily_bonus(1,10,'2026-11-10',stamp))
+        self.assertEqual(self.cog.ledger.profile(1,10)['total'],before)
+
+
 class TaskScheduleTests(unittest.TestCase):
     def test_legacy_day_unchanged_and_new_pool_has_no_passive_view_task(self):
         import hashlib

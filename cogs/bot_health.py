@@ -77,6 +77,10 @@ class BotHealth(commands.Cog):
             if name=='SquadCards' and cog and getattr(cog,'last_error',None):text+='｜有待查錯誤'
             if name=='SquadCards' and cog:text+=f"｜更新循環 {'運行中' if cog.tick.is_running() else '已停止'}"
             embed.add_field(name=label,value=text,inline=False)
+        outcomes=self.bot.get_cog('CommunityOutcomes')
+        if outcomes and hasattr(outcomes,'health_status'):
+            status=outcomes.health_status()
+            embed.add_field(name='到場觀測',value=f"可用：{status['available']}｜心跳：{status['heartbeat']}｜錯誤：{status['error'] or '無'}",inline=False)
         titles=self.bot.get_cog('TitleRoles')
         title_status='未載入'
         if titles:

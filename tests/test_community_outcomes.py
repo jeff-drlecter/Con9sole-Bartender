@@ -30,10 +30,10 @@ class OutcomesTests(unittest.TestCase):
         return self.store.report(1, plans, 0, self.now, **kwargs)
 
     def test_restart_rejoin_duplicate_and_cross_session_uniques(self):
-        self.store.observe(1, 's1', 'a', [human(1), human(2), human(99, True)])
+        self.store.observe(1, 's1', 'a', [human(1), human(2), human(99, True)], source=dict(channel=10,voice=10,origin='natural' if 'a' is None else 'linked'))
         self.store = Outcomes(self.path, clock=lambda: self.now)
-        self.store.observe(1, 's1', 'a', [human(1), human(2)])
-        self.store.observe(1, 's2', 'b', [human(1)])
+        self.store.observe(1, 's1', 'a', [human(1), human(2)], source=dict(channel=10,voice=10,origin='natural' if 'a' is None else 'linked'))
+        self.store.observe(1, 's2', 'b', [human(1)], source=dict(channel=10,voice=10,origin='natural' if 'b' is None else 'linked'))
         r = self.report([self.plan(), self.plan('b', session='s2')])
         self.assertEqual((r['attendance'], r['unique'], r['repeat']), (3, 2, 1))
         self.assertEqual(r['rate'], 1)
@@ -50,8 +50,8 @@ class OutcomesTests(unittest.TestCase):
         self.assertAlmostEqual(r['rate'], 1/3)
 
     def test_test_markers_guild_and_duplicate_plans_excluded(self):
-        self.store.observe(1, 's1', 'a', [human(1)], test=True)
-        self.store.observe(1, 's1', 'a', [human(2)], test=False)
+        self.store.observe(1, 's1', 'a', [human(1)], test=True, source=dict(channel=10,voice=10,origin='natural' if 'a' is None else 'linked'))
+        self.store.observe(1, 's1', 'a', [human(2)], test=False, source=dict(channel=10,voice=10,origin='natural' if 'a' is None else 'linked'))
         r = self.report([self.plan(), self.plan(), self.plan('b', analytics_test=True),
                          self.plan('c', is_test=True), self.plan('d', channel=11),
                          self.plan('other', guild=2)], excluded_channels=[11])
@@ -187,9 +187,9 @@ class RoundTwoEvidenceTests(unittest.TestCase):
         self.assertEqual(session_origin(dict(id='s'),None,1), 'waiting')
 
     def test_natural_is_separate_and_sequential_people_do_not_imply_coplay(self):
-        self.store.observe(1,'natural',None,[human(1)])
+        self.store.observe(1,'natural',None,[human(1)], source=dict(channel=10,voice=10,origin='natural' if None is None else 'linked'))
         self.now += 60
-        self.store.observe(1,'natural',None,[human(2)])
+        self.store.observe(1,'natural',None,[human(2)], source=dict(channel=10,voice=10,origin='natural' if None is None else 'linked'))
         r=self.report([self.plan()])
         self.assertEqual((r['attendance'],r['natural_sessions'],r['natural_attendance']), (0,1,2))
         self.assertEqual(r['opened'],1)
@@ -204,7 +204,7 @@ class RoundTwoEvidenceTests(unittest.TestCase):
         self.now += 100
         self.store=Outcomes(self.path,clock=lambda:self.now)
         self.store.heartbeat('run-b',success=False)
-        self.store.observe(1,'test-natural',None,[human(2)],test=True)
+        self.store.observe(1,'test-natural',None,[human(2)],test=True, source=dict(channel=10,voice=10,origin='natural' if None is None else 'linked'))
         r=self.report([])
         self.assertEqual((r['last_success'],r['observation_failures'],r['natural_sessions']), (200000,1,0))
         self.assertEqual(r['natural_since'], 200000)
@@ -212,9 +212,9 @@ class RoundTwoEvidenceTests(unittest.TestCase):
         self.assertIn('重啟／漏接未知', display(r))
 
     def test_session_uniques_are_not_concurrent_and_period_is_half_open(self):
-        self.store.observe(1,'s1','a',[human(1)])
+        self.store.observe(1,'s1','a',[human(1)], source=dict(channel=10,voice=10,origin='natural' if 'a' is None else 'linked'))
         self.now+=1
-        self.store.observe(1,'s1','a',[human(2)])
+        self.store.observe(1,'s1','a',[human(2)], source=dict(channel=10,voice=10,origin='natural' if 'a' is None else 'linked'))
         r=self.report([self.plan(),self.plan('at-end',created_at=self.now)])
         self.assertEqual((r['new'],r['per_session'],r['attendance']), (1,[2],2))
         self.assertIsNone(__import__('features.squad_outcome_state',fromlist=['evidence']).evidence(self.plan(),as_of=self.now)['co_participation'])
