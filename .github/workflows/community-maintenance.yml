@@ -1,0 +1,40 @@
+name: Approved community maintenance
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Audit or apply the exact Jeff-approved scope
+        type: choice
+        options: [audit, apply, status]
+        default: audit
+        required: true
+      review_digest:
+        description: Exact fresh audit digest (required for apply)
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: approved-community-maintenance
+  cancel-in-progress: false
+jobs:
+  maintain:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: "0.5.7"
+      - name: Execute bounded maintenance on the deployed application
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          MAINTENANCE_OPERATION: ${{ inputs.operation }}
+          MAINTENANCE_DIGEST: ${{ inputs.review_digest }}
+        run: |
+          command="$(python3 -c 'import hashlib,os,shlex; from pathlib import Path; print(shlex.join(["python", "scripts/apply_approved_community.py", "--operation", os.environ["MAINTENANCE_OPERATION"], "--digest", os.environ["MAINTENANCE_DIGEST"], "--script-sha", hashlib.sha256(Path("scripts/apply_approved_community.py").read_bytes()).hexdigest()]))')"
+          flyctl ssh console --app con9sole-bartender -C "$command"

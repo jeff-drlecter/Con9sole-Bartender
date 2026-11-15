@@ -38,6 +38,9 @@ class Outcomes:
                 CREATE TABLE IF NOT EXISTS outcome_sessions (
                     guild INTEGER, session TEXT, plan TEXT, first_seen REAL,
                     test INTEGER NOT NULL, PRIMARY KEY(guild,session));
+                CREATE TABLE IF NOT EXISTS outcome_coplay (
+                    guild INTEGER, session TEXT, voice INTEGER, qualified REAL, rule TEXT,
+                    PRIMARY KEY(guild,session));
                 CREATE TABLE IF NOT EXISTS outcome_observer_runs (
                     run TEXT PRIMARY KEY, started REAL, last_success REAL, failures INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS outcome_attendance (
@@ -46,6 +49,7 @@ class Outcomes:
             ''')
             db.execute('INSERT OR IGNORE INTO outcome_meta VALUES(?,?)', ('since', self.clock()))
             db.execute('INSERT OR IGNORE INTO outcome_meta VALUES(?,?)', ('natural_since', self.clock()))
+            db.execute('INSERT OR IGNORE INTO outcome_meta VALUES(?,?)', ('coplay_since', self.clock()))
 
     def heartbeat(self, run, *, success):
         """Record observation coverage only; offline intervals are never filled in."""
@@ -69,6 +73,12 @@ class Outcomes:
                 (guild, session, plan, now, int(test)))
             db.executemany('INSERT OR IGNORE INTO outcome_attendance VALUES(?,?,?,?)',
                           [(guild, session, m.id, now) for m in members if not m.bot])
+
+    def mark_coplay(self, guild, session, voice, qualified):
+        from features.co_participation import RULE
+        with connect_sqlite(self.path) as db:
+            db.execute('INSERT OR IGNORE INTO outcome_coplay VALUES(?,?,?,?,?)',
+                       (guild, session, voice, qualified, RULE))
 
     def report(self, guild, plans, start, end, *, excluded_channels=(), as_of=None):
         as_of = end if as_of is None else as_of
@@ -101,6 +111,10 @@ class Outcomes:
         natural = {(session, user) for plan, session, user, stamp, first in rows
                    if plan is None and start <= first < end and stamp <= as_of}
         with connect_sqlite(self.path) as db:
+            coplay_since = db.execute("SELECT stamp FROM outcome_meta WHERE key='coplay_since'").fetchone()[0]
+            milestones = db.execute("""SELECT s.plan,s.session,s.first_seen,c.qualified FROM outcome_coplay c
+                JOIN outcome_sessions s ON s.guild=c.guild AND s.session=c.session
+                WHERE s.guild=? AND s.test=0""", (guild,)).fetchall()
             coverage = db.execute("SELECT MAX(last_success), COALESCE(SUM(failures),0) FROM outcome_observer_runs").fetchone()
         users = {user for _, user in pairs}
         per_user = {u: sum(v == u for _, v in pairs) for u in users}
@@ -116,7 +130,10 @@ class Outcomes:
                     per_session=sorted(sum(s == key for s, _ in pairs) for key in {s for s, _ in pairs}),
                     natural_sessions=len({s for s, _ in natural}), natural_attendance=len(natural),
                     natural_unique=len({u for _, u in natural}),
-                    last_success=coverage[0], observation_failures=coverage[1], natural_since=natural_since,
+                    coplay=len({plan for plan, _, _, stamp in milestones if plan in ids and stamp <= as_of}),
+                    natural_coplay=sum(plan is None and start <= first < end and stamp <= as_of
+                                       for plan, _, first, stamp in milestones),
+                    coplay_since=coplay_since, last_success=coverage[0], observation_failures=coverage[1], natural_since=natural_since,
                     undated=sum(p.get('created_at') is None for p in clean),
                     excluded=len(all_plans)-len(clean)-unpublished, unpublished=unpublished, since=since,
                     first_created=min((p['created_at'] for p in clean if p.get('created_at') is not None), default=None))
@@ -143,7 +160,8 @@ def display(r, code='neutral'):
             '5 秒抽樣及 Gateway 事件只提供已觀測下限；重啟／漏接未知，開始日期不代表全程覆蓋。\n'
             '開局＝至少一位真人通過既有約 30 秒流程；不等於成功組隊或滿員。\n'
             '報名、稍後到、原有朋友數不是出席；同局重入只計一次，跨局再計人次。\n'
-            '兩人先後出現不證明同時參與；共同參與門檻尚未啟用。\n'
+            f"共同參與已觀察達標：約局 {r['coplay']} 局／自然語音 {r['natural_coplay']} 局（始於 {stamp(r['coplay_since'])}）。其餘未知或尚未觀察達標。\n"
+            '共同參與＝同一對真人同房有效觀測 120 秒；短斷線不計時、重啟不補算，不代表滿員或完成遊戲。\n'
             '預約到期＝開始後 2 小時；現在玩＝6 小時。')
     if code == 'hk':
         # Only Bot-owned static copy; never translate stored game names/member input.

@@ -176,7 +176,7 @@ class CommunityLevels(commands.Cog):
         e=discord.Embed(title='🎖️ Con9sole 等級管理',color=0xe5b65b,
                        description=f"狀態：**{cfg['mode']}**\n"+({'active':'已正式計分及維護等級角色；公告按設定發送。','preview':'試行計分中，暫不派角色或發升級公告。','off':'計分已暫停，現有 XP 會保留。'}[cfg['mode']]))
         cap_note=f"Bot 活動每日最多 {cfg['activity_daily_cap']} 次" if cfg['activity_daily_cap'] else wording_text(wording_member, 'Bot 活動冇額外每日上限')
-        e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}",inline=False)
+        e.add_field(name='文字／Bot 活動',value=f"共用 {max(cfg['text_cooldown'],cfg['activity_cooldown'])} 秒冷卻；每次 1 XP\n{cap_note}\n新增、取消或切換通知偏好不計 EXP",inline=False)
         e.add_field(name='語音',value=f"最少 2 位有效真人；每 {cfg['voice_interval']//60} 分鐘 {cfg['voice_xp']} XP\n排除 AFK、耳聾及舞台聽眾",inline=False)
         e.add_field(name='其他',value=f"Booster 文字／活動 ×{cfg['booster_multiplier']}\n來源 {len(cfg['sources'])} 個｜角色獎勵 {len(cfg['rewards'])} 個\n離開清分 {cfg['clear_on_leave']}；每週一香港時間自動開始新榜",inline=False)
         if cfg['mode']=='active':
@@ -430,6 +430,8 @@ class CommunityLevels(commands.Cog):
     @commands.Cog.listener()
     async def on_community_activity(self,member,channel,event):
         """Dispatched only AFTER a successful Bartender action, never raw button clicks."""
+        if event.startswith('interest:'):
+            return  # Notification preferences never earn XP.
         await self.credit(member,channel,'activity',f'i:{event}')
 
     def reconcile_voice_members(self,channel,now):
@@ -645,7 +647,7 @@ class CommunityLevels(commands.Cog):
         filled=min(10,earned*10//required)
         e=discord.Embed(title=wording_text(getattr(inter, "user", None), '🎖️ 我的會員卡') if target.id==inter.user.id else '🎖️ 會員卡',description=f'{target.mention}\n**Lv.{level}** · {p["total"]:,} XP\n'+ '▰'*filled+'▱'*(10-filled)+f' {earned:,}/{required:,}',color=0xe5b65b)
         e.add_field(name='總榜排名',value=str(position) if position else '未上榜')
-        e.add_field(name='XP 來源',value=f"文字 {p['text']:,}｜互動 {p['activity']:,}｜語音 {p['voice']:,}\n匯入基準 {p['imported']:,}",inline=False)
+        e.add_field(name='XP 來源',value=f"文字 {p['text']:,}｜互動 {p['activity']:,}｜語音 {p['voice']:,}\n匯入基準 {p['imported']:,}\n調整通知偏好不計 EXP",inline=False)
         e.set_footer(text=f'模式：{self.cfg["mode"]}｜'+('已正式接管；管理調整另計' if self.cfg['mode']=='active' else '試行／暫停資料；管理調整另計'))
         from features.collection_milestones import collection_snapshot
         from features.drink_views import MemberCardView

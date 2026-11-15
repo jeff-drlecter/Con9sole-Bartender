@@ -11,6 +11,7 @@ import config
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
 from features.community_outcomes import Outcomes, display, window, test_channel
+from features.co_participation import CoParticipation
 from features.language_preferences import language
 from features.squad_outcome_state import session_origin
 from features.wording import text as wording_text
@@ -25,28 +26,49 @@ class CommunityOutcomes(commands.Cog):
         # Explicit known test IDs allow historical exclusion after rename/deletion.
         self.excluded = {int(v) for v in os.getenv('OUTCOMES_TEST_CHANNEL_IDS', '').split(',') if v.strip()}
         self.run_id = uuid.uuid4().hex
+        self.observation_lock = asyncio.Lock()
+        self.coplay = CoParticipation()
         self.sample.start()
 
     def cog_unload(self):
         self.sample.cancel()
 
     async def observe(self):
+        if not hasattr(self, 'observation_lock'):
+            self.observation_lock = asyncio.Lock()
+            self.coplay = CoParticipation()
+        async with self.observation_lock:
+            try:
+                await self._observe()
+            except Exception:
+                self.coplay.reset()
+                raise
+
+    async def _observe(self):
         if not self.bot.is_ready():
+            self.coplay.reset()
             return
         cards, plans = self.bot.get_cog('SquadCards'), self.bot.get_cog('SquadPlans')
         guild = self.bot.get_guild(config.GUILD_ID)
         if not cards or not plans or not guild:
+            self.coplay.reset()
             return
+        samples = {}
+        now = time.time()
+        locations = {m.id: c.id for c in getattr(guild, "voice_channels", []) for m in c.members if not m.bot}
         for key, session in list(cards.state['sessions'].items()):
             channel = guild.get_channel(int(key))
             p = plans.book.get(session.get('plan_id'))
             origin = session_origin(session, p, guild.id)
             if not channel or channel == guild.afk_channel or origin not in ('linked', 'natural'):
                 continue
+            samples[(guild.id, session['id'], channel.id)] = {m.id for m in channel.members if not m.bot}
             await asyncio.to_thread(self.store.observe, guild.id, session['id'], p['id'] if p else None,
                 list(channel.members), test=bool(test_channel(channel) or channel.id in self.excluded
                     or (p and (p.get('analytics_test') or p.get('test') or p.get('is_test')
                                or test_channel(guild.get_channel(p['channel'])) or p['channel'] in self.excluded))))
+        for (gid, sid, voice), qualified in self.coplay.sample(samples, locations, now):
+            await asyncio.to_thread(self.store.mark_coplay, gid, sid, voice, qualified)
         if getattr(self, 'run_id', None):
             await asyncio.to_thread(self.store.heartbeat, self.run_id, success=True)
 
@@ -72,6 +94,12 @@ class CommunityOutcomes(commands.Cog):
                 await self.observe()
             except Exception:
                 log.exception('Outcome voice observation unavailable')
+
+    @commands.Cog.listener()
+    async def on_disconnect(self):
+        # A quick reconnect still invalidates unobserved partial intervals.
+        async with self.observation_lock:
+            self.coplay.reset()
 
     async def menu_entry(self, inter):
         await type(self).report.callback(self, inter, 'week')

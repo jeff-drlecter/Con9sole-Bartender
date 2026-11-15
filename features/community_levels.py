@@ -134,6 +134,8 @@ class Ledger:
     def award(self, guild, user, source, event, now, *, multiplier=1):
         if source not in ('text','activity','voice'):
             raise ValueError('Unknown XP source')
+        if source == 'activity' and event.startswith(('interest:', 'i:interest:')):
+            return None  # Defense for queued/legacy callers; never alter historical XP.
         cfg = self.settings(guild)
         if cfg['mode'] == 'off' or now < cfg.get('cutover_at',0):
             return None
