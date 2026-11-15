@@ -87,3 +87,20 @@ class ChannelEmojiTests(unittest.TestCase):
         snap['channels'][2]['name']='官方更新-fc📢'
         self.assertEqual(build_plan(snap,'official')['actions'],[])
         self.assertFalse(any(a['kind']=='official_update' for a in build_plan(snap,'chats')['actions']))
+
+    def test_library_scope_includes_forums_but_preserves_other_scopes_and_exclusions(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(7,'game',4,None),channel(8,'存檔區',4,None),
+            channel(1,'fc-情報庫',15),channel(2,'情報庫-nba',0),channel(3,'情報庫🗂️',5),
+            channel(4,'官方更新-fc'),channel(5,'fc-吹水組隊💬'),channel(6,'情報庫-voice',2),
+            channel(9,'情報庫-template',15,parent=str(config.TEMPLATE_CATEGORY_ID)),
+            channel(10,'情報庫-archive',parent='8'),channel(11,'情報庫-orphan',parent=None),
+            channel(12,'情報庫使用說明'),channel(13,'情報庫-',15)])
+        original=deepcopy(snap);plan=build_plan(snap,'library')
+        self.assertEqual(snap,original)
+        self.assertEqual((plan['matched_library'],plan['matched_chats'],plan['matched_official'],plan['unchanged']),(3,0,0,1))
+        self.assertEqual([(a['channel'],a['body']) for a in plan['actions']],
+                         [('1',dict(name='fc-情報庫🗂️')),('2',dict(name='情報庫-nba🗂️'))])
+        self.assertEqual(plan['blocked'],[])
+        snap['channels'][2]['name']='fc-情報庫🗂️';snap['channels'][3]['name']='情報庫-nba🗂️'
+        self.assertEqual(build_plan(snap,'library')['actions'],[])
+        self.assertFalse(any(a['kind']=='library' for a in build_plan(snap,'official')['actions']))
