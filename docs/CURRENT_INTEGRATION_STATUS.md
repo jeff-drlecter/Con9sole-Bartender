@@ -70,7 +70,7 @@ GitHub `Python checks` 對整合 head 執行 Python 3.11 完整回歸、編譯�
 
 ## 正式盤點、備份與回復
 
-新增 `Round integration read-only inspection` 只在本整合分支 push 或 main 手動執行，借既有 Fly SSH 程序讀 image、SQLite 與 JSON。沒有 Bot login、migrate、UPDATE、POST 或角色操作；只輸出存在與否及資料完整性，無玩家／活動名單或私人統計。腳本成功只代表讀取完成，固定 `deployment_approved=false`。
+新增 `Round integration read-only inspection` 現僅允許 main 手動執行（不會隨 push 或部署自動執行），借既有 Fly SSH 程序讀 image、SQLite 與 JSON。沒有 Bot login、migrate、UPDATE、POST 或角色操作；只輸出存在與否及資料完整性，無玩家／活動名單或私人統計。腳本成功只代表讀取完成，固定 `deployment_approved=false`。
 
 `persisted_active_voice_sessions_present` 來自 Bot 持久狀態，**不是即時 Discord voice snapshot**；部署前仍要核實活動語音／約局及 pending/posting 的影響。無法讀取不當作空閒或零筆。
 
@@ -89,3 +89,13 @@ GitHub `Python checks` 對整合 head 執行 Python 3.11 完整回歸、編譯�
 放行前須取得整合 head CI、正式資料盤點、可用新備份／回復目標，以及關鍵權限和資料保存的可核實結果。缺少實際身份繼續標未驗證，不能由 Owner 或 fixture 代簽。涉及會送出訊息的真人流程，只能在既有授權專用測試安排內做；目前沒有這項實測證據。
 
 Jeff 已授權條件達標後部署，不需重問同一部署許可。真正需要 Jeff 補充的，是可操作的普通成員／Helper／Tester 測試登入或其操作證據；不要提供密碼或 token。若正式盤點發現未分類舊收據，先只保留／隔離，額外取消或人工發送另列精確內容決定，不能在程式部署時自行處置。
+
+
+## 2026-11-16 00:50 香港｜已完成檢查及正式存取阻擋
+
+- 程式整合 SHA `cb54644cf4c85e44052ad44759a00e6f7759cfb7`，tree `5eb2e0d1d5f490c179afed3efdf9534823eb9f56`；[整合 Draft PR #185](https://github.com/jeff-drlecter/Con9sole-Bartender/pull/185)。本地與遠端 tree 相同。
+- 此 SHA [PR CI 43737611809](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43737611809) 及 push CI `43737607727` 均 success；job `132883573723` 的安裝、編譯、完整回歸、locked dependency audit、容器建置／私檔排除／非 root／持久卷檢查全部 success。本地 917 tests / OK。
+- [正式只讀盤點 43737608053](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43737608053) 在執行任何 step 前被 GitHub production environment protection 拒絕：本整合分支不獲允許進入 production。Annotations 明確列出 branch protection；沒有 SSH、沒有資料讀取／寫入、沒有 Fly deploy。
+- **沒有移除 environment、修改保護規則、改用其他 secret 或先合併 main 來避過限制。** 只讀 workflow 已收窄為既有 main 手動入口，避免無效分支重試；腳本仍可供已有授權的正式執行環境檢閱及執行。尚未在 main，不能宣稱現在已能手動執行它。
+- 現有正式版本只獲歷史 Fly deploy 證據；即時健康、活動語音、活躍未分類 receipts、新備份及可用回復目標仍未核實。這些與真身份驗收是目前放行阻擋，**沒有部署本輪新程式**。
+- 此後新增一項實際 dispatcher 整合回歸，驗證三類來源在 reserve 後各自撤回、僅剩有效 game 候選送一次，以及 legacy pending 保留。這是假的 Discord transport，不是成員實測。最終 head 及最新 CI 見 #185 checks；本段舊 SHA 的成功不自動冒充後續 SHA 成功。

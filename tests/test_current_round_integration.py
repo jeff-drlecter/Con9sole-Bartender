@@ -97,6 +97,34 @@ class Integration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before,after)
         self.assertEqual(interest.unattributed_deliveries(self.guild.id,12),1)
 
+    async def test_dispatcher_rechecks_both_consents_and_quarantines_legacy(self):
+        from cogs.squad_cards import SquadCards
+        self.book.act(self.key,11,'join')
+        for uid in (10,11):self.book.act(self.key,uid,'remind_on')
+        for uid in (10,12):interest.toggle(self.scope,self.guild.id,uid)
+        interest.reserve('dispatch',self.scope,[10,11,12],plan_users={10,11})
+        self.book.act(self.key,10,'remind_off');self.book.act(self.key,11,'remind_off')
+        interest.cancel(self.scope,self.guild.id,10)
+        self.book.link_voice(self.key,1,20);self.book.sync_session(self.key,20,'dispatch')
+        people={uid:N(id=uid,bot=False) for uid in (1,10,11,12)}
+        self.guild.fetch_member=AsyncMock(side_effect=lambda uid:people[uid])
+        voice=N(id=20,guild=self.guild,members=[people[1]],permissions_for=lambda _:N(view_channel=True,connect=True))
+        self.channel.send=AsyncMock(return_value=N(id=900))
+        self.bot.get_channel=lambda _:self.channel
+        cards=object.__new__(SquadCards);cards.bot=self.bot;cards.interest_baseline=set();cards.refresh_interest_cards=AsyncMock()
+        session=dict(id='dispatch',destination=100,message=500,interest_topic=interest.topic(self.guild.id,'Any game'),plan_id=self.key)
+        await cards.notify_interested(voice,session)
+        self.assertEqual(self.channel.send.await_args.kwargs['allowed_mentions'].to_dict(),{'users':[12],'parse':[]})
+        await cards.notify_interested(voice,session)
+        self.assertEqual(self.channel.send.await_count,1)
+        interest.reserve('legacy-dispatch',self.scope,[11],plan_users={11})
+        with interest.connect_sqlite(interest.STATS_DB) as db:
+            db.execute("UPDATE squad_interest_delivery SET origins='{}' WHERE session_id='legacy-dispatch'")
+        session=dict(id='legacy-dispatch',destination=100,message=500,interest_topic=interest.topic(self.guild.id,'Any game'))
+        await cards.notify_interested(voice,session)
+        self.assertEqual(self.channel.send.await_count,1)
+        self.assertEqual(interest.pending_deliveries('legacy-dispatch',self.scope),[(0,[11])])
+
     async def test_browse_temporary_error_clears_details_and_retains_back(self):
         from features.plan_browse_ui import browse
         self.guild.fetch_roles.side_effect=OSError('offline')
