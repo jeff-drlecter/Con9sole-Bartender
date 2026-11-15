@@ -372,6 +372,10 @@ class RegistryMenuView(BaseMenuView):
 
         target = self.cog if item.cog == "Menu" else interaction.client.get_cog(item.cog)
         if target is None:
+            if item.cog in ('SquadCards','SquadPlans'):
+                from core.newcomer_routes import show_next_steps
+                await show_next_steps(interaction,reason='unavailable')
+                return
             await send_or_followup(
                 interaction,
                 content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),
@@ -382,6 +386,10 @@ class RegistryMenuView(BaseMenuView):
 
         method = _get_method(target, item)
         if method is None:
+            if item.cog in ('SquadCards','SquadPlans'):
+                from core.newcomer_routes import show_next_steps
+                await show_next_steps(interaction,reason='unavailable')
+                return
             await send_or_followup(
                 interaction,
                 content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),

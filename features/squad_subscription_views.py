@@ -2,14 +2,17 @@
 from features.wording import text as wording_text, view_copy as wording_view
 import discord
 from core.ui import SafeView
+from core.private_source import Source, SourceUnavailable
+from features.notification_words import text as center_text
 from core.action_guard import shared_async_lock
 from features import squad_interest
 from features.menu_stats import run_stats
 
 
 class SubscriptionView(SafeView):
-    def __init__(self, cog, guild_id, owner_id, rows, page=0, member=None):
+    def __init__(self, cog, guild_id, owner_id, rows, page=0, member=None, channel_id=None):
         super().__init__(timeout=180)
+        self.channel_id=channel_id
         self.member = member
         self.cog,self.guild_id,self.owner_id,self.rows = cog,guild_id,owner_id,rows
         self.page=max(0,min(page,max(0,(len(rows)-1)//20)))
@@ -22,6 +25,7 @@ class SubscriptionView(SafeView):
                 await interaction.response.defer()
                 async with self.cog.lock:
                     async with shared_async_lock('subscription-consent',self.guild_id,select.values[0]):
+                        await Source(self.owner_id,self.guild_id,self.channel_id).resolve(interaction)
                         await run_stats(squad_interest.cancel,select.values[0],self.guild_id,self.owner_id)
                 await self.cog.menu_entry(interaction, replace=True)
             select.callback=choose;self.add_item(select)
@@ -46,9 +50,15 @@ class SubscriptionView(SafeView):
         wording_view(self.member, self)
 
     async def interaction_check(self, interaction):
-        if interaction.guild_id==self.guild_id and interaction.user.id==self.owner_id and not interaction.user.bot:
-            return True
-        await interaction.response.send_message(wording_text(self.member, '面板唔屬於你，請重新開啟「我的組隊通知」。'),ephemeral=True)
+        if interaction.guild_id==self.guild_id and interaction.user.id==self.owner_id and not interaction.user.bot and self.channel_id is not None:
+            try:
+                self.member,_,_=await Source(self.owner_id,self.guild_id,self.channel_id).resolve(interaction)
+                return True
+            except SourceUnavailable:pass
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=center_text(interaction.user,'denied'),embed=None,view=None)
+        else:
+            await interaction.response.send_message(center_text(interaction.user,'denied'),ephemeral=True)
         return False
 
     def embed(self):

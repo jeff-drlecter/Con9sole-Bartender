@@ -19,7 +19,7 @@ from scripts.audit_helper_entry import report, VIEW_HISTORY
 
 
 def setup():
-    member=N(id=42,roles=[N(id=config.HELPER_ROLE_IDS[0])],guild_permissions=N(administrator=False))
+    member=N(id=42,bot=False,roles=[N(id=config.HELPER_ROLE_IDS[0])],guild_permissions=N(administrator=False))
     guild=N(id=config.GUILD_ID,default_role=N(id=config.GUILD_ID),fetch_member=AsyncMock(return_value=member))
     def channel(cid):
         c=MagicMock(spec=discord.TextChannel)
@@ -28,6 +28,7 @@ def setup():
         return c
     board,source,demo=map(channel,(ROOM_ID,100,DEMO_ROOM_ID))
     channels={c.id:c for c in (board,source,demo)}
+    guild.fetch_roles=AsyncMock(return_value=[])
     guild.fetch_channel=AsyncMock(side_effect=lambda cid:channels[cid])
     cog=HelperSandbox(N(get_cog=lambda _:None))
     cog.enabled=True;cog.channel=board;cog.tester_id=55
@@ -118,20 +119,20 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
     async def test_existing_support_requires_fresh_read_write_and_non_age_gated_channel(self):
         cog,i,m,source,demo,channels=setup()
         channels[config.SUPPORT_CHANNEL_ID]=source
-        self.assertIs(await support_destination(i),source)
+        self.assertEqual((await support_destination(i)).id,source.id)
         for bit in ('view_channel','read_message_history','send_messages'):
             setattr(source.permissions_for.return_value,bit,False)
             self.assertIsNone(await support_destination(i))
             setattr(source.permissions_for.return_value,bit,True)
         source.nsfw=True
         await show_route(i,'help')
-        self.assertNotIn(source.mention,i.followup.send.call_args.args[0])
+        self.assertNotIn(source.mention,i.followup.send.call_args.kwargs['content'])
         self.assertTrue(i.followup.send.call_args.kwargs['ephemeral'])
         source.edit.assert_not_called();source.send.assert_not_called()
         source.nsfw=False
         await show_route(i,'observe')
-        self.assertIn('<id:customize>',i.response.send_message.call_args.args[0])
-        self.assertIn('日後',i.response.send_message.call_args.args[0])
+        self.assertIn('<id:customize>',i.followup.send.call_args.kwargs['content'])
+        self.assertIn('日後',i.followup.send.call_args.kwargs['content'])
 
     async def test_disabled_pulse_is_not_started_and_preserves_database(self):
         cog,i,m,source,demo,channels=setup()

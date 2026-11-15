@@ -106,8 +106,12 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         i.client = N(get_cog=lambda name: menu if name == 'Menu' else None)
         await view.open(i, 'menu')
         menu.open_main_menu.assert_awaited_once_with(i)
+        i.user.bot=False
+        i.response.is_done=lambda:False
+        i.guild=N(id=config.GUILD_ID,fetch_roles=AsyncMock(return_value=[]),fetch_member=AsyncMock(return_value=i.user),fetch_channel=AsyncMock(return_value=i.channel))
+        i.channel.guild=i.guild
         await view.open(i, 'games')
-        self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
+        self.assertTrue(i.followup.send.await_args.kwargs['ephemeral'])
 
     async def test_public_card_is_compact_and_unknown_language_is_neutral(self):
         p = dict(game='FC', mode='PS5／Clubs', start=200, party=1, members=[4], capacity=4, owner=3, status='open')
