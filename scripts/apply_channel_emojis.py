@@ -59,7 +59,7 @@ def build_plan(snapshot,scope):
         for c in eligible:
             parent=by_id.get(str(c.get('parent_id')))
             base=plain_channel_name(c['name'])
-            if parent and parent['type']==4 and re.fullmatch(r'(?:情報庫(?:[-－｜|].+)?|.+[-－｜|]情報庫)',base):
+            if parent and parent['type']==4 and re.fullmatch(r'(?:(?:攻略)?情報庫(?:[-－｜|].+)?|.+[-－｜|](?:攻略)?情報庫)',base):
                 plan['matched_library']+=1
                 add(c,base+'🗂️','library')
     if scope=='all':

@@ -104,3 +104,16 @@ class ChannelEmojiTests(unittest.TestCase):
         snap['channels'][2]['name']='fc-情報庫🗂️';snap['channels'][3]['name']='情報庫-nba🗂️'
         self.assertEqual(build_plan(snap,'library')['actions'],[])
         self.assertFalse(any(a['kind']=='library' for a in build_plan(snap,'official')['actions']))
+
+    def test_clarified_guide_library_name_is_preserved_and_idempotent(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(7,'game',4,None),
+            channel(1,'攻略情報庫',15),channel(2,'攻略情報庫-fc'),channel(3,'nba-攻略情報庫'),
+            channel(4,'攻略情報庫使用說明'),channel(5,'攻略情報庫-voice',2)])
+        plan=build_plan(snap,'library')
+        self.assertEqual(plan['matched_library'],3)
+        self.assertEqual([a['body']['name'] for a in plan['actions']],
+                         ['攻略情報庫🗂️','攻略情報庫-fc🗂️','nba-攻略情報庫🗂️'])
+        for c in snap['channels'][1:4]:c['name']+='🗂️'
+        again=build_plan(snap,'library')
+        self.assertEqual(again['unchanged'],3)
+        self.assertEqual(again['actions'],[])
