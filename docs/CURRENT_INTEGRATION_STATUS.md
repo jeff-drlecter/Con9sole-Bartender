@@ -1,5 +1,7 @@
 # Con9sole 現行整合與驗收總表
 
+> 03 追加候選（2026-11-16）：Jeff 已要求部署最新 03 設計。#186 `4315ef7` 僅為規格；本 `feat/confirmed-plan-events` 分支新增成局 VOICE Event、發起人報名提醒及持久交付保護，依賴下述 #185 `9a53a22`。完整新增狀態／接口／資料／回復見 [03 追加交接](PLAN_EVENTS_HOST_NOTICES_HANDOFF.md)，精確 head／CI 由本分支 Draft PR 記錄。以下 #185 的 918 tests 等證據是基線，不當作本候選通過。正式版本、真人驗收與放行阻擋仍未改變，沒有部署新功能。
+
 更新：2026-11-16（香港）。本文件記錄本輪 02–05 的整合候選，不是發布公告或放行證明。版本以 GitHub PR head / Actions 的完整 SHA 為準；舊文件只代表當時快照。iPhone Mirroring／實機依 Jeff 指示略過，不計通過，也不作部署阻擋。
 
 ## 正式基線與交接證據

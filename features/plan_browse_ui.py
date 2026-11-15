@@ -84,11 +84,12 @@ class InstantDraft(SafeView):
         self.cog,self.channel,self.owner,self.seed=cog,channel,owner,seed
         self.used=False
         self.member=member
+        self.host_notices=bool(seed.get('host_notices', True))
     def summary(self):
         s=self.seed
         safe=lambda value:discord.utils.escape_mentions(discord.utils.escape_markdown(str(value)))
         note='只係你嘅招募設定，唔會代其他人報名。' if language(self.member)=='hk' else '只代表你的招募設定，不會代他人報名。'
-        return f"🎮 {safe(s['game']) or '請先修改遊戲'}\n平台／模式：{safe(s['mode']) or '未填'} · 原有 {s['party']} 人 · 尚欠 {s['missing']} 人\n{note}"
+        return f"🎮 {safe(s['game']) or '請先修改遊戲'}\n平台／模式：{safe(s['mode']) or '未填'} · 原有 {s['party']} 人 · 尚欠 {s['missing']} 人\n{note}\n有人報名時提醒我：{'開啟' if self.host_notices else '關閉'}（原頻道短訊息，其他有權限成員可見）。\n現在玩不建立活動；原有隊友不用重複報名。"
     async def interaction_check(self,i):
         if i.user.id==self.owner and not self.used:return True
         await i.response.send_message(words(i,'此草稿已關閉，請重新開啟。','呢份草稿已關閉，請重新開啟。'),ephemeral=True);return False
@@ -104,8 +105,18 @@ class InstantDraft(SafeView):
                 raise AccessError('denied')
         except (AccessError,discord.HTTPException,OSError):
             await i.response.send_message(words(i,'目的地目前無法使用，草稿未發起。','目的地暫時用唔到，草稿未發起。'),ephemeral=True);return
-        form=PlanForm(self.cog,ch,instant=True,seed=self.seed)
+        from features.plan_delivery import options
+        from features.squad_plans import counts
+        party,capacity=counts(self.seed['party'],self.seed['missing'])
+        form=PlanForm(self.cog,ch,instant=True,seed=self.seed,confirmed=True,
+            delivery_options=options(party,capacity,instant=True,notices=self.host_notices))
         await form.on_submit(i)
+    @discord.ui.button(label='切換報名提醒',row=1)
+    async def notice(self,i,b):
+        if not await self.interaction_check(i):return
+        self.host_notices=not self.host_notices
+        self.seed['host_notices']=self.host_notices
+        await i.response.edit_message(content=self.summary(),view=self)
     @discord.ui.button(label='修改')
     async def edit(self,i,b):
         if not await self.interaction_check(i):return

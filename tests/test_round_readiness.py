@@ -19,6 +19,8 @@ class Readiness(unittest.TestCase):
             self.assertTrue(result['unclassified_active_receipts_present'])
             self.assertTrue(result['persisted_active_voice_sessions_present'])
             self.assertFalse(result['deployment_approved'])
+            self.assertFalse(result['plan_event_unresolved_present'])
+            self.assertFalse(result['host_notice_unresolved_present'])
             self.assertNotIn('987654321098765432',json.dumps(result))
             self.assertEqual(before,{p.name:p.read_bytes() for p in root.iterdir()})
             with sqlite3.connect(dbpath) as db:

@@ -64,6 +64,11 @@ async def main():
             field._value = value
         with patch('cogs.squad_plans.parse_start', return_value=1900003600):
             await form.on_submit(i)
+            target.send.assert_not_awaited()
+            assert not cog.book.all()
+            draft = i.response.send_message.call_args.kwargs['view']
+            assert '有人報名時提醒我' in draft.summary()
+            await draft.publish.callback(i)
         target.send.assert_awaited_once()
         source.send.assert_not_awaited()
         assert cog.book.all()[0]['channel'] == target.id

@@ -128,22 +128,25 @@ def card(plan):
     if plan.get('footprint'):
         url = f"https://discord.com/channels/{plan['guild']}/{plan['channel']}/{plan['footprint']}"
         embed.add_field(name='本局足跡', value=f'[查看語音足跡]({url})', inline=False)
+    from features.plan_delivery import event_url
+    event = event_url(plan)
+    if event:
+        embed.add_field(name='約定活動', value=f'[查看活動]({event}) · 有興趣不等於報名', inline=False)
     embed.set_footer(text='原有隊友無需重複報名 · 報名不等於到場 · 發起人從名單／選項開局')
     return embed
 
 
 class PlanForm(SafeModal):
-    def __init__(self, cog, channel, plan=None, *, instant=False, seed=None):
+    def __init__(self, cog, channel, plan=None, *, instant=False, seed=None, confirmed=False, delivery_options=None):
         super().__init__(title='約一局' if plan is None else '修改約局')
         self.cog, self.channel_id, self.plan_id = cog, channel.id, plan and plan['id']
         self.instant = instant or bool(plan and plan.get('instant'))
-        self.game = discord.ui.TextInput(label='遊戲', default=plan['game'] if plan else game_hint(channel), max_length=80)
+        self.confirmed, self.delivery_options = confirmed, delivery_options
+        self.game = discord.ui.TextInput(label='遊戲', default=plan['game'] if plan else (seed or {}).get('game', game_hint(channel)), max_length=80)
         self.start = discord.ui.TextInput(label='開始時間（24小時制）', placeholder='今晚22:00／明天22:00',
-            default=datetime.fromtimestamp(plan['start'], HK).strftime('%Y-%m-%d %H:%M') if plan else None, max_length=30)
+            default=datetime.fromtimestamp(plan['start'], HK).strftime('%Y-%m-%d %H:%M') if plan else (seed or {}).get('start'), max_length=30)
         self.mode = discord.ui.TextInput(label='平台／模式（選填）', placeholder='例如 PS5／Clubs、PC／征服、跨平台／REC',
-            default=plan['mode'] if plan else '', required=False, max_length=80)
-        if seed and not plan:
-            self.game.default, self.mode.default = seed['game'], seed['mode']
+            default=plan['mode'] if plan else (seed or {}).get('mode', ''), required=False, max_length=80)
         self.party = discord.ui.TextInput(label='已有人數（包括自己）', default=str(plan['party']) if plan else str((seed or {}).get('party', 1)), max_length=2)
         self.missing = discord.ui.TextInput(label='尚欠人數（選填，留空不限）', required=False, max_length=2,
             default=str(plan['capacity'] - plan['party']) if plan and plan['capacity'] else str((seed or {}).get('missing', '')))
@@ -177,6 +180,11 @@ class PlanForm(SafeModal):
         except ValueError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
+        if not self.plan_id and not self.confirmed:
+            from features.plan_delivery_ui import Draft
+            view = Draft(self.cog, channel, interaction.user, dict(changes, instant=self.instant), self.delivery_options)
+            await interaction.response.send_message(view.summary(), view=view, ephemeral=True, allowed_mentions=NONE)
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.cog.lock:
             try:
@@ -197,7 +205,7 @@ class PlanForm(SafeModal):
                     if self.instant and teams and any(s.leader_id == interaction.user.id and not s.cancelled
                             and not teams.is_state_expired(s) for s in teams.states.values()):
                         raise ValueError('你仍有舊版即時招募，請先完成該局；原有卡片仍可使用。')
-                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, analytics_test=test_channel(channel), **changes)
+                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, analytics_test=test_channel(channel), delivery_options=self.delivery_options, **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='due' if self.instant else 'open')
                     view = PlanView(self.cog, posted)
@@ -358,6 +366,7 @@ class ManageView(SafeView):
         self.edit.disabled = not owner
         self.cancel.disabled = not (owner or admin)
         self.start.disabled = not owner
+        self.delivery.disabled = not owner
 
     async def interaction_check(self, interaction):
         p = self.cog.book.get(self.key)
@@ -392,6 +401,18 @@ class ManageView(SafeView):
                 return
             await self.cog.refresh(p)
         await interaction.followup.send('已取消約局。', ephemeral=True)
+
+
+    @discord.ui.button(label='活動／報名提醒', row=1)
+    async def delivery(self, interaction, button):
+        from features.plan_delivery_ui import Settings
+        p = self.cog.book.get(self.key)
+        if not p:
+            await interaction.response.send_message('約局已無法使用。', ephemeral=True); return
+        view = Settings(self.cog, p, interaction.user)
+        if not await view.interaction_check(interaction):
+            return
+        await interaction.response.send_message(view.summary(p), view=view, ephemeral=True, allowed_mentions=NONE)
 
 
 class PlanEntry(SafeView):
@@ -482,6 +503,8 @@ class SquadPlans(commands.Cog):
         self.book = PlanBook(DATA_DIR / 'squad_plans.json')
         from features.plan_services import PersonalReminders
         self.personal_reminders_v1 = PersonalReminders(self)
+        from features.plan_delivery import PlanDelivery
+        self.delivery = PlanDelivery(self)
 
     async def member_status(self, guild, user_id, key):
         """02 integration: freshly authorized, read-only and roster-free."""
@@ -542,6 +565,7 @@ class SquadPlans(commands.Cog):
         await browse(self,interaction,mine=True)
 
     async def cog_load(self):
+        self.delivery.recover()
         self.bot.add_view(PlanEntry(self))
         for p in self.book.all():
             if p['message']:
@@ -591,6 +615,10 @@ class SquadPlans(commands.Cog):
                 for p in self.book.all():
                     if p['status'] == 'gathering' and not self.bot.get_channel(p.get('voice')):
                         self.book.release_voice(p['id'])
+                        p = self.book.get(p['id'])
+                    if p.get('delivery'):
+                        await self.delivery.reconcile_event(p)
+                        await self.delivery.flush_notices(self.book.get(p['id']))
                         p = self.book.get(p['id'])
                     if p['dirty']:
                         await self.refresh(p)

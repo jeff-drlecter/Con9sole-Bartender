@@ -43,6 +43,8 @@ def inspect(root, environ=None):
         uncertain_card_posts_present=card_unknown,
         active_plans_present=any(p['status'] in active for p in plans.values()),
         plan_posting_or_voice_attempt_present=any(p['status']=='posting' or (p['status'] in active and p.get('voice_attempt')) for p in plans.values()),
+        plan_event_unresolved_present=any(p.get('delivery',{}).get('event',{}).get('state') in {'creating','unknown','syncing','unknown_sync','conflict'} for p in plans.values()),
+        host_notice_unresolved_present=any(n.get('state') in {'queued','sending','unknown'} for p in plans.values() for n in p.get('delivery',{}).get('notices',[])),
         persisted_active_voice_sessions_present=any(s.get('ended') is None for s in sessions.values()),
         voice_evidence='persisted Bot state; not a live Discord voice-state snapshot',
         legacy_receipt_policy='preserve and quarantine unclassified receipts; never guess origins or replay uncertain',
