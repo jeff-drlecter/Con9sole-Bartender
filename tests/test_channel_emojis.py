@@ -54,3 +54,12 @@ class ChannelEmojiTests(unittest.TestCase):
         self.assertIn('體驗交流: missing or ambiguous',plan['blocked'])
         snap['channels'][0]['id']='99'
         self.assertIn('rules: configured ID differs',build_plan(snap,'all')['blocked'])
+
+    def test_suggestion_box_is_not_assumed_to_be_configured_support(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(123,'📩站務-意見箱📩'),
+             channel(config.SUPPORT_CHANNEL_ID,'求助入口')])
+        plan=build_plan(snap,'all')
+        self.assertEqual([(a['channel'],a['body']) for a in plan['actions']],
+                         [('123',dict(name='站務-意見箱📮'))])
+        snap['channels'].append(channel(124,'站務-意見箱'))
+        self.assertEqual(build_plan(snap,'all')['actions'],[])
