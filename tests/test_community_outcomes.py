@@ -143,15 +143,15 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RewardEvidenceTests(unittest.TestCase):
-    def test_unique_subscription_like_actions_can_repeat_after_shared_cd(self):
+    def test_subscription_actions_no_longer_award_even_after_shared_cd(self):
         from features.community_levels import Ledger
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Ledger(Path(tmp)/'levels.sqlite3')
             ledger.configure(1, mode='active')
-            self.assertIsNotNone(ledger.award(1, 2, 'activity', 'interest:g:2:100', 100))
+            self.assertIsNone(ledger.award(1, 2, 'activity', 'interest:g:2:100', 100))
             self.assertIsNone(ledger.award(1, 2, 'activity', 'interest:g:2:101', 110))
-            self.assertIsNotNone(ledger.award(1, 2, 'activity', 'interest:g:2:102', 161))
-            self.assertEqual(ledger.profile(1,2)['activity'], 2)
+            self.assertIsNone(ledger.award(1, 2, 'activity', 'interest:g:2:102', 161))
+            self.assertEqual(ledger.profile(1,2)['activity'], 0)
 
 
 class InventoryTests(unittest.TestCase):
@@ -193,7 +193,7 @@ class RoundTwoEvidenceTests(unittest.TestCase):
         r=self.report([self.plan()])
         self.assertEqual((r['attendance'],r['natural_sessions'],r['natural_attendance']), (0,1,2))
         self.assertEqual(r['opened'],1)
-        self.assertIn('共同參與門檻尚未啟用', display(r))
+        self.assertIn('共同參與已觀察達標：約局 0 局', display(r))
         self.assertIn('出席未知（沒有可用觀測）', display(r))
         self.assertNotIn('成局率',display(r))
         self.assertIn('暫時冇可用觀測',display(r,'hk'))

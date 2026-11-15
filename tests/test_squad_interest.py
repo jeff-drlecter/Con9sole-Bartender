@@ -110,18 +110,16 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('取消',i.followup.send.call_args.args[0])
         view.stop()
 
-    async def test_separate_successful_subscriptions_emit_separate_receipts(self):
+    async def test_subscription_add_cancel_readd_never_dispatches_xp(self):
         view = FootprintView(None, self.topic)
         view.refresh = AsyncMock()
         events = []
-        for event_id in (101, 102, 103):
+        for event_id, expected in ((101, True), (102, False), (103, True)):
             i = interaction(); i.id = event_id
             await view.toggle(i)
             events.extend(call.args[3] for call in i.client.dispatch.call_args_list)
-        self.assertEqual(len(events), 2)
-        self.assertNotEqual(events[0], events[1])
-        self.assertTrue(events[0].endswith(':101'))
-        self.assertTrue(events[1].endswith(':103'))
+            self.assertEqual(i.user.id in storage.members(self.topic['id']), expected)
+        self.assertEqual(events, [])
         view.stop()
 
     def roster_interaction(self, ids=(10, 11)):

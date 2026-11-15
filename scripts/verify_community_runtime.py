@@ -28,6 +28,7 @@ def read_db(path, queries):
 
 def verify(root, environ, now):
     result = dict(configuration={k: environ.get(k, 'unset') for k in ENV_KEYS})
+    result['notification_preference_exp']='disabled by code; historical XP retained'
     # Only explicit stored policy; absence is not silently reported as the default.
     settings = read_db(root/'community_levels.sqlite3', [
         ('SELECT value FROM settings WHERE guild=?', (GUILD,))])
@@ -50,6 +51,12 @@ def verify(root, environ, now):
     if rows is not None:
         names={r[0] for r in rows[0]}
         assert {'outcome_sessions','outcome_attendance','outcome_meta'} <= names
+        if 'outcome_coplay' in names:
+            start=read_db(outcomes,[("SELECT stamp FROM outcome_meta WHERE key='coplay_since'",())])
+            assert start[0] and start[0][0][0] <= now, 'Missing participation observation start'
+            result['coparticipation']='same pair / same room / 120 observed seconds; durable milestones only'
+        else:
+            result['coparticipation']='previous schema; unavailable'
         if 'outcome_observer_runs' in names:
             values=read_db(outcomes,[('SELECT MAX(last_success) FROM outcome_observer_runs',())])
             stamp=values[0][0][0]
@@ -65,4 +72,5 @@ def verify(root, environ, now):
 if __name__ == '__main__':
     result=verify(Path(os.getenv('DRINK_DATA_DIR','/data')),os.environ,time.time())
     assert result.get('outcome_observer') == 'recent', 'Outcome observer has no recent successful cycle'
+    assert result.get('coparticipation','').startswith('same pair'), 'Participation schema unavailable'
     print(json.dumps(result,ensure_ascii=False))

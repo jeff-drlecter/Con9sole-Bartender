@@ -1,6 +1,8 @@
 # 第二輪整合：房間開局、參與觀測與營運交接
 
-2026-11-15（Asia/Hong_Kong）。這份文件為本輪狀態來源；舊交接文件保留歷史，不再代表目前待部署清單。
+2026-11-15（Asia/Hong_Kong）。本文件記錄 PR #173 當時的方案與驗收。後續 Jeff 已批准下列五項建議；最新實作與授權範圍見 [已批准改善](APPROVED_COMMUNITY_POLICIES.md)，本文「待決／未啟用」不再代表現時授權狀態。
+
+PR #173 已合併 main `36ec245`，部署 [43671748200](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43671748200) 成功（834 tests），包括 Part 1。下文「重新 fetch」與 Draft 狀態保留為接手時證據。
 
 ## 證據與授權
 
