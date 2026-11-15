@@ -77,6 +77,25 @@ class BotHealth(commands.Cog):
             if name=='SquadCards' and cog and getattr(cog,'last_error',None):text+='｜有待查錯誤'
             if name=='SquadCards' and cog:text+=f"｜更新循環 {'運行中' if cog.tick.is_running() else '已停止'}"
             embed.add_field(name=label,value=text,inline=False)
+        # Detailed source/account diagnostics are administrator-only.
+        if is_server_admin(interaction.guild.get_member(interaction.user.id)):
+            outcomes = self.bot.get_cog('CommunityOutcomes')
+            if outcomes and hasattr(outcomes, 'health_status'):
+                try:
+                    status = outcomes.health_status()
+                    embed.add_field(name='到場觀測', value=f"可用：{bool(status.get('available'))}｜心跳：{status.get('heartbeat') or '未知'}｜待核對：{bool(status.get('error'))}", inline=False)
+                except Exception:
+                    embed.add_field(name='到場觀測', value='未知，待核對', inline=False)
+            from core.delivery_health import format_health
+            for cog_name, label in (('RSSDelivery', '新聞收集／交付'), ('StreamAlerts', '直播查詢／交付')):
+                source = self.bot.get_cog(cog_name)
+                if source and hasattr(source, 'health_snapshot'):
+                    try:
+                        status = await asyncio.to_thread(source.health_snapshot)
+                        value = format_health(status)
+                    except Exception:
+                        value = '狀態讀取失敗，待核對。'
+                    embed.add_field(name=label, value=value, inline=False)
         titles=self.bot.get_cog('TitleRoles')
         title_status='未載入'
         if titles:

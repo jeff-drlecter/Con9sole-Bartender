@@ -105,7 +105,9 @@ async def show_news(cog,interaction,demo=False):
     label='🧪 虛構範例・我的情報' if demo else '我的情報・真實新聞'
     content = rss_text(interaction.user, 'fixture' if demo else 'scope')
     if not demo: content += '\n' + cog.store_news_scope(interaction)
-    if not articles: content += '\n' + rss_text(interaction.user, 'empty')
+    condition = cog.personal_source_condition(interaction) if not demo else 'ok'
+    if condition != 'ok': content += '\n' + rss_text(interaction.user, 'source_'+condition)
+    elif not articles: content += '\n' + rss_text(interaction.user, 'empty')
     await interaction.followup.send(content,embed=cog.render({'kind':'digest','articles':articles},now,label) if articles else None,
                                     ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 

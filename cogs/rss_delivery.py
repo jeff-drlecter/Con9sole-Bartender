@@ -1,5 +1,6 @@
 """Opt-in RSS publisher; RSS_DELIVERY_SOURCES is empty by default."""
 from __future__ import annotations
+from core.delivery_health import record, safe_snapshot, source_condition
 
 import asyncio
 import logging
@@ -115,6 +116,39 @@ class RSSDelivery(commands.Cog):
         if self.session:
             await self.session.close()
 
+    def observe(self, store, key, result, **kwargs):
+        try: record(store, key, result, **kwargs)
+        except Exception: self.errors['health_write'] = 'observation write failed'
+
+    def health_snapshot(self):
+        observations, error = safe_snapshot(self.store)
+        for route, store in self.route_stores.items():
+            rows, bad = safe_snapshot(store)
+            error |= bad
+            observations.update({route+':'+k: v for k,v in rows.items()})
+            try:
+                for name,state,attempts in store.batch_report():
+                    if state in ('sending','uncertain'):
+                        observations[route+':receipt_pending'] = dict(result='uncertain', pending=True)
+            except Exception: error = True
+        rows, bad = safe_snapshot(self.store_news)
+        observations.update(rows)
+        return dict(collection=bool(self.sources), preview=self.public_personal,
+                    delivery=self.digest_config.enabled, store_preview=self.store_news_public,
+                    store_delivery=False, observations=observations,
+                    read_error=error or bad or 'health_write' in self.errors)
+
+    def personal_source_condition(self, interaction=None):
+        rows, bad = safe_snapshot(self.store)
+        if bad: return 'failed'
+        condition = source_condition(rows, self.sources, time.time(), 86400)
+        if interaction is not None and self.store_news_available(interaction):
+            stores, bad = safe_snapshot(self.store_news)
+            keys = ['epic:hk','epic:tw'] + ['steam:'+str(i) for i in self.store_config.get('steam_appids',[])]
+            extra = source_condition(stores, keys, time.time(), 7200)
+            if bad or extra != 'ok': return 'partial'
+        return condition
+
     def store_news_available(self, interaction):
         return bool(self.store_news is not None and (self.store_news_public or
                     (self.digest_config.simulation and interaction.channel_id == self.digest_config.channel_id)))
@@ -151,11 +185,15 @@ class RSSDelivery(commands.Cog):
         for market in ('hk','tw'):
             bucket='epic:'+market
             try:
+                self.observe(self.store_news, bucket, 'attempting')
                 now=time.time()
                 rows=epic_offers(await self.fetch_store_json(epic_url(market)),market,now)
                 await asyncio.to_thread(self.store_news.replace,bucket,rows,now)
+                self.observe(self.store_news, bucket, 'obtained', obtained=True)
                 self.errors.pop(bucket,None)
             except Exception as exc:
+                try: self.observe(self.store_news, bucket, 'source_failed', failed=True)
+                except Exception: self.errors['health_write'] = 'observation write failed'
                 self.errors[bucket]=type(exc).__name__
                 log.warning('Store source unavailable: %s %s',bucket,type(exc).__name__)
         appids=set(self.store_config.get('steam_appids',[]))
@@ -163,6 +201,7 @@ class RSSDelivery(commands.Cog):
         for appid in sorted(appids):
             bucket='steam:'+str(appid)
             try:
+                self.observe(self.store_news, bucket, 'attempting')
                 data=await self.fetch_store_json(f'https://store.steampowered.com/api/appdetails?appids={appid}&cc=hk&l=tchinese')
                 item=data.get(str(appid),{})
                 if item.get('success') is not True: raise ValueError('Steam game not available')
@@ -182,8 +221,11 @@ class RSSDelivery(commands.Cog):
                     now=time.time()
                     rows=[row for e in entries if (row:=reviewed_steam_offer(e,regional,market,now)) is not None]
                     await asyncio.to_thread(self.store_news.replace,f'steam-offer:{appid}:{market}',rows,now)
+                self.observe(self.store_news, bucket, 'obtained', obtained=True)
                 self.errors.pop(bucket,None)
             except Exception as exc:
+                try: self.observe(self.store_news, bucket, 'source_failed', failed=True)
+                except Exception: self.errors['health_write'] = 'observation write failed'
                 self.errors[bucket]=type(exc).__name__
                 log.warning('Store source unavailable: %s %s',bucket,type(exc).__name__)
 
@@ -193,6 +235,7 @@ class RSSDelivery(commands.Cog):
             if source not in self.sources:
                 continue
             try:
+                self.observe(self.store, source, 'attempting')
                 async with self.session.get(url, max_redirects=5) as response:
                     response.raise_for_status()
                     body = bytearray()
@@ -209,7 +252,10 @@ class RSSDelivery(commands.Cog):
                             await asyncio.to_thread(store.ingest, source, articles, time.time())
                 self.errors.pop(source, None)
                 self.source_checked[source] = time.time()
+                self.observe(self.store, source, 'obtained' if articles else 'empty', obtained=True)
             except Exception as exc:
+                try: self.observe(self.store, source, 'source_failed', failed=True)
+                except Exception: self.errors['health_write'] = 'observation write failed'
                 self.errors[source] = type(exc).__name__ + ": " + str(exc)[:180]
                 log.warning("RSS delivery poll %s: %s", source, self.errors[source])
 
@@ -344,8 +390,13 @@ class RSSDelivery(commands.Cog):
 
     async def send_digest(self, channel, store, digest_config, sources, label, view):
         try:
+            self.observe(store, 'schedule', store.schedule_result(digest_config, sources, time.time()))
+        except Exception:
+            self.errors['health_write'] = 'schedule observation read failed'
+        try:
             batch = await asyncio.to_thread(store.claim_batch, digest_config, sources, time.time())
         except Exception:
+            self.errors['health_write'] = 'schedule read/write failed'
             log.exception('RSS digest claim failed')
             return
         if batch is None:
@@ -363,7 +414,12 @@ class RSSDelivery(commands.Cog):
             log.warning('RSS digest send: %s', detail)
         try:
             await asyncio.to_thread(store.finish_batch, batch['slot'], outcome, time.time(), detail)
+            final = next(r[1] for r in store.batch_report() if r[0] == batch['slot'])
+            self.observe(store, 'schedule', final, delivered=final=='sent', failed=final in ('failed','uncertain'), pending=final in ('uncertain','sending'))
         except Exception:
+            self.errors['health_write'] = 'receipt write failed; delivery requires verification'
+            try: self.observe(store, 'schedule', 'receipt_write_failed', failed=True, pending=True)
+            except Exception: pass
             log.exception('RSS digest finalization failed; reserved batch will not be resent')
 
     @store_poll.before_loop

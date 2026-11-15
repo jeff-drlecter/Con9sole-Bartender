@@ -1,5 +1,6 @@
 """Twitch stream alerts, separate from the existing Twitch chat relay."""
 from __future__ import annotations
+from core.delivery_health import record, safe_snapshot
 
 import asyncio
 import json
@@ -318,6 +319,18 @@ class StreamAlerts(commands.Cog):
         if self.session:
             await self.session.close()
 
+    def observe(self, key, result, **kwargs):
+        try:
+            record(self.store, key, result, **kwargs)
+        except Exception:
+            self.health_write_failed = True
+
+    def health_snapshot(self):
+        rows, bad = safe_snapshot(self.store)
+        return dict(collection=bool(self.api), preview=False,
+                    delivery=bool(self.store and self.store.state['enabled']),
+                    observations=rows, read_error=bad or getattr(self, 'health_write_failed', False))
+
     def channel(self, group):
         guild = self.bot.get_guild(config.GUILD_ID)
         channel = guild.get_channel(self.store.state[group + '_channel']) if guild else None
@@ -389,6 +402,7 @@ class StreamAlerts(commands.Cog):
         e.update(stream_id=stream['id'], started_at=stream['started_at'], stream=stream,
                  message_id=message.id, message_channel=channel.id, pending=None)
         self.store.save()
+        self.observe('account:'+login, 'sent', delivered=True)
 
     async def end_card(self, login, e):
         if e.get('message_id'):
@@ -410,6 +424,7 @@ class StreamAlerts(commands.Cog):
             try:
                 message = await channel.fetch_message(e['message_id'])
                 await message.edit(content='', embed=embed, view=view, allowed_mentions=NONE)
+                self.observe('account:'+login, 'updated', delivered=True)
             except discord.NotFound:
                 pass  # Deleted cards are never reposted.
         e.update(stream_id=None, started_at=None, message_id=None, message_channel=None, pending=None)
@@ -427,7 +442,10 @@ class StreamAlerts(commands.Cog):
                     return
                 self.channel('member')
                 self.channel('partner')
+                self.observe('api', 'attempting')
                 streams = await self.api.streams(due)
+                self.observe('api', 'obtained', obtained=True)
+                failed = False
                 for login in due:
                     e, stream = self.store.state['entries'][login], streams.get(login)
                     action = transition(e, stream)
@@ -450,17 +468,23 @@ class StreamAlerts(commands.Cog):
                             await self.end_card(login, e)
                         e['last_check'] = now
                         self.store.save()
+                        self.observe('account:'+login, action, delivered=False)
                     except (discord.HTTPException, RuntimeError, aiohttp.ClientError, asyncio.TimeoutError):
                         # Each account retries on its own cadence; no hot retry loop or false offline.
                         e['last_check'] = now
                         self.store.save()
+                        failed = True
+                        self.observe('account:'+login, 'delivery_failed', failed=True, pending=True)
                         self.last_error = f'{login}: 通知更新失敗，會按原頻率重試。'
                         log.warning('Stream delivery deferred for %s', login)
+                if not failed: self.last_error = ''
+                self.observe('delivery', 'partial_failure' if failed else 'checked', failed=failed, pending=failed)
                 self.last_success = now
                 self.store.state['metrics'] = {'last_success': now, 'requests_session': self.api.requests,
                                                'roster': len(self.store.state['entries'])}
                 self.store.save()
         except Exception as exc:
+            self.observe('api', 'check_failed', failed=True)
             self.last_error = f'直播檢查失敗：{type(exc).__name__}（未改為收台）'
             log.warning('Stream check failed: %s', type(exc).__name__)
             await asyncio.sleep(30)  # A failing API is never polled more frequently than once per minute.
@@ -483,8 +507,10 @@ class StreamAlerts(commands.Cog):
         if selected in rows:
             e = rows[selected]
             lines.append(f"\n已選：**{selected}**｜{'成員' if e['group'] == 'member' else '友台'}｜{'啟用' if e['enabled'] else '停用'}")
-        if self.last_success:
-            lines.append(f'最後成功檢查：<t:{int(self.last_success)}:R>')
+        rows, bad = safe_snapshot(self.store)
+        api_success = rows.get('api', {}).get('obtained')
+        lines.append('最後成功 API 查詢：' + (f'<t:{int(api_success)}:R>' if api_success else '未知'))
+        lines.append('交付狀態：' + rows.get('delivery', {}).get('result', '未知'))
         if self.last_error:
             lines.append('最近錯誤：' + self.last_error)
         lines.append(f"本次程序 Twitch 請求：{self.api.requests if self.api else 0}")
