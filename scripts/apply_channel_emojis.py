@@ -31,23 +31,30 @@ KNOWN_IDS={
 
 
 def build_plan(snapshot,scope):
-    if str(snapshot['guild']['id'])!=GUILD or scope not in ('chats','all'):raise ValueError('Wrong guild/scope')
+    if str(snapshot['guild']['id'])!=GUILD or scope not in ('chats','all','official'):raise ValueError('Wrong guild/scope')
     channels=snapshot['channels'];by_id={str(c['id']):c for c in channels}
     excluded={str(config.TEMPLATE_CATEGORY_ID)}
     for c in channels:
         if c['type']==4 and plain_channel_name(c['name']) in ('封存','存檔區','隱藏區域','sample-template'):
             excluded.add(str(c['id']))
     eligible=[c for c in channels if c['type'] in (0,5,15) and str(c.get('parent_id')) not in excluded]
-    plan=dict(scope=scope,roles_digest=digest(snapshot['roles']),actions=[],blocked=[],unchanged=0,matched_chats=0)
+    plan=dict(scope=scope,roles_digest=digest(snapshot['roles']),actions=[],blocked=[],unchanged=0,matched_chats=0,matched_official=0)
     def add(c,name,kind):
         if str(c.get('guild_id'))!=GUILD:raise ValueError('Wrong channel guild')
         if len(name)>100:plan['blocked'].append(kind+': name too long');return
         if c['name']==name:plan['unchanged']+=1;return
         plan['actions'].append(dict(kind=kind,channel=str(c['id']),body=dict(name=name),before_channel=channel_guard(c)))
     for c in eligible:
-        if c['type']==0 and is_squad_chat_name(c['name']):
+        if scope in ('chats','all') and c['type']==0 and is_squad_chat_name(c['name']):
             plan['matched_chats']+=1
             add(c,c['name'].removesuffix('💬').rstrip()+'💬','squad_chat')
+    if scope=='official':
+        for c in eligible:
+            parent=by_id.get(str(c.get('parent_id')))
+            base=plain_channel_name(c['name'])
+            if c['type'] in (0,5) and parent and parent['type']==4 and re.fullmatch(r'官方更新(?:[-－｜|].+)?',base):
+                plan['matched_official']+=1
+                add(c,base+'📢','official_update')
     if scope=='all':
         for base,emoji in PROPOSED.items():
             matches=[c for c in eligible if c['name']==base+emoji or plain_channel_name(c['name'])==base]
@@ -60,13 +67,13 @@ def build_plan(snapshot,scope):
 
 
 def summary(plan):
-    return dict(scope=plan['scope'],matched_chats=plan['matched_chats'],unchanged=plan['unchanged'],
-      changes=[dict(kind=a['kind'],after=a['body']['name'] if a['kind'].startswith('fixed:') else 'existing-game-prefix-吹水組隊💬') for a in plan['actions']],blocked=plan['blocked'])
+    return dict(scope=plan['scope'],matched_chats=plan['matched_chats'],matched_official=plan.get('matched_official',0),unchanged=plan['unchanged'],
+      changes=[dict(kind=a['kind'],after=a['body']['name'] if a['kind'].startswith('fixed:') else ('官方更新-原遊戲名📢' if a['kind']=='official_update' else 'existing-game-prefix-吹水組隊💬')) for a in plan['actions']],blocked=plan['blocked'])
 
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--operation',choices=('audit','apply','status'),required=True)
-    parser.add_argument('--scope',choices=('chats','all'),default='chats');parser.add_argument('--digest',default='')
+    parser.add_argument('--scope',choices=('chats','all','official'),default='chats');parser.add_argument('--digest',default='')
     parser.add_argument('--script-sha',required=True);args=parser.parse_args()
     if args.script_sha!=hashlib.sha256(Path(__file__).read_bytes()).hexdigest():raise ValueError('Deployed script differs from main')
     os.umask(0o077)

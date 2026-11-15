@@ -72,3 +72,18 @@ class ChannelEmojiTests(unittest.TestCase):
         self.assertFalse(any(x.startswith('官方資訊-discord:') for x in plan['blocked']))
         snap['channels'].append(channel(124,'官方資訊-discord'))
         self.assertIn('官方資訊-discord: missing or ambiguous',build_plan(snap,'all')['blocked'])
+
+    def test_official_scope_preserves_game_text_and_excludes_other_channel_types(self):
+        snap=dict(guild=dict(id=GUILD),roles=[],channels=[channel(7,'FC',4,None),channel(8,'存檔區',4,None),
+            channel(1,'官方更新-fc',5),channel(2,'官方更新-nba📢'),channel(3,'fc-吹水組隊'),
+            channel(4,'官方更新-voice',2),channel(5,'官方更新-template',parent=str(config.TEMPLATE_CATEGORY_ID)),
+            channel(6,'官方更新-archive',parent='8'),channel(9,'官方更新-forum',15),
+            channel(10,'官方更新-orphan',parent=None),channel(11,'非官方更新-fc'),channel(12,'官方更新-')])
+        before=deepcopy(snap);plan=build_plan(snap,'official')
+        self.assertEqual(snap,before)
+        self.assertEqual((plan['matched_official'],plan['matched_chats'],plan['unchanged']),(2,0,1))
+        self.assertEqual([(a['channel'],a['body']) for a in plan['actions']], [('1',dict(name='官方更新-fc📢'))])
+        self.assertEqual(plan['blocked'],[])
+        snap['channels'][2]['name']='官方更新-fc📢'
+        self.assertEqual(build_plan(snap,'official')['actions'],[])
+        self.assertFalse(any(a['kind']=='official_update' for a in build_plan(snap,'chats')['actions']))
