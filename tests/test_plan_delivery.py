@@ -252,7 +252,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         data=dict(game='FC',mode='PC',party=2,capacity=4,start=11000,instant=False)
         view=Draft(self.cog,N(id=20),owner,data)
         self.assertIn('4 人成局',view.summary());self.assertIn('有人報名時提醒我：開啟',view.summary())
-        i=N(user=N(id=2),response=N(send_message=AsyncMock(),edit_message=AsyncMock()))
+        i=N(user=N(id=2),response=N(send_message=AsyncMock(),edit_message=AsyncMock(),defer=AsyncMock()),
+            followup=N(send=AsyncMock()),edit_original_response=AsyncMock())
         await view.publish.callback(i);self.assertEqual(self.book.all(),[])
         i.user=owner;i.guild=self.guild
         with patch('features.plan_services.fresh_source',new=AsyncMock(return_value=(owner,N(id=20)))):
@@ -349,14 +350,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         from cogs.squad_plans import PlanForm
         owner=N(id=1);ch=N(id=20)
         view=Draft(self.cog,ch,owner,dict(game='FC',mode='PC',party=1,capacity=2,start=11000))
-        barrier=asyncio.Event();read=0
-        async def access(*a):
-            nonlocal read
-            read+=1
-            if read==2:barrier.set()
-            await barrier.wait();return owner,ch
         def inter():return N(user=owner,guild=self.guild,response=N(send_message=AsyncMock()))
-        with patch('features.plan_services.fresh_source',new=access),patch.object(PlanForm,'on_submit',new_callable=AsyncMock) as submit:
+        with patch.object(PlanForm,'on_submit',new_callable=AsyncMock) as submit:
             await asyncio.gather(view.publish.callback(inter()),view.publish.callback(inter()))
             submit.assert_awaited_once()
 

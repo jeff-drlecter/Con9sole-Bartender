@@ -1,5 +1,50 @@
 # Con9sole 現行整合與驗收總表
 
+## 2026-11-16 現行部署與桌面驗收（本節優先）
+
+正式版本已由 [release #188](https://github.com/jeff-drlecter/Con9sole-Bartender/pull/188) 部署，main/runtime commit 均為 `87dc4569606ea6806ff2e4a6fa1136791815d343`。下方舊段落中的「未部署」、登入阻擋及舊 main 均為歷史快照。#181–185、#187 的內容已整合於 #188；#165–168 亦已經歷史整合，不因 PR 仍 open 再次合併。所有後續驗收修正及最新 runtime SHA 以[草稿回應修正 PR 的現行結果表](https://github.com/jeff-drlecter/Con9sole-Bartender/pulls?q=head%3Afix%2Fdraft-response-timeout)為追加證據；未獲新部署證據前，下列正式版本保持有效。
+
+### 程式、部署與保存證據
+
+- Release head `18c6315c5441850fc9b578967b615feb0041237f`，tree `c99a8eca8556bbcd2ea248edfad9251333f4ee06`；與 squash main 的 tree 相同。
+- [PR checks 43800075668](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43800075668)：955 tests、編譯、hash-locked dependencies、pip-audit 無已知漏洞、容器建置／私檔排除／非 root／持久卷檢查均成功。
+- [正式部署 43800236045](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43800236045)，job `133078464723` success；正式 pipeline 再跑 955 tests。03:49:32 UTC 讀回 APP_COMMIT 與 main 完整 SHA 一致。
+- 同一 machine `9080d6d9a9d168`、同一 `/data` volume `vol_r688z3eko3nnmln4`；新 image `registry.fly.io/con9sole-bartender:git-87dc4569606ea6806ff2e4a6fa1136791815d343`。沒有第二 Bot。
+- 部署前新備份 `20261116T034859Z-1da5e057d6f34f309b38c0a048de2f36`，65 stores，backup_ready/restore_check 通過。這是逐 store 一致性備份，不是跨 store 原子快照或異地備份。
+- 03:48:47／03:49:03 UTC 盤點：持久 active plans／voice sessions、待發／不明收據、卡片 posting／語音嘗試、Event／發起人通知未解決狀態均未發現。是 Bot 持久資料盤點，不能冒充即時 Discord 語音原子快照。
+- 啟動、recent observer、資料庫完整性、plan readability、RSS／store／Helper sandbox／community health 均通過；EXP 政策與既有通知收據保留。Twitch ready、指令同步成功；沒有為驗收向成員發通知。
+
+### 目前逐項狀態
+
+| 範圍／成員可感受到的改變 | 程式來源 | 已檢查／已部署 | Discord 真人驗收與限制 |
+|---|---|---|---|
+| 02 私人名單每次重查權限；統一管理本局與遊戲通知 | #181 + #185 整合修正 | 955 項整合回歸涵蓋；87dc456 已部署 | Owner、Helper 均開啟通知中心成功；撤權、他人操作及原卡／中心實際切換尚未真人驗證 |
+| 03 探索現有約局、快捷欠人、私人草稿、失效卡 | #182 + #185 | 87dc456 已部署 | Helper 探索空清單、刷新／返回、欠 2 人摘要及取消即玩草稿成功；未發布測試約局 |
+| 03 達成成局人數後建立 Discord Event；可關閉活動及報名提醒 | #187 / 5083b771ae39caae13a6f568984485c08ab7e775 | 87dc456 已部署；持久意圖、未知結果不重播及來源範圍回歸通過 | Helper 未來約局摘要預設 3 人成局，兩個開關可獨立切換；未真人建立 Event、發送提醒或進行語音局 |
+| 03 未來約局草稿取消逾時 | 87dc456 UI 實測發現 | 修正分支先回應再 REST；取消不讀 REST；962 tests、compile、diff check 本地通過；尚需該修正 CI／部署／真人重測 | 12:01 香港出現一次「didn’t respond in time」，保留失敗紀錄；不能算通過 |
+| 一次／長期／本局同意獨立、同局去重 | #181+#182+#185 | 87dc456 已部署；隔離舊未分類 receipts | 不發測試通知；真人去重與取消後交付仍未驗證 |
+| 04 首次觀察、D0／D7／D28 再參與與缺漏標示；不改 EXP 政策 | #183 / bce72fc88d522912b7fd69d3596a893032240346 | 87dc456 已部署；日界、成熟分母、排除測試及獎勵回歸 | 正式報表／真實角色拒絕仍未驗證；不宣稱社群成效改善 |
+| 05 新聞／直播取得與交付分開；未知與失敗可見 | #184 / 78a799820074439cbfe84a7745e5f4f4ea1521a2 | 87dc456 已部署；健康檢查成功 | 普通成員新聞、Helper／Admin 健康頁完整邊界及外部失敗恢復未真人驗證 |
+| 主選單、HK／TW／中性、舊卡、偏好保存 | #185+#187 | 87dc456 已部署；回歸包含語言與舊 custom ID | Helper HK 在服務重啟後仍顯示；TW／中性真實操作、舊卡全矩陣未驗證；主選單舊說明另於修正分支更新 |
+
+### 實際帳號與操作
+
+| 身份 | 已核實帳號／角色證據 | 本輪實測 | 未驗證 |
+|---|---|---|---|
+| Owner／Admin | `jeff_drlecter`，Server Owner badge；成員列表 Mod | 私人 /menu、通知中心、本局提醒空清單 | 不代表普通成員或 Helper；全角色組合未重新盤點 |
+| Helper | `jeff_con9sole`，顯示家用夠の姐夫，成員列表 Helpers | 11:57–12:01 香港：/menu、約局探索／刷新／返回、即玩草稿取消、未來草稿與獨立開關、通知中心開啟 | 未來草稿取消出現逾時；沒有公開發起或送出測試通知；沒有以 Helper 代普通成員 |
+| 普通成員 | 未核實獨立普通成員登入 | 無 | 全流程仍未驗證 |
+| Tester | 未核實獨立 Tester 登入 | 無 | 全流程仍未驗證 |
+| iPhone | 按 Jeff 指示略過 | 無 | 略過，不算通過，不阻擋部署 |
+
+### 回復與剩餘事項
+
+本次只改程式，沒有角色／頻道權限、排序、改名、公告或 Tester 通知。沒有以成功的程式測試取代真人驗收。02／05 原建議的正式權限或改名仍需 Jeff 審閱精確差異，並未混入部署。
+
+後續小修優先回到已部署的 `git-87dc456...` image，保留同一 machine／volume 與所有當前資料；先重新檢查活動及收據，再使用現行 workflow 的單機限定更新。**不要還原舊 DB／JSON／EXP／偏好／通知收據。** 本輪之前的歷史回復 image 為 `deployment-01M7F6E9RBKN6MKG3VJG3RJ4C6`；若已有 linked Event、未知交付或隔離 receipts，不能直接全版回退至缺少同步器／新 dispatcher 的舊程式，需保留該模組或逐項安全收尾。未執行實際 rollback，不宣稱回復演練通過。單 Bot 更新與 ephemeral 面板可能短暫中斷，應從原卡／/menu 重開。
+
+## 歷史紀錄（以下全部保留，不能覆蓋上方現行證據）
+
 > **2026-11-16 部署執行更新（本段優先；下文保留歷史）**：Jeff 再次明確要求部署並允許切換帳號。正式 release 候選包含 #185 的四項整合與 #187 的 03 Event／發起人提醒。#187 head `5083b771ae39caae13a6f568984485c08ab7e775` 已通過 950 tests、鎖定依賴審核及容器檢查（PR CI `43743363310`）。新 release 另加入正式 workflow 的強制單機／持久卷／idle receipts 與活動檢查、近期 observer 健康、備份回讀及實際 commit 核對；最終結果以 release PR／本次 Actions 為準，不能用上一 SHA 的結果代替。正常合併授權 release 到 main 後，production job 在更換機器前執行關卡，失敗就停止；production environment 及 main required `validate` 均保留。舊段落「未合併／未部署／沒有進入 main」僅是當時狀態，不能凌駕後續執行證據。
 >
 > Chrome 已看到 `jeff_con9sole`，但顯示「Please log in again」，已打開登入頁等候 Jeff 完成；目前仍是 `jeff_drlecter`，未以它代普通成員通過。所有未完成身份矩陣保留未驗證；iPhone 繼續略過。

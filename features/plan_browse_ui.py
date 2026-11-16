@@ -98,13 +98,14 @@ class InstantDraft(SafeView):
         if not await self.interaction_check(i):return
         from cogs.squad_plans import PlanForm,allowed,squad_channel
         self.used=True # Before any await: a second click cannot submit this draft.
+        await i.response.defer(ephemeral=True, thinking=True)
         try:
             member,ch=await fresh_source(i.guild,i.user.id,self.channel.id)
             from types import SimpleNamespace
             if not squad_channel(ch) or not allowed(SimpleNamespace(guild_id=i.guild_id,user=member,channel=ch)):
                 raise AccessError('denied')
         except (AccessError,discord.HTTPException,OSError):
-            await i.response.send_message(words(i,'目的地目前無法使用，草稿未發起。','目的地暫時用唔到，草稿未發起。'),ephemeral=True);return
+            await i.edit_original_response(content=words(i,'目的地目前無法使用，草稿未發起。','目的地暫時用唔到，草稿未發起。'),view=None);return
         from features.plan_delivery import options
         from features.squad_plans import counts
         party,capacity=counts(self.seed['party'],self.seed['missing'])
