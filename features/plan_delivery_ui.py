@@ -129,7 +129,8 @@ class Numbers(SafeModal):
             if capacity is not None and not v.data['party'] < capacity <= v.data['party'] + 99:
                 raise ValueError('最高人數須大於原有人數，並最多多 99 人。')
             settings = options(v.data['party'], capacity, instant=v.data.get('instant', False),
-                minimum=minimum, auto=bool(minimum and not v.data.get('instant')), notices=v.settings['host_notices'])
+                minimum=minimum, auto=bool(minimum and v.settings['auto_event'] and not v.data.get('instant')),
+                notices=v.settings['host_notices'])
             # None means explicitly disabled here, rather than an inferred capacity.
             settings['minimum'] = minimum
         except ValueError as exc:
