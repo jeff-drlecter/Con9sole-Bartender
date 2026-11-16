@@ -157,4 +157,3 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(kwargs['view'].children), 0)
         self.assertFalse(kwargs['allowed_mentions'].users)
         self.assertFalse(kwargs['allowed_mentions'].everyone)
-
