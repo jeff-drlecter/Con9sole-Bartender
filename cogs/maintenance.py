@@ -105,15 +105,24 @@ class Maintenance(commands.Cog):
         previous = self.store.state(guild.id)['baseline']
         ids = set(previous['snapshot']['bots']) if previous else set()
         for role in roles:
-            if role.is_bot_managed() and (role.name.casefold() in ('carl-bot', 'dyno', 'con9sole bartender')
+            if role.is_bot_managed() and (role.name.casefold() in ('carl-bot', 'con9sole bartender')
                                          or (self.bot.user and role.tags.bot_id == self.bot.user.id)):
                 ids.add(str(role.tags.bot_id))
-        if len(ids) < 3:
-            raise ValueError('未能識別三個核心 Bot，請人工覆核。')
+        if len(ids) < 2 or not self.bot.user or str(self.bot.user.id) not in ids:
+            raise ValueError('未能識別 Carl 與 Bartender 核心 Bot，請人工覆核。')
         bots = {}
         for uid in sorted(ids):
-            member = await guild.fetch_member(int(uid))
-            bots[uid] = [r.id for r in member.roles]
+            try:
+                member = await guild.fetch_member(int(uid))
+            except discord.NotFound as exc:
+                if exc.code != 10007:  # Only Discord's explicit Unknown Member.
+                    raise
+                # A present member always has @everyone. Preserve a missing
+                # baseline identity as [] so removal/rejoin remains visible
+                # drift, without aborting other configuration/health reads.
+                bots[uid] = []
+            else:
+                bots[uid] = [r.id for r in member.roles]
         from utils import is_temp_vc_id
         temporary = [c['id'] for c in channels if c['type'] == 2 and is_temp_vc_id(int(c['id']))]
         return snapshot(roles, channels, [r.to_dict() for r in rules], bots, temporary)
