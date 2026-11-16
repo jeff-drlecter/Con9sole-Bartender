@@ -319,6 +319,8 @@ class RegistryMenuView(BaseMenuView):
         embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
         from features.language_preferences import localize_menu
         embed, view = localize_menu(interaction.user, embed, HomeMenuView(self.cog, include_admin=can_use_admin(interaction.user)))
+        from features.member_hints import add_member_hint
+        await add_member_hint(self.cog.bot, interaction, embed, context='more', private=True)
 
         try:
             await send_or_followup(

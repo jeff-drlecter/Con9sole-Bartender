@@ -36,7 +36,8 @@ class Services(unittest.IsolatedAsyncioTestCase):
         self.source.side_effect=AccessError('denied')
         self.assertEqual((await self.api.list_for_member(self.guild,2))['rows'],[])
     async def test_pages_over_twenty_full_and_revoked(self):
-        for uid in range(1,26):self.create(uid)
+        # Tied start times sort by random plan ID; no row may be owned by joiner 2.
+        for uid in range(100,125):self.create(uid)
         rows=await query(self.cog,self.guild,2)
         self.assertEqual(len(rows),25)
         self.book.act(rows[0]['id'],2,'join')

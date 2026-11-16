@@ -23,6 +23,7 @@ from features.daily_bar import complete_daily_bar_task
 from features.drink_views import DrinkResultView
 from features.member_picker import open_member_picker, resolve_member
 from features.member_activity import credit_success
+from features.member_hints import add_member_hint
 
 log = logging.getLogger("con9sole-bartender.cheers")
 
@@ -136,6 +137,7 @@ class Cheers(commands.Cog):
                 color=0x57F287,
             )
             embed.set_footer(text=quote.author)
+            await add_member_hint(self.bot, interaction, embed, context='cheers')
             try:
                 await interaction.edit_original_response(
                     content=to.mention if to and to.id != interaction.user.id else None,
