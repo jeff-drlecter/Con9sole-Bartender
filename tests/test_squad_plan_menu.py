@@ -37,8 +37,9 @@ async def main():
     source = channel(1, '新成員')
     target = channel(2, 'fc-吹水組隊')
     hidden = channel(4, 'gta-吹水組隊', False)
-    guild = N(text_channels=[source, target, hidden], me=N(id=9),
+    guild = N(id=config.GUILD_ID, fetch_member=AsyncMock(return_value=N(id=3,bot=False)), fetch_roles=AsyncMock(return_value=[]), fetch_channel=AsyncMock(side_effect=lambda ident:{1:source,2:target,4:hidden}[ident]), text_channels=[source, target, hidden], me=N(id=9),
               get_channel=lambda ident: {1:source, 2:target, 4:hidden}.get(ident))
+    for ch in (source,target,hidden):ch.guild=guild
     with tempfile.TemporaryDirectory() as directory, \
          patch('cogs.squad_plans.is_verified_member', return_value=True), \
          patch('cogs.squad_plans.is_server_admin', return_value=False):
@@ -63,6 +64,11 @@ async def main():
             field._value = value
         with patch('cogs.squad_plans.parse_start', return_value=1900003600):
             await form.on_submit(i)
+            target.send.assert_not_awaited()
+            assert not cog.book.all()
+            draft = i.response.send_message.call_args.kwargs['view']
+            assert '有人報名時提醒我' in draft.summary()
+            await draft.publish.callback(i)
         target.send.assert_awaited_once()
         source.send.assert_not_awaited()
         assert cog.book.all()[0]['channel'] == target.id

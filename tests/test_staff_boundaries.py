@@ -16,6 +16,7 @@ from features.notification_review_views import permitted
 def member(*, helper=False, **perms):
     m=MagicMock(spec=discord.Member)
     m.id=123
+    m.bot=False
     m.guild_permissions=discord.Permissions(**perms)
     m.roles=[types.SimpleNamespace(id=999,name='Helpers')] if helper else []
     return m
@@ -99,7 +100,7 @@ class HealthNavigation(unittest.IsolatedAsyncioTestCase):
         view = HealthView(helper)
         self.assertEqual({b.label for b in view.children}, {'返回管理工具', '重新整理'})
         inter = types.SimpleNamespace(user=helper, guild_id=1,
-            guild=types.SimpleNamespace(get_member=lambda uid: helper),
+            guild=types.SimpleNamespace(get_member=lambda uid: helper,fetch_member=AsyncMock(return_value=helper),fetch_roles=AsyncMock(return_value=[])),
             response=types.SimpleNamespace(send_message=AsyncMock()))
         with patch('config.GUILD_ID', 1):
             self.assertTrue(await view.interaction_check(inter))

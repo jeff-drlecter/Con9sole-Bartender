@@ -17,7 +17,7 @@ jobs:
 
     concurrency:
       group: fly-deploy-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -48,6 +48,27 @@ jobs:
       - name: Show fly.toml
         run: cat fly.toml
 
+      - name: Record and require one existing machine with persistent data
+        id: existing
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl machine list --app con9sole-bartender --json | python scripts/release_machine.py
+
+      - name: Build release image without starting another Bot
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --build-only --push --remote-only --image-label "git-$GITHUB_SHA" --build-arg "APP_COMMIT=$GITHUB_SHA" || flyctl deploy --build-only --push --local-only --image-label "git-$GITHUB_SHA" --build-arg "APP_COMMIT=$GITHUB_SHA"
+
+      - name: Require idle persisted activity and resolved delivery before deployment
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          preflight_command="$(python -c 'import shlex; from pathlib import Path; print("python -c " + shlex.quote(Path("scripts/inspect_round_readiness.py").read_text()))')"
+          flyctl ssh console --app con9sole-bartender -C "$preflight_command --require-idle"
+          health_command="$(python -c 'import shlex; from pathlib import Path; print("python -c " + shlex.quote(Path("scripts/verify_community_runtime.py").read_text()))')"
+          flyctl ssh console --app con9sole-bartender -C "$health_command"
+
       - name: Verify existing news migration before deployment
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -67,13 +88,18 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          # Remote builder 唔得就自動 fallback 本地
-          flyctl deploy --remote-only || flyctl deploy --local-only
+          # Recheck after backup; never retry an uncertain deployment as a build fallback.
+          preflight_command="$(python -c 'import shlex; from pathlib import Path; print("python -c " + shlex.quote(Path("scripts/inspect_round_readiness.py").read_text()))')"
+          flyctl ssh console --app con9sole-bartender -C "$preflight_command --require-idle"
+          flyctl deploy --image "registry.fly.io/con9sole-bartender:git-$GITHUB_SHA" --ha=false --update-only --only-machines "${{ steps.existing.outputs.machine }}" --strategy rolling
 
       - name: Verify Fly.io machine status
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl status --app con9sole-bartender
+        run: |
+          flyctl machine list --app con9sole-bartender --json | python scripts/release_machine.py
+          revision_command="$(python -c 'import shlex; print("python -c " + shlex.quote("import os,sys; actual=os.environ.get(\"APP_COMMIT\"); print(\"runtime_commit=\"+str(actual)); assert actual==sys.argv[1], \"Unexpected runtime commit\""))')"
+          flyctl ssh console --app con9sole-bartender -C "$revision_command $GITHUB_SHA"
 
       - name: Verify news migration marker without changing permissions
         env:

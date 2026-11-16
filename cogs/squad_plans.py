@@ -128,22 +128,25 @@ def card(plan):
     if plan.get('footprint'):
         url = f"https://discord.com/channels/{plan['guild']}/{plan['channel']}/{plan['footprint']}"
         embed.add_field(name='本局足跡', value=f'[查看語音足跡]({url})', inline=False)
+    from features.plan_delivery import event_url
+    event = event_url(plan)
+    if event:
+        embed.add_field(name='約定活動', value=f'[查看活動]({event}) · 有興趣不等於報名', inline=False)
     embed.set_footer(text='原有隊友無需重複報名 · 報名不等於到場 · 發起人從名單／選項開局')
     return embed
 
 
 class PlanForm(SafeModal):
-    def __init__(self, cog, channel, plan=None, *, instant=False, seed=None):
+    def __init__(self, cog, channel, plan=None, *, instant=False, seed=None, confirmed=False, delivery_options=None):
         super().__init__(title='約一局' if plan is None else '修改約局')
         self.cog, self.channel_id, self.plan_id = cog, channel.id, plan and plan['id']
         self.instant = instant or bool(plan and plan.get('instant'))
-        self.game = discord.ui.TextInput(label='遊戲', default=plan['game'] if plan else game_hint(channel), max_length=80)
+        self.confirmed, self.delivery_options = confirmed, delivery_options
+        self.game = discord.ui.TextInput(label='遊戲', default=plan['game'] if plan else (seed or {}).get('game', game_hint(channel)), max_length=80)
         self.start = discord.ui.TextInput(label='開始時間（24小時制）', placeholder='今晚22:00／明天22:00',
-            default=datetime.fromtimestamp(plan['start'], HK).strftime('%Y-%m-%d %H:%M') if plan else None, max_length=30)
+            default=datetime.fromtimestamp(plan['start'], HK).strftime('%Y-%m-%d %H:%M') if plan else (seed or {}).get('start'), max_length=30)
         self.mode = discord.ui.TextInput(label='平台／模式（選填）', placeholder='例如 PS5／Clubs、PC／征服、跨平台／REC',
-            default=plan['mode'] if plan else '', required=False, max_length=80)
-        if seed and not plan:
-            self.game.default, self.mode.default = seed['game'], seed['mode']
+            default=plan['mode'] if plan else (seed or {}).get('mode', ''), required=False, max_length=80)
         self.party = discord.ui.TextInput(label='已有人數（包括自己）', default=str(plan['party']) if plan else str((seed or {}).get('party', 1)), max_length=2)
         self.missing = discord.ui.TextInput(label='尚欠人數（選填，留空不限）', required=False, max_length=2,
             default=str(plan['capacity'] - plan['party']) if plan and plan['capacity'] else str((seed or {}).get('missing', '')))
@@ -152,7 +155,16 @@ class PlanForm(SafeModal):
             self.add_item(item)
 
     async def on_submit(self, interaction):
-        channel = interaction.guild.get_channel(self.channel_id) if interaction.guild else None
+        from features.plan_services import fresh_source, AccessError
+        try:
+            member,channel=await fresh_source(interaction.guild,interaction.user.id,self.channel_id)
+        except (AccessError,discord.HTTPException,OSError):
+            await interaction.response.send_message('無法核對原頻道權限，未發起約局。',ephemeral=True)
+            return
+        from types import SimpleNamespace
+        if not allowed(SimpleNamespace(guild_id=interaction.guild_id,user=member,channel=channel)):
+            await interaction.response.send_message('原頻道目前無法發起約局。',ephemeral=True)
+            return
         if channel is None or not allowed(interaction, channel) or (self.plan_id and interaction.channel_id != self.channel_id):
             await interaction.response.send_message('請在可發言的遊戲文字頻道使用。', ephemeral=True)
             return
@@ -168,6 +180,11 @@ class PlanForm(SafeModal):
         except ValueError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
+        if not self.plan_id and not self.confirmed:
+            from features.plan_delivery_ui import Draft
+            view = Draft(self.cog, channel, interaction.user, dict(changes, instant=self.instant), self.delivery_options)
+            await interaction.response.send_message(view.summary(), view=view, ephemeral=True, allowed_mentions=NONE)
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.cog.lock:
             try:
@@ -178,14 +195,17 @@ class PlanForm(SafeModal):
                     p = self.cog.book.act(self.plan_id, interaction.user.id, 'edit', changes=changes)
                     refreshed = await self.cog.refresh(p)
                 else:
-                    perms = channel.permissions_for(interaction.guild.me)
+                    from copy import copy
+                    bot_member=copy(await interaction.guild.fetch_member(interaction.guild.me.id))
+                    bot_member.guild=channel.guild
+                    perms = channel.permissions_for(bot_member)
                     if not all((perms.view_channel, perms.send_messages, perms.embed_links, perms.read_message_history)):
                         raise ValueError('Bot 需要查看、發訊息、嵌入連結及讀取歷史權限。')
                     teams = self.cog.bot.get_cog('Teams') if getattr(self.cog, 'bot', None) else None
                     if self.instant and teams and any(s.leader_id == interaction.user.id and not s.cancelled
                             and not teams.is_state_expired(s) for s in teams.states.values()):
                         raise ValueError('你仍有舊版即時招募，請先完成該局；原有卡片仍可使用。')
-                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, analytics_test=test_channel(channel), **changes)
+                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, analytics_test=test_channel(channel), delivery_options=self.delivery_options, **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='due' if self.instant else 'open')
                     view = PlanView(self.cog, posted)
@@ -198,7 +218,7 @@ class PlanForm(SafeModal):
         await interaction.followup.send('已更新約局。' if self.plan_id else f'約局已發到 {channel.mention}，其他人可以按卡加入。', ephemeral=True,
             allowed_mentions=NONE)
         if not refreshed:
-            await interaction.followup.send('資料已儲存；卡片暫時無法更新，稍後會重試。', ephemeral=True)
+            await interaction.followup.send('資料已儲存，但未能確認原卡已更新；請查看我的約局。', ephemeral=True)
         if not self.plan_id and getattr(self.cog, 'bot', None):
             from features.member_activity import complete_task
             await complete_task(self.cog.bot, interaction, 'team')
@@ -266,13 +286,21 @@ class PlanView(SafeView):
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.cog.lock:
             try:
+                from features.plan_services import source, AccessError
+                member,channel=await source(self.cog,interaction.guild,interaction.user.id,self.cog.book.get(self.key))
+                from types import SimpleNamespace
+                if not allowed(SimpleNamespace(guild_id=interaction.guild_id,user=member,channel=channel)):
+                    raise ValueError('原頻道權限已變更。')
                 p = self.cog.book.act(self.key, interaction.user.id, action)
+            except AccessError:
+                await interaction.followup.send('原卡目前無法使用，未變更報名。',ephemeral=True)
+                return
             except ValueError as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
                 return
             refreshed = await self.cog.refresh(p)
         await interaction.followup.send(('已加入。原有隊友請勿重複報名。可在下方查看及設定本局開局提醒。' if action == 'join' else '已登記稍後到。可在下方查看及設定本局開局提醒。' if action == 'late' else '已退出，已撤回本局提醒。')
-            + ('' if refreshed else '資料已儲存，卡片稍後更新。'), ephemeral=True,
+            + ('' if refreshed else '資料已儲存，但未能確認原卡已更新；請查看我的約局。'), ephemeral=True,
             **({'view': ReminderView(self.cog, self.key, interaction.user)} if action in {'join', 'late'} else {}))
 
 
@@ -289,18 +317,15 @@ class ReminderView(SafeView):
                 label = '呢局開局時提我' if action == 'remind_on' else '取消呢局提醒'
             button = discord.ui.Button(label=label, disabled=enabled if action == 'remind_on' else not enabled)
             async def callback(i, action=action):
-                p = self.cog.book.get(self.key)
-                if i.user.id != self.owner or not p or p['guild'] != i.guild_id or p['channel'] != i.channel_id or not allowed(i):
-                    await i.response.send_message(private_copy(i.user, '請從原卡開啟自己的提醒設定。'), ephemeral=True)
-                    return
-                async with self.cog.lock:
-                    try:
-                        self.cog.book.act(self.key, self.owner, action)
-                    except ValueError as exc:
-                        await i.response.send_message(private_copy(i.user, str(exc)), ephemeral=True)
-                        return
-                await i.response.edit_message(content=private_copy(i.user, '已開啟本局開局提醒。' if action == 'remind_on' else '已取消本局開局提醒。'),
-                    view=ReminderView(self.cog, self.key, i.user))
+                if i.user.id != self.owner:
+                    await i.response.send_message('請開啟自己的提醒設定。',ephemeral=True);return
+                from features.plan_services import PersonalReminders
+                result=await PersonalReminders(self.cog).set_for_member(i.guild,self.owner,self.key,
+                    enabled=action=='remind_on',expected_version=str(p.get('revision',0)))
+                if result['status']!='updated':
+                    await i.response.send_message('設定未更新，請從原卡重新開啟。',ephemeral=True);return
+                await i.response.edit_message(content=private_copy(i.user,'已開啟本局開局提醒。' if action=='remind_on' else '已取消本局開局提醒。'),
+                    view=ReminderView(self.cog,self.key,i.user))
             button.callback = callback
             self.add_item(button)
 
@@ -322,10 +347,14 @@ class InstantChoices(SafeView):
                 if i.user.id != owner or not allowed(i, channel):
                     await i.response.send_message(private_copy(i.user, '請重新開啟自己的約局選單。'), ephemeral=True)
                     return
-                voice = getattr(getattr(i.user, 'voice', None), 'channel', None)
-                party = max(1, len([m for m in getattr(voice, 'members', []) if not m.bot]))
-                seed = dict(game=game_hint(channel), mode='', party=party, missing=missing or '')
-                await i.response.send_modal(wording_modal(i.user, PlanForm(cog, channel, instant=True, seed=seed)))
+                seed = dict(game=game_hint(channel), mode='', party=1, missing=missing or '')
+                if missing is None:
+                    from features.plan_browse_ui import draft_form
+                    await i.response.send_modal(wording_modal(i.user, draft_form(cog,channel,owner,seed)))
+                else:
+                    from features.plan_browse_ui import InstantDraft
+                    view=InstantDraft(cog,channel,owner,seed,i.user)
+                    await i.response.send_message(view.summary(),view=view,ephemeral=True)
             button.callback = callback
             self.add_item(button)
 
@@ -337,6 +366,7 @@ class ManageView(SafeView):
         self.edit.disabled = not owner
         self.cancel.disabled = not (owner or admin)
         self.start.disabled = not owner
+        self.delivery.disabled = not owner
 
     async def interaction_check(self, interaction):
         p = self.cog.book.get(self.key)
@@ -371,6 +401,18 @@ class ManageView(SafeView):
                 return
             await self.cog.refresh(p)
         await interaction.followup.send('已取消約局。', ephemeral=True)
+
+
+    @discord.ui.button(label='活動／報名提醒', row=1)
+    async def delivery(self, interaction, button):
+        from features.plan_delivery_ui import Settings
+        p = self.cog.book.get(self.key)
+        if not p:
+            await interaction.response.send_message('約局已無法使用。', ephemeral=True); return
+        view = Settings(self.cog, p, interaction.user)
+        if not await view.interaction_check(interaction):
+            return
+        await interaction.response.send_message(view.summary(p), view=view, ephemeral=True, allowed_mentions=NONE)
 
 
 class PlanEntry(SafeView):
@@ -445,6 +487,11 @@ class PlanMenu(SafeView):
     async def scheduled(self, interaction, button):
         await self.cog.choose_destination(interaction)
 
+    @discord.ui.button(label='看看現有約局')
+    async def discover(self, interaction, button):
+        from features.plan_browse_ui import browse
+        await browse(self.cog,interaction)
+
     @discord.ui.button(label='我的約局')
     async def mine(self, interaction, button):
         await self.cog.my_plans(interaction)
@@ -454,6 +501,10 @@ class SquadPlans(commands.Cog):
     def __init__(self, bot):
         self.bot, self.lock = bot, asyncio.Lock()
         self.book = PlanBook(DATA_DIR / 'squad_plans.json')
+        from features.plan_services import PersonalReminders
+        self.personal_reminders_v1 = PersonalReminders(self)
+        from features.plan_delivery import PlanDelivery
+        self.delivery = PlanDelivery(self)
 
     async def member_status(self, guild, user_id, key):
         """02 integration: freshly authorized, read-only and roster-free."""
@@ -503,40 +554,18 @@ class SquadPlans(commands.Cog):
                     and all(getattr(channel.permissions_for(interaction.guild.me), name)
                             for name in ('view_channel', 'send_messages', 'embed_links', 'read_message_history'))]
         if not channels:
-            await interaction.response.send_message('暫無可用的組隊頻道；請到 <id:customize> 選擇遊戲，或向 Helper 查詢。', ephemeral=True)
+            from features.plan_browse_ui import next_steps
+            await next_steps(interaction)
             return
         await interaction.response.send_message('📅 選擇要發起約局的頻道：',
             view=PlanChannelView(self, interaction.user.id, channels[:125], instant=instant), ephemeral=True)
 
     async def my_plans(self, interaction):
-        if not can_read(interaction):
-            await interaction.response.send_message('請重新開啟自己的「約一局」選單。', ephemeral=True)
-            return
-        plans = [p for p in self.book.all() if p['guild'] == interaction.guild_id
-                 and (p['owner'] == interaction.user.id or interaction.user.id in p['members'])
-                 and p.get('message') and interaction.guild.get_channel(p['channel']) is not None
-                 and can_read(interaction, interaction.guild.get_channel(p['channel']))]
-        plans.sort(key=lambda p: (p['status'] not in ACTIVE, -p['start']))
-        view = SafeView(timeout=180)
-        for p in plans[:20]:
-            view.add_item(discord.ui.Button(label=f"{p['game']} · {datetime.fromtimestamp(p['start'], HK):%m/%d %H:%M}"[:80],
-                style=discord.ButtonStyle.link,
-                url=f"https://discord.com/channels/{p['guild']}/{p['channel']}/{p['message']}"))
-        teams = self.bot.get_cog('Teams') if getattr(self, 'bot', None) else None
-        if teams:
-            for old in teams.states.values():
-                destination = interaction.guild.get_channel(old.channel_id)
-                if (len(view.children) >= 24 or old.cancelled or teams.is_state_expired(old)
-                        or old.guild_id != interaction.guild_id or not destination
-                        or not can_read(interaction, destination)
-                        or interaction.user.id not in {old.leader_id, *old.join_now, *old.join_later}):
-                    continue
-                view.add_item(discord.ui.Button(label=f'舊版即時招募 · {old.mode}'[:80], style=discord.ButtonStyle.link,
-                    url=f'https://discord.com/channels/{old.guild_id}/{old.channel_id}/{old.message_id}'))
-        await interaction.response.send_message('你的約局及報名紀錄（活動約局優先）：' if view.children else '暫時沒有你發起或按卡報名的約局。',
-            view=view, ephemeral=True, allowed_mentions=NONE)
+        from features.plan_browse_ui import browse
+        await browse(self,interaction,mine=True)
 
     async def cog_load(self):
+        self.delivery.recover()
         self.bot.add_view(PlanEntry(self))
         for p in self.book.all():
             if p['message']:
@@ -548,19 +577,31 @@ class SquadPlans(commands.Cog):
 
     async def refresh(self, p):
         channel = self.bot.get_channel(p['channel'])
-        if not channel or not p['message']:
+        if not p['message']:
+            self.book.availability(p['id'],'unknown_result')
+            return False
+        if not channel:
+            self.book.availability(p['id'],'denied')
             return False
         try:
             message = await channel.fetch_message(p['message'])
             if message.author.id != self.bot.user.id:
                 return False
             await message.edit(embed=card(p), view=PlanView(self, p), allowed_mentions=NONE)
+            self.book.availability(p['id'],'available')
             self.book.clean(p['id'], p.get('revision', 0))
             return True
         except discord.NotFound:
-            self.book.clean(p['id'], p.get('revision', 0))
+            self.book.availability(p['id'],'card_deleted')
+            return False
+        except discord.Forbidden:
+            self.book.availability(p['id'],'denied')
+            return False
+        except (OSError, asyncio.TimeoutError):
+            self.book.availability(p['id'],'unknown_result')
             return False
         except discord.HTTPException:
+            self.book.availability(p['id'],'temporary_failure')
             log.exception('Scheduled squad card refresh failed: %s', p['id'])
             return False
 
@@ -574,6 +615,10 @@ class SquadPlans(commands.Cog):
                 for p in self.book.all():
                     if p['status'] == 'gathering' and not self.bot.get_channel(p.get('voice')):
                         self.book.release_voice(p['id'])
+                        p = self.book.get(p['id'])
+                    if p.get('delivery'):
+                        await self.delivery.reconcile_event(p)
+                        await self.delivery.flush_notices(self.book.get(p['id']))
                         p = self.book.get(p['id'])
                     if p['dirty']:
                         await self.refresh(p)

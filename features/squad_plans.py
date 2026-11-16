@@ -65,6 +65,7 @@ def counts(party, missing):
 class PlanBook:
     def __init__(self, path, clock=time.time):
         self.path, self.clock, self.lock = Path(path), clock, RLock()
+        self.delivery_boot = uuid.uuid4().hex
         # Existing reservations must never be silently replaced with an empty book.
         raw = self.path.read_bytes() if self.path.exists() else None
         state = json.loads(raw) if raw is not None else {'plans': {}, 'schema': 2}
@@ -97,6 +98,9 @@ class PlanBook:
                 values = p.get(field, [])
                 if not isinstance(values, list) or any(type(uid) is not int or uid not in p['members'] for uid in values):
                     raise ValueError('Invalid squad plan RSVP state; original file preserved')
+            if 'delivery' in p:
+                from features.plan_delivery import validate_delivery
+                validate_delivery(p)
         self.state = state
         if state.get('schema', 1) < 2:
             backup = self.path.with_suffix(self.path.suffix + '.before-unified-v2')
@@ -127,7 +131,7 @@ class PlanBook:
         with self.lock:
             return copy.deepcopy(list(self.state['plans'].values()))
 
-    def create(self, *, guild, channel, owner, game, mode, start, party, capacity, instant=False, analytics_test=False):
+    def create(self, *, guild, channel, owner, game, mode, start, party, capacity, instant=False, analytics_test=False, delivery_options=None):
         with self.lock:
             if instant:
                 start = int(self.clock())
@@ -146,7 +150,13 @@ class PlanBook:
                         instant=instant, late=[], unconfirmed=[], reminders=[], withdrawn=[], revision=0)
             state = copy.deepcopy(self.state)
             state['plans'][key] = plan
-            plan.update(created_at=self.clock(), analytics_test=bool(analytics_test))
+            plan.update(created_at=self.clock(), analytics_test=bool(analytics_test), origin='instant' if instant else 'scheduled')
+            if delivery_options is not None:
+                from features.plan_delivery import options, new_delivery
+                validated = options(party, capacity, instant=instant,
+                    minimum=delivery_options['minimum'], auto=delivery_options['auto_event'],
+                    notices=delivery_options['host_notices'])
+                plan['delivery'] = new_delivery(validated)
             self._write(state)
             return copy.deepcopy(plan)
 
@@ -193,6 +203,14 @@ class PlanBook:
                         p['unconfirmed'] = list(p['members'])
                         p.pop('voice', None)
                         p.pop('session', None)
+                    if p.get('delivery'):
+                        settings = p['delivery']['settings']
+                        if settings['minimum'] == p['capacity']:
+                            settings['minimum'] = changes['capacity']
+                            if settings['minimum'] is None:
+                                settings['auto_event'] = False
+                        elif changes['capacity'] is not None and settings['minimum'] is not None and settings['minimum'] > changes['capacity']:
+                            raise ValueError('最高人數不可少於成局門檻，請先修改成局人數。')
                     p.update(changes)
                     p['instant'] = instant
                     if material or p['status'] != 'gathering':
@@ -216,12 +234,15 @@ class PlanBook:
                     raise ValueError('你已加入。')
                 if not existing and p['capacity'] is not None and p['party'] + len(confirmed(p)) >= p['capacity']:
                     raise ValueError('此約局已滿人。')
-                if user not in p['members']:
+                newly_registered = user not in p['members']
+                if newly_registered:
                     p['members'].append(user)
                 p['unconfirmed'] = [uid for uid in p['unconfirmed'] if uid != user]
                 p['late'] = [uid for uid in p['late'] if uid != user]
                 if action == 'late':
                     p['late'].append(user)
+                from features.plan_delivery import record_join
+                record_join(p, user, new=newly_registered, clock=self.clock(), boot=self.delivery_boot)
             elif action == 'leave':
                 if user not in p['members']:
                     raise ValueError('你尚未按卡加入；發起人可修改原有隊伍人數。')
@@ -236,6 +257,48 @@ class PlanBook:
             p['revision'] = p.get('revision', 0) + 1
             self._write(state)
             return copy.deepcopy(p)
+
+    def delivery_settings(self, key, user, settings, *, expected_revision):
+        from features.plan_delivery import options, new_delivery
+        with self.lock:
+            p = self.get(key)
+            if not p or p['owner'] != user or p['status'] not in {'open', 'due', 'gathering', 'live'}:
+                raise ValueError('只有發起人可修改目前約局設定。')
+            if p.get('revision', 0) != expected_revision:
+                raise ValueError('約局已更新，請重新開啟設定。')
+            validated = options(p['party'], p['capacity'], instant=p.get('instant', False),
+                minimum=settings['minimum'], auto=settings['auto_event'], notices=settings['host_notices'])
+            if 'delivery' not in p:
+                p['delivery'] = new_delivery(validated)
+                p['delivery']['seen'] = list(p['members'])
+            d = p['delivery']
+            d['settings'] = validated
+            if not validated['host_notices']:
+                for item in d['notices']:
+                    if item['state'] == 'queued':
+                        item['state'] = 'skipped_disabled'
+            p.update(dirty=True, revision=p.get('revision', 0) + 1)
+            state = copy.deepcopy(self.state); state['plans'][key] = p; self._write(state)
+            return copy.deepcopy(p)
+
+    def set_reminder(self,key,user,enabled,*,expected_revision):
+        with self.lock:
+            p=self.get(key)
+            if p['revision']!=expected_revision: raise ValueError('revision_changed')
+            if enabled:return self.act(key,user,'remind_on')
+            if user not in p['members']:raise ValueError('not_registered')
+            p['reminders']=[u for u in p.get('reminders',[]) if u!=user]
+            p['withdrawn']=sorted(set(p.get('withdrawn',[]))|{user})
+            p['revision']+=1
+            state=copy.deepcopy(self.state);state['plans'][key]=p;self._write(state)
+            return p
+
+    def availability(self,key,value):
+        with self.lock:
+            state=copy.deepcopy(self.state);p=state['plans'][key]
+            p['availability']=value
+            if value in {'card_deleted','denied','unknown_result'}:p['dirty']=False
+            self._write(state)
 
     def clean(self, key, revision=None):
         with self.lock:

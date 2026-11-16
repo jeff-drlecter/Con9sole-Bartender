@@ -6,8 +6,18 @@ from discord.ext import commands
 import config
 from core.permissions import can_use_staff_tool, is_server_admin
 from core.ui import SafeView
+from core.private_source import fresh_member, SourceUnavailable
 from core.storage_paths import DATA_DIR
 from features.bot_health import storage_health
+
+
+async def current_member(interaction):
+    if interaction.guild_id != config.GUILD_ID or interaction.guild is None:
+        return None
+    try:
+        return await fresh_member(interaction.guild, interaction.user.id)
+    except SourceUnavailable:
+        return None
 
 
 class HealthView(SafeView):
@@ -30,7 +40,7 @@ class HealthView(SafeView):
             self.add_item(FeatureButton(label='社群日誌', emoji='📋', cog='CommunityAudit', method='menu_entry', row=1))
             audit = discord.ui.Button(label='通知操作紀錄', emoji='📋', row=1)
             async def show_audit(inter):
-                current = inter.guild.get_member(inter.user.id) if inter.guild else None
+                current = await current_member(inter)
                 if not is_server_admin(current):
                     await inter.response.send_message('只限管理員。', ephemeral=True)
                     return
@@ -42,6 +52,9 @@ class HealthView(SafeView):
                 actions={'sent':'核對已送出','retry':'確認重試','cancel':'取消通知'}
                 lines = [f"<t:{int(row['stamp'])}:f>｜{row['kind']}｜{actions[row['action']]}｜操作人 {row['actor']}" for row in rows]
                 lines.extend(warnings)
+                if not is_server_admin(await current_member(inter)):
+                    await inter.edit_original_response(content='權限已改變或無法核對。', embed=None, view=None)
+                    return
                 await inter.followup.send(embed=discord.Embed(title='📋 最近通知操作', description='\n'.join(lines) or '暫時未有操作紀錄。'), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
             audit.callback = show_audit
             self.add_item(audit)
@@ -49,7 +62,7 @@ class HealthView(SafeView):
         self.add_item(FeatureButton(label='返回管理工具', emoji='🛠️', cog='Menu', method='open_admin_tool_from_button', row=0))
 
     async def interaction_check(self, interaction):
-        current = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        current = await current_member(interaction)
         if interaction.guild_id == config.GUILD_ID and interaction.user.id == self.owner and can_use_staff_tool(current, 'bot_health'):
             return True
         await interaction.response.send_message(wording_text(interaction.user, '權限已改變或面板唔屬於你，請重新開啟。'), ephemeral=True)
@@ -60,10 +73,11 @@ class BotHealth(commands.Cog):
     def __init__(self,bot):self.bot=bot
 
     async def menu_entry(self,interaction, *, refresh=False):
-        if interaction.guild_id!=config.GUILD_ID or not can_use_staff_tool(interaction.guild.get_member(interaction.user.id), "bot_health"):
-            await interaction.response.send_message('只限本伺服器管理員／Mod／Helper 使用。',ephemeral=True)
-            return
         await interaction.response.defer(ephemeral=True,thinking=not refresh)
+        member = await current_member(interaction)
+        if not can_use_staff_tool(member, 'bot_health'):
+            await interaction.edit_original_response(content=wording_text(interaction.user, '權限已改變或無法核對，請重新開啟。'), embed=None, view=None)
+            return
         embed=discord.Embed(title='🩺 Bot 系統狀態',description=wording_text(interaction.user, '唯讀檢查；唔會修改 XP、角色或重發通知。'))
         for name,label in (
             ('Menu','主選單'),('Drink','酒吧／收藏'),('Cheers',wording_text(interaction.user, '打氣')),('DailyBar','每日任務'),
@@ -77,6 +91,25 @@ class BotHealth(commands.Cog):
             if name=='SquadCards' and cog and getattr(cog,'last_error',None):text+='｜有待查錯誤'
             if name=='SquadCards' and cog:text+=f"｜更新循環 {'運行中' if cog.tick.is_running() else '已停止'}"
             embed.add_field(name=label,value=text,inline=False)
+        # Detailed source/account diagnostics are administrator-only.
+        if is_server_admin(member):
+            outcomes = self.bot.get_cog('CommunityOutcomes')
+            if outcomes and hasattr(outcomes, 'health_status'):
+                try:
+                    status = outcomes.health_status()
+                    embed.add_field(name='到場觀測', value=f"可用：{bool(status.get('available'))}｜心跳：{status.get('heartbeat') or '未知'}｜待核對：{bool(status.get('error'))}", inline=False)
+                except Exception:
+                    embed.add_field(name='到場觀測', value='未知，待核對', inline=False)
+            from core.delivery_health import format_health
+            for cog_name, label in (('RSSDelivery', '新聞收集／交付'), ('StreamAlerts', '直播查詢／交付')):
+                source = self.bot.get_cog(cog_name)
+                if source and hasattr(source, 'health_snapshot'):
+                    try:
+                        status = await asyncio.to_thread(source.health_snapshot)
+                        value = format_health(status)
+                    except Exception:
+                        value = '狀態讀取失敗，待核對。'
+                    embed.add_field(name=label, value=value, inline=False)
         titles=self.bot.get_cog('TitleRoles')
         title_status='未載入'
         if titles:
@@ -102,14 +135,18 @@ class BotHealth(commands.Cog):
         if audit:
             counts, _ = await asyncio.to_thread(audit.store.summary)
             embed.add_field(name='社群日誌', value=f'派送循環：{audit.deliver.is_running()}｜佇列：{counts}｜最近錯誤：{audit.last_error or "無"}', inline=False)
-        if is_server_admin(interaction.guild.get_member(interaction.user.id)):
+        if is_server_admin(member):
             maintenance = self.bot.get_cog('Maintenance')
             status = await asyncio.to_thread(maintenance.summary, interaction.guild_id) if maintenance else '維護監察未載入'
             embed.add_field(name='維護監察', value=status[:1000] + '\n管理員可用 /maintenance 核對。', inline=False)
         embed.timestamp=discord.utils.utcnow()
         embed.set_footer(text=wording_text(interaction.user, '最近檢查｜循環運行唔代表每項工作已成功；待查通知需逐項核對。'))
         embed.add_field(name='異常處理', value=wording_text(interaction.user, '角色同步：進入等級／稱號管理核對。\n通知：進入待查通知逐項處理，保留操作紀錄。\n召人卡結果不明：先核對原頻道，再用 /squad_recover 配對實際卡片；唔會自動補發。\n收尾通知由背景工作重試；持續積壓請查管理日誌。'), inline=False)
-        view=HealthView(interaction.guild.get_member(interaction.user.id))
+        latest = await current_member(interaction)
+        if not can_use_staff_tool(latest, 'bot_health') or is_server_admin(latest) != is_server_admin(member):
+            await interaction.edit_original_response(content=wording_text(interaction.user, '權限已改變或無法核對，請重新開啟。'), embed=None, view=None)
+            return
+        view=HealthView(latest)
         if refresh:
             await interaction.edit_original_response(embed=embed,view=wording_view(interaction.user, view))
             return

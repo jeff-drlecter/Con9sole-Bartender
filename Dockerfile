@@ -12,5 +12,9 @@ RUN groupadd --gid 10001 bartender && useradd --uid 10001 --gid bartender --no-c
 
 COPY . .
 
+ARG APP_COMMIT=unknown
+ENV APP_COMMIT=$APP_COMMIT
+LABEL org.opencontainers.image.revision=$APP_COMMIT
+
 ENTRYPOINT ["python", "scripts/container_entrypoint.py"]
 CMD ["python", "bot.py"]

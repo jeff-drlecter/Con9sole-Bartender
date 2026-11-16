@@ -249,50 +249,7 @@ def interest_summary(roster):
     return "、".join(lines) + suffix
 
 
-class InterestRosterPages(SafeView):
-    """Private, requester-only pages; public card stays compact."""
-    def __init__(self, user_id, roster, label, *, source_view=None, source_message=None):
-        super().__init__(timeout=180)
-        self.user_id, self.roster, self.label, self.page = user_id, roster, label, 0
-        self.source_view, self.source_message = source_view, source_message
-        if source_view is not None:
-            for kind, label in (("once", "🙋 下次通知我"), ("always", "🔔 每次通知我")):
-                button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary, row=1)
-                async def choose(interaction, choice=kind):
-                    await self.source_view.toggle(interaction, choice,
-                        source_message=self.source_message, roster_pages=self)
-                button.callback = choose
-                self.add_item(button)
-        self.previous.disabled = True
-        self.next_page.disabled = len(roster) <= 20
-
-    def embed(self):
-        start = self.page * 20
-        lines = [f"<@{uid}> · {name}" for uid, name in self.roster[start:start + 20]]
-        embed = discord.Embed(title="🔔 下次通知名單", description="\n".join(lines) or "暫時未有人登記。", colour=0x5865F2)
-        embed.set_footer(text=f"{self.label} · {len(self.roster)} 人 · 第 {self.page + 1}/{max(1, (len(self.roster) + 19) // 20)} 頁")
-        return embed
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(wording_text(getattr(interaction, "user", None), "請由足跡卡開啟自己嘅名單。"), ephemeral=True)
-            return False
-        return True
-
-    async def move(self, interaction, delta):
-        self.page = max(0, min((max(1, len(self.roster)) - 1) // 20, self.page + delta))
-        self.previous.disabled = self.page == 0
-        self.next_page.disabled = (self.page + 1) * 20 >= len(self.roster)
-        await interaction.response.edit_message(embed=self.embed(), view=wording_view(interaction.user, self),
-                                                allowed_mentions=discord.AllowedMentions.none())
-
-    @discord.ui.button(label="上一頁", style=discord.ButtonStyle.secondary)
-    async def previous(self, interaction, button):
-        await self.move(interaction, -1)
-
-    @discord.ui.button(label="下一頁", style=discord.ButtonStyle.secondary)
-    async def next_page(self, interaction, button):
-        await self.move(interaction, 1)
+from features.private_roster_views import InterestRosterPages, ParticipantPages
 
 
 def add_interest_fields(embed, roster, preferences):
@@ -300,61 +257,6 @@ def add_interest_fields(embed, roster, preferences):
     for index in reversed(range(len(embed.fields))):
         if embed.fields[index].name.startswith((INTEREST_FIELD, RECURRING_FIELD, "🙋 下次想玩")):
             embed.remove_field(index)
-
-
-class ParticipantPages(SafeView):
-    """Read-only attendance, limited to its requester and original channel."""
-    def __init__(self, interaction, snapshot):
-        super().__init__(timeout=180)
-        self.owner, self.guild_id, self.channel_id = interaction.user.id, interaction.guild_id, interaction.channel_id
-        self.page = 0
-        lines = []
-        for uid in snapshot['names']:
-            member = interaction.guild.get_member(int(uid))
-            if member and not member.bot and interaction.channel.permissions_for(member).view_channel:
-                name = discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))
-                lines.append(f'<@{uid}> · {name}')
-        # Legacy cards recorded names only; do not infer identities or tag them.
-        for raw in snapshot['legacy']:
-            lines.append(discord.utils.escape_mentions(discord.utils.escape_markdown(raw)))
-        self.pages = ['']
-        for line in lines:
-            for start in range(0, len(line), 2800):
-                part = line[start:start + 2800]
-                if len(self.pages[-1]) + len(part) + 1 > 3000:
-                    self.pages.append('')
-                self.pages[-1] += ('\n' if self.pages[-1] else '') + part
-        self.previous.disabled = True
-        self.next_page.disabled = len(self.pages) == 1
-
-    def embed(self):
-        embed = discord.Embed(title='👥 本局參與者', description=self.pages[self.page] or '沒有可顯示的參與紀錄。')
-        embed.set_footer(text=f'只顯示給你 · 第 {self.page + 1}/{len(self.pages)} 頁')
-        return embed
-
-    async def interaction_check(self, interaction):
-        if (interaction.guild_id == self.guild_id and interaction.channel_id == self.channel_id
-                and interaction.user.id == self.owner and not interaction.user.bot
-                and interaction.channel.permissions_for(interaction.user).view_channel):
-            return True
-        await interaction.response.send_message('請在原本頻道重新開啟名單。', ephemeral=True)
-        return False
-
-    async def move(self, interaction, delta):
-        if not await self.interaction_check(interaction):
-            return
-        self.page = max(0, min(len(self.pages) - 1, self.page + delta))
-        self.previous.disabled = self.page == 0
-        self.next_page.disabled = self.page == len(self.pages) - 1
-        await interaction.response.edit_message(embed=self.embed(), view=self, allowed_mentions=discord.AllowedMentions.none())
-
-    @discord.ui.button(label='上一頁')
-    async def previous(self, interaction, button):
-        await self.move(interaction, -1)
-
-    @discord.ui.button(label='下一頁')
-    async def next_page(self, interaction, button):
-        await self.move(interaction, 1)
 
 
 class FootprintView(SafeView):
@@ -384,26 +286,9 @@ class FootprintView(SafeView):
             self.add_item(button)
 
     async def show_participants(self, interaction):
-        if not await self.permitted(interaction):
-            return
-        if interaction.message.author.id != interaction.client.user.id:
-            await interaction.response.send_message('請由原本的組隊卡開啟。', ephemeral=True)
-            return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        async with self.lock:
-            snapshot = await run_stats(squad_participants.get, interaction.message.id, interaction.guild_id, interaction.channel_id)
-            if snapshot is None:
-                # Persist legacy names before removing them from an old public card.
-                embed = interaction.message.embeds[0].copy() if interaction.message.embeds else None
-                legacy = squad_participants.compact_legacy(embed) if embed else []
-                if legacy:
-                    await run_stats(squad_participants.preserve_legacy, interaction.message.id, interaction.guild_id, interaction.channel_id, legacy)
-                    snapshot = dict(names={}, legacy=legacy)
-            if snapshot is None:
-                await interaction.followup.send('這張舊卡未保留本局參與紀錄；下次通知名單是另一份名單。', ephemeral=True)
-                return
-            pages = ParticipantPages(interaction, snapshot)
-        await interaction.followup.send(embed=pages.embed(), view=pages, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        pages = ParticipantPages(interaction)
+        await pages.render(interaction)
 
     async def create_next(self, interaction):
         if not await self.permitted(interaction):
@@ -465,18 +350,10 @@ class FootprintView(SafeView):
                 for uid, name in roster]
 
     async def show_roster(self, interaction):
-        if not await self.permitted(interaction):
-            return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        # Public subscription lists are hidden, so a read must not edit every
-        # historical card or wait behind voice/notification reconciliation.
-        preferences = await run_stats(squad_interest.preferences, self.topic['id'])
-        roster = [(uid, f"{name}（{'下次通知' if preferences[uid] == 'once' else '每次通知'}）")
-                  for uid, name in interest_roster(interaction.guild, interaction.channel, preferences)]
-        pages = InterestRosterPages(interaction.user.id, roster, self.topic['label'],
+        pages = InterestRosterPages(interaction.user.id, [], self.topic['label'],
                                     source_view=self, source_message=interaction.message)
-        await interaction.followup.send(embed=pages.embed(), view=wording_view(interaction.user, pages), ephemeral=True,
-                                        allowed_mentions=discord.AllowedMentions.none())
+        await pages.render(interaction)
 
     async def toggle(self, interaction, kind='once', *, source_message=None, roster_pages=None):
         if not await self.permitted(interaction):
@@ -486,6 +363,14 @@ class FootprintView(SafeView):
         async with self.lock:
             consent_scope=await run_stats(squad_interest.canonical_scope,self.topic['id'])
             async with shared_async_lock('subscription-consent',interaction.guild_id,consent_scope):
+                if roster_pages is not None:
+                    from core.private_source import SourceUnavailable
+                    try:
+                        _, _, source_message = await roster_pages.source.resolve(interaction)
+                    except SourceUnavailable:
+                        from features.notification_words import text as private_text
+                        await interaction.edit_original_response(content=private_text(interaction.user, 'denied'),embed=None,view=None)
+                        return
                 joined = await run_stats(squad_interest.toggle, self.topic['id'], interaction.guild_id,
                                          interaction.user.id, kind, self.source_session(source_message.id))
             refreshed = True
@@ -504,13 +389,7 @@ class FootprintView(SafeView):
         if not refreshed:
             text += '\n登記已儲存；卡片暫時未更新，可按「下次通知名單」重試。'
         if roster_pages is not None:
-            if refreshed:
-                roster_pages.roster = roster
-            roster_pages.page = min(roster_pages.page, max(0, (len(roster_pages.roster) - 1) // 20))
-            roster_pages.previous.disabled = roster_pages.page == 0
-            roster_pages.next_page.disabled = (roster_pages.page + 1) * 20 >= len(roster_pages.roster)
-            await interaction.edit_original_response(content=text, embed=roster_pages.embed(),
-                view=wording_view(interaction.user, roster_pages), allowed_mentions=discord.AllowedMentions.none())
+            await roster_pages.render(interaction, replace=True, content=text)
         else:
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
@@ -773,14 +652,8 @@ class SquadCards(commands.Cog):
             return
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True,thinking=True)
-        from features.squad_subscription_views import SubscriptionView
-        rows=await run_stats(squad_interest.own_preferences,interaction.guild_id,interaction.user.id)
-        view=SubscriptionView(self,interaction.guild_id,interaction.user.id,rows,page,member=interaction.user)
-        kwargs = dict(embed=view.embed(), view=wording_view(interaction.user, view), allowed_mentions=discord.AllowedMentions.none())
-        if replace:
-            await interaction.edit_original_response(**kwargs)
-        else:
-            await interaction.followup.send(**kwargs, ephemeral=True)
+        from features.notification_center import show_center
+        await show_center(self, interaction, page=page, replace=replace)
 
     async def close_finished_notices(self):
         ready=getattr(self.bot,'is_ready',None)
@@ -877,14 +750,15 @@ class SquadCards(commands.Cog):
             destination = self.bot.get_channel(session['destination'])
             guild = channel.guild
             ids = await run_stats(squad_interest.members, value['id'])
-            from features.squad_plans import reminder_recipients, notification_exclusions
+            from features.squad_plans import reminder_recipients
             plans = getattr(self.bot, 'get_cog', lambda _: None)('SquadPlans')
             plan = plans.book.get(session['plan_id']) if plans and session.get('plan_id') else None
             if session.get('plan_id') and (not plan or plan['status'] != 'live' or plan.get('session') != session['id']):
                 return
             plan_users = reminder_recipients(plan) if plan else set()
-            excluded = notification_exclusions(plan) if plan else set()
-            ids = sorted((set(ids) | plan_users) - excluded)
+            # Each consent authorizes independently. Leaving a plan or turning
+            # off its reminder must not cancel an existing game subscription.
+            ids = sorted(set(ids) | plan_users)
             if not humans(channel) or session.get('ended') is not None:
                 return
             present = {m.id for m in humans(channel)}
@@ -913,17 +787,19 @@ class SquadCards(commands.Cog):
             url = f"https://discord.com/channels/{guild.id}/{destination.id}/{session['message']}"
             for batch_id, batch in batches:
                 async with shared_async_lock('subscription-consent',guild.id,value['id']):
-                    revision=await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id)
+                    revision=await run_stats(squad_interest.claim_delivery,session['id'],value['id'],batch_id,
+                                             require_origins=True)
                     if not revision:
                         continue
-                    batch=await run_stats(squad_interest.delivery_users,session['id'],value['id'],batch_id,revision)
+                    current_plan = plans.book.get(session['plan_id']) if plan else None
+                    current_plan_users = reminder_recipients(current_plan) if (
+                        current_plan and current_plan['status'] == 'live'
+                        and current_plan.get('session') == session['id']) else set()
+                    batch=await run_stats(squad_interest.delivery_users,session['id'],value['id'],batch_id,revision,
+                                          plan_users=current_plan_users)
                     present={m.id for m in humans(channel)}
                     allowed=[]
                     for uid in batch:
-                        current_plan = plans.book.get(session['plan_id']) if plan else None
-                        if current_plan and (uid in notification_exclusions(current_plan) or
-                                (uid in plan_users and uid not in reminder_recipients(current_plan))):
-                            continue
                         try:
                             member = await guild.fetch_member(uid)
                         except discord.HTTPException:

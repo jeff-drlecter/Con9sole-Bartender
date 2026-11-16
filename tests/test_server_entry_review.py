@@ -50,11 +50,18 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_destination_provides_game_selection_instead_of_bypassing_permissions(self):
         source = channel(1, '組隊與語音指南', writable=False)
         i = interaction(source)
-        i.guild = N(text_channels=[], me=N(id=99))
+        i.user.bot=False
+        i.response.is_done=lambda:False
+        i.edit_original_response=AsyncMock()
+        i.guild = N(id=config.GUILD_ID,text_channels=[], me=N(id=99),fetch_member=AsyncMock(return_value=i.user),fetch_roles=AsyncMock(return_value=[]),fetch_channel=AsyncMock(return_value=source))
+        source.guild=i.guild
         with patch('cogs.squad_plans.is_verified_member', return_value=True):
             await SquadPlans.choose_destination(N(), i)
-        self.assertIn('<id:customize>', i.response.send_message.await_args.args[0])
-        self.assertNotIn('view', i.response.send_message.await_args.kwargs)
+        result=i.followup.send.await_args.kwargs
+        self.assertTrue(result['ephemeral'])
+        self.assertEqual([b.label for b in result['view'].children],['選擇遊戲','求助／建議','先觀望','返回'])
+        await result['view'].children[0].callback(i)
+        self.assertIn('<id:customize>',i.edit_original_response.await_args.kwargs['content'])
 
     async def test_ended_plan_roster_is_read_only_and_rechecks_source_permissions(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -106,8 +113,12 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         i.client = N(get_cog=lambda name: menu if name == 'Menu' else None)
         await view.open(i, 'menu')
         menu.open_main_menu.assert_awaited_once_with(i)
+        i.user.bot=False
+        i.response.is_done=lambda:False
+        i.guild=N(id=config.GUILD_ID,fetch_roles=AsyncMock(return_value=[]),fetch_member=AsyncMock(return_value=i.user),fetch_channel=AsyncMock(return_value=i.channel))
+        i.channel.guild=i.guild
         await view.open(i, 'games')
-        self.assertTrue(i.response.send_message.await_args.kwargs['ephemeral'])
+        self.assertTrue(i.followup.send.await_args.kwargs['ephemeral'])
 
     async def test_public_card_is_compact_and_unknown_language_is_neutral(self):
         p = dict(game='FC', mode='PS5／Clubs', start=200, party=1, members=[4], capacity=4, owner=3, status='open')

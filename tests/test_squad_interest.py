@@ -128,10 +128,12 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         message = types.SimpleNamespace(id=500, author=types.SimpleNamespace(id=99),
             embeds=[discord.Embed(title='足跡').add_field(name='一齊玩過', value='Jeff')], edit=AsyncMock())
         channel = types.SimpleNamespace(id=100, fetch_message=AsyncMock(return_value=message),
-            permissions_for=lambda _: types.SimpleNamespace(view_channel=True))
+            permissions_for=lambda _: types.SimpleNamespace(view_channel=True,read_message_history=True))
         i = interaction(guild=guild, channel=channel)
         i.client.user.id = 99
         i.message = message
+        from private_ui_fakes import attach
+        attach(i, people)
         return i, message
 
     async def test_public_roster_join_cancel_refresh_and_no_ping(self):
@@ -162,7 +164,7 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         await view.show_roster(source)
         pages = source.followup.send.call_args.kwargs['view']
         once, always = pages.children[-2:]
-        self.assertEqual([once.label, always.label], ['🙋 下次通知我', '🔔 每次通知我'])
+        self.assertEqual([once.label, always.label], ['下次通知我', '長期跟局'])
         click, _ = self.roster_interaction()
         click.message = types.SimpleNamespace(id=999)  # Private panel, never a public card.
         self.assertTrue(await pages.interaction_check(click))
@@ -176,7 +178,7 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         click.followup.send.assert_not_awaited()
         await always.callback(click)
         self.assertEqual(storage.preferences(self.topic['id']), {10: 'always'})
-        self.assertIn('每次通知', pages.roster[0][1])
+        self.assertIn('長期跟局', pages.roster[0][1])
         await always.callback(click)
         self.assertEqual(storage.preferences(self.topic['id']), {})
         self.assertEqual(pages.roster, [])
@@ -275,10 +277,12 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(roster), 98)
         self.assertNotIn('@everyone', roster[0][1])
         self.assertLessEqual(len(interest_summary([(10**18 + uid, '') for uid in range(1000)])), 1024)
-        pages = InterestRosterPages(10, roster, self.topic['label'])
+        i, message = self.roster_interaction(ids=range(10,110))
+        for uid in range(10,110):storage.toggle(self.topic['id'],1,uid)
+        pages = InterestRosterPages(10, [], self.topic['label'],source_view=FootprintView(None,self.topic),source_message=message)
+        await pages.load(i)
         self.assertTrue(pages.previous.disabled)
         self.assertFalse(pages.next_page.disabled)
-        i = interaction()
         await pages.move(i, 1)
         self.assertEqual(pages.page, 1)
         self.assertLess(len(pages.embed().description), 4096)

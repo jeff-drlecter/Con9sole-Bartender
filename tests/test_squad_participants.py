@@ -26,12 +26,15 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
     def fixture(self, count=2):
         people = {uid: types.SimpleNamespace(id=uid, bot=False, display_name=f'Player {uid}') for uid in range(10, 10 + count)}
         guild = types.SimpleNamespace(id=1, get_member=people.get)
-        permissions = discord.Permissions(view_channel=True)
+        permissions = discord.Permissions(view_channel=True,read_message_history=True)
         channel = types.SimpleNamespace(id=100, permissions_for=lambda _: permissions)
         inter = interaction(guild=guild, channel=channel)
         inter.client.user.id = 99
         inter.message.author.id = 99
         inter.message.embeds = []
+        channel.fetch_message=AsyncMock(return_value=inter.message)
+        from private_ui_fakes import attach
+        attach(inter, people)
         return inter, permissions
 
     def test_snapshot_is_durable_card_bound_and_never_overwritten_by_legacy(self):
@@ -69,7 +72,7 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sent['ephemeral'])
         self.assertIn('<@10>', sent['embed'].description)
         self.assertEqual(sent['allowed_mentions'].to_dict(), {'parse': []})
-        self.assertEqual({b.label for b in sent['view'].children}, {'上一頁', '下一頁'})
+        self.assertEqual({b.label for b in sent['view'].children}, {'上一頁', '下一頁', '重新整理'})
         self.assertTrue(view.is_persistent())
         toggle.assert_not_called()
         view.stop(); sent['view'].stop()
@@ -80,27 +83,30 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
         view = FootprintView(None, squad_interest.topic(1, 'Game'))
         inter.message.author.id = 98
         await view.show_participants(inter)
-        inter.followup.send.assert_not_awaited()
+        self.assertIsNone(inter.followup.send.call_args.kwargs['embed'])
         inter.message.author.id = 99
-        inter.permissions.view_channel = False
+        inter.channel.permissions_for(inter.user).view_channel = False
         await view.show_participants(inter)
-        inter.followup.send.assert_not_awaited()
+        self.assertIsNone(inter.followup.send.call_args.kwargs['embed'])
         view.stop()
 
     async def test_private_pages_recheck_owner_guild_and_channel_visibility(self):
         inter, perms = self.fixture(200)
-        pages = ParticipantPages(inter, dict(names={str(uid): 'A' for uid in range(10, 210)}, legacy=[]))
+        store.save(500,1,100,{str(uid):'A' for uid in range(10,210)})
+        pages = ParticipantPages(inter)
+        await pages.load(inter)
         self.assertGreater(len(pages.pages), 1)
         self.assertTrue(all(len(p) <= 3000 for p in pages.pages))
         other, _ = self.fixture()
         other.user.id = 20
         self.assertFalse(await pages.interaction_check(other))
         inter.guild_id = 2
-        self.assertFalse(await pages.interaction_check(inter))
+        from core.private_source import SourceUnavailable
+        with self.assertRaises(SourceUnavailable):await pages.load(inter)
         inter.guild_id = 1
         perms.view_channel = False
         await pages.move(inter, 1)
-        inter.response.edit_message.assert_not_awaited()
+        self.assertIsNone(inter.edit_original_response.call_args.kwargs['embed'])
         self.assertEqual(pages.page, 0)
         pages.stop()
 
@@ -110,8 +116,12 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
         robot = types.SimpleNamespace(id=13, bot=True, display_name='Bot')
         people = {12: hidden, 13: robot, 10: types.SimpleNamespace(id=10, bot=False, display_name='@everyone')}
         inter.guild.get_member = people.get
-        inter.channel.permissions_for = lambda m: discord.Permissions(view_channel=m.id != 12)
-        pages = ParticipantPages(inter, dict(names={str(uid): 'Old' for uid in (10, 11, 12, 13)}, legacy=[]))
+        from private_ui_fakes import attach
+        attach(inter,people)
+        inter.channel.permissions_for = lambda m: discord.Permissions(view_channel=m.id != 12,read_message_history=True)
+        store.save(500,1,100,{str(uid):'Old' for uid in (10,11,12,13)})
+        pages = ParticipantPages(inter)
+        await pages.load(inter)
         text = pages.embed().description
         self.assertIn('<@10>', text)
         self.assertNotIn('@everyone', text)
@@ -121,7 +131,9 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_long_legacy_names_are_private_paginated_and_mentions_escaped(self):
         inter, _ = self.fixture()
-        pages = ParticipantPages(inter, dict(names={}, legacy=['@everyone ' + 'A' * 9000]))
+        store.preserve_legacy(500,1,100,['@everyone '+'A'*9000])
+        pages = ParticipantPages(inter)
+        await pages.load(inter)
         self.assertGreater(len(pages.pages), 1)
         self.assertTrue(all(len(p) <= 3000 for p in pages.pages))
         self.assertNotIn('@everyone', ''.join(pages.pages))
@@ -131,7 +143,7 @@ class ParticipantTests(unittest.IsolatedAsyncioTestCase):
         inter, _ = self.fixture()
         cog = types.SimpleNamespace(lock=asyncio.Lock(), menu_entry=AsyncMock())
         rows = [dict(id='game', label='Other Game', kind='once')]
-        view = SubscriptionView(cog, 1, inter.user.id, rows)
+        view = SubscriptionView(cog, 1, inter.user.id, rows, channel_id=inter.channel_id)
         select = next(c for c in view.children if isinstance(c, discord.ui.Select))
         select._values = ['game']
         with patch('features.squad_subscription_views.run_stats', new=AsyncMock()):

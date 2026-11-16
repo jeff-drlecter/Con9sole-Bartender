@@ -54,10 +54,10 @@ class DashboardTests(unittest.IsolatedAsyncioTestCase):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, patch
         from cogs.bot_health import BotHealth
-        member=SimpleNamespace(id=7)
+        member=SimpleNamespace(id=7,bot=False)
         bot=SimpleNamespace(get_cog=lambda name:None)
         inter=SimpleNamespace(guild_id=1,user=member,
-            guild=SimpleNamespace(get_member=lambda uid:member),
+            guild=SimpleNamespace(get_member=lambda uid:member,fetch_member=AsyncMock(return_value=member),fetch_roles=AsyncMock(return_value=[])),
             response=SimpleNamespace(defer=AsyncMock()),
             edit_original_response=AsyncMock(),followup=SimpleNamespace(send=AsyncMock()))
         with patch('config.GUILD_ID',1), patch('cogs.bot_health.can_use_staff_tool',return_value=True), patch('cogs.bot_health.HealthView',return_value=None), patch('cogs.bot_health.storage_health',return_value={'社群紀錄':{'待發通知':3}}) as read:

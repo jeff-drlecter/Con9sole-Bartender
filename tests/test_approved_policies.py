@@ -49,11 +49,11 @@ class CoplayTests(unittest.TestCase):
     def test_persist_only_confirmed_milestone_exclude_tests_and_restarts(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'o.sqlite3';store=Outcomes(path,clock=lambda:1000)
-            store.observe(1,'s','p',[N(id=1,bot=False),N(id=2,bot=False)])
+            store.observe(1,'s','p',[N(id=1,bot=False),N(id=2,bot=False)], source=dict(channel=10,voice=10,origin='linked'))
             for _ in range(2):store.mark_coplay(1,'s',10,1200)
-            store.observe(1,'another-session','p',[N(id=1,bot=False),N(id=2,bot=False)])
+            store.observe(1,'another-session','p',[N(id=1,bot=False),N(id=2,bot=False)], source=dict(channel=10,voice=10,origin='linked'))
             store.mark_coplay(1,'another-session',11,1200)
-            store.observe(1,'test',None,[N(id=3,bot=False)],test=True)
+            store.observe(1,'test',None,[N(id=3,bot=False)],test=True, source=dict(channel=10,voice=10,origin='linked'))
             store.mark_coplay(1,'test',20,1200)
             store=Outcomes(path,clock=lambda:2000)
             p=dict(id='p',guild=1,channel=9,created_at=100,start=200,status='live',session='s')
@@ -68,6 +68,8 @@ class ObserverResetTests(unittest.IsolatedAsyncioTestCase):
         cog=object.__new__(CommunityOutcomes)
         cog.observation_lock=asyncio.Lock();cog.coplay=CoParticipation()
         cog.coplay.sample({KEY:{1,2}},{1:10,2:10},100)
+        cog.store=__import__('types').SimpleNamespace(heartbeat=lambda *a,**k:None)
+        cog.run_id='fixture'
         await cog.on_disconnect()
         self.assertEqual(cog.coplay.rooms,{})
         cog.coplay.sample({KEY:{1,2}},{1:10,2:10},105)
