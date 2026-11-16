@@ -30,7 +30,8 @@ def channel(ident, name, visible=True):
 
 def interaction(source, guild):
     return N(guild=guild, guild_id=config.GUILD_ID, channel=source, channel_id=source.id,
-             user=N(id=3), response=N(send_message=AsyncMock(), send_modal=AsyncMock(), defer=AsyncMock()),
+             user=N(id=3), response=N(send_message=AsyncMock(), send_modal=AsyncMock(), defer=AsyncMock(), is_done=lambda:False),
+             edit_original_response=AsyncMock(),
              followup=N(send=AsyncMock()))
 
 async def main():
@@ -66,7 +67,7 @@ async def main():
             await form.on_submit(i)
             target.send.assert_not_awaited()
             assert not cog.book.all()
-            draft = i.response.send_message.call_args.kwargs['view']
+            draft = i.edit_original_response.call_args.kwargs['view']
             assert '有人報名時提醒我' in draft.summary()
             await draft.publish.callback(i)
         target.send.assert_awaited_once()
@@ -78,7 +79,7 @@ async def main():
         denied = interaction(source, guild)
         await PlanForm(cog, target).on_submit(denied)
         target.send.assert_not_awaited()
-        denied.response.send_message.assert_awaited_once()
+        denied.edit_original_response.assert_awaited_once()
 
         with patch('cogs.squad_plans.is_verified_member', return_value=False):
             denied = interaction(source, guild)

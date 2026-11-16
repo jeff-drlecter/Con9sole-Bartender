@@ -1,5 +1,6 @@
 """Owner-bound preview and settings for the existing plan flow."""
 import discord
+import config
 from core.ui import SafeView, SafeModal
 from features.language_preferences import language
 from features.plan_delivery import options
@@ -41,19 +42,28 @@ class Draft(SafeView):
         return summary(self.owner, self.data, self.settings)
 
     async def interaction_check(self, i):
-        from features.plan_services import fresh_source, AccessError
-        if i.user.id != self.owner.id or self.used:
+        # Discord calls this before the callback. Do not perform REST reads here:
+        # modal buttons need their initial response, and cancel only closes a draft.
+        if (i.user.id != self.owner.id or self.used
+                or i.guild is None or i.guild.id != config.GUILD_ID):
             await i.response.send_message(text(i.user, '草稿已關閉或不屬於你。', '草稿已關閉或者唔屬於你。'), ephemeral=True)
             return False
+        return True
+
+    async def authorize_update(self, i):
+        from features.plan_services import fresh_source, AccessError
+        if not await self.interaction_check(i):
+            return False
+        await i.response.defer(ephemeral=True)
         try:
             member, _ = await fresh_source(i.guild, i.user.id, self.channel.id)
             if self.used:
-                await i.response.send_message('草稿已關閉。', ephemeral=True)
+                await i.followup.send('草稿已關閉。', ephemeral=True)
                 return False
             self.owner = member
             return True
         except (AccessError, discord.HTTPException, OSError):
-            await i.response.send_message(text(i.user, '無法核對原頻道，草稿未發起。', '核對唔到原頻道，草稿未發起。'), ephemeral=True)
+            await i.followup.send(text(i.user, '無法核對原頻道，草稿未發起。', '核對唔到原頻道，草稿未發起。'), ephemeral=True)
             return False
 
     @discord.ui.button(label='確認發起', style=discord.ButtonStyle.success)
@@ -79,18 +89,18 @@ class Draft(SafeView):
 
     @discord.ui.button(label='切換自動活動')
     async def auto(self, i, button):
-        if not await self.interaction_check(i):
+        if not await self.authorize_update(i):
             return
         if not self.data.get('instant') and self.settings['minimum'] is not None:
             self.settings['auto_event'] = not self.settings['auto_event']
-        await i.response.edit_message(content=self.summary(), view=self)
+        await i.edit_original_response(content=self.summary(), view=self)
 
     @discord.ui.button(label='切換報名提醒')
     async def notice(self, i, button):
-        if not await self.interaction_check(i):
+        if not await self.authorize_update(i):
             return
         self.settings['host_notices'] = not self.settings['host_notices']
-        await i.response.edit_message(content=self.summary(), view=self)
+        await i.edit_original_response(content=self.summary(), view=self)
 
     @discord.ui.button(label='取消', row=1)
     async def cancel(self, i, button):
@@ -110,7 +120,7 @@ class Numbers(SafeModal):
             default=str(view.data['capacity']) if view.data['capacity'] else '', max_length=3)
         self.add_item(self.minimum); self.add_item(self.capacity)
     async def on_submit(self, i):
-        if not await self.view.interaction_check(i):
+        if not await self.view.authorize_update(i):
             return
         v = self.view
         try:
@@ -123,10 +133,10 @@ class Numbers(SafeModal):
             # None means explicitly disabled here, rather than an inferred capacity.
             settings['minimum'] = minimum
         except ValueError as exc:
-            await i.response.send_message(str(exc), ephemeral=True); return
+            await i.followup.send(str(exc), ephemeral=True); return
         v.data['capacity'], v.settings = capacity, settings
         v.auto.disabled = bool(v.data.get('instant') or minimum is None)
-        await i.response.edit_message(content=v.summary(), view=v)
+        await i.edit_original_response(content=v.summary(), view=v)
 
 
 class Settings(SafeView):
@@ -139,18 +149,13 @@ class Settings(SafeView):
         self.member = member
         self.auto.disabled = bool(plan.get('instant'))
     async def interaction_check(self, i):
-        from features.plan_services import source, AccessError
         p = self.cog.book.get(self.key)
-        if i.user.id != self.owner or not p or p['owner'] != self.owner:
+        if (i.user.id != self.owner or not p or p['owner'] != self.owner
+                or i.guild_id != p['guild']):
             await i.response.send_message(text(i.user, '請開啟自己的約局設定。', '請開啟自己嘅約局設定。'), ephemeral=True); return False
-        try:
-            member, _ = await source(self.cog, i.guild, self.owner, p)
-            self.member = member
-            if p.get('revision', 0) != self.revision:
-                raise AccessError('revision_changed')
-            return True
-        except (AccessError, discord.HTTPException, OSError):
+        if p.get('revision', 0) != self.revision:
             await i.response.send_message(text(i.user, '約局或權限已變更，請從原卡重新開啟。', '約局或者權限已變，請喺原卡重新開啟。'), ephemeral=True); return False
+        return True
     def summary(self, p):
         e = p.get('delivery', {}).get('event', {})
         labels = dict(blocked='來源可見範圍或活動權限未符合，已停用自動活動', unknown='建立結果待核對，不會重建',

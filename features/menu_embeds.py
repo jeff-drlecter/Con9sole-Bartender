@@ -24,7 +24,7 @@ def _public_discussion_tip() -> str:
 def build_quick_bar_embed(user: discord.abc.User) -> discord.Embed:
     return discord.Embed(
         title="🍸 Con9sole 吧枱",
-        description="約一局、查看會員卡，或輕鬆喝一杯。\n組隊訂閱在「我的組隊通知」；本局提醒在原約局卡設定。",
+        description="約一局、查看會員卡，或輕鬆喝一杯。\n本局提醒及遊戲訂閱可在「我的組隊通知」管理。",
         color=MENU_COLOR,
     )
 

@@ -156,17 +156,19 @@ class PlanForm(SafeModal):
 
     async def on_submit(self, interaction):
         from features.plan_services import fresh_source, AccessError
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             member,channel=await fresh_source(interaction.guild,interaction.user.id,self.channel_id)
         except (AccessError,discord.HTTPException,OSError):
-            await interaction.response.send_message('無法核對原頻道權限，未發起約局。',ephemeral=True)
+            await interaction.edit_original_response(content='無法核對原頻道權限，未發起約局。', view=None)
             return
         from types import SimpleNamespace
         if not allowed(SimpleNamespace(guild_id=interaction.guild_id,user=member,channel=channel)):
-            await interaction.response.send_message('原頻道目前無法發起約局。',ephemeral=True)
+            await interaction.edit_original_response(content='原頻道目前無法發起約局。', view=None)
             return
         if channel is None or not allowed(interaction, channel) or (self.plan_id and interaction.channel_id != self.channel_id):
-            await interaction.response.send_message('請在可發言的遊戲文字頻道使用。', ephemeral=True)
+            await interaction.edit_original_response(content='請在可發言的遊戲文字頻道使用。', view=None)
             return
         try:
             party, capacity = counts(self.party.value, self.missing.value)
@@ -178,14 +180,13 @@ class PlanForm(SafeModal):
             start = old['start'] if unchanged else int(self.cog.book.clock()) if self.instant and not self.plan_id else parse_start(self.start.value)
             changes = dict(game=game, mode=self.mode.value.strip(), start=start, party=party, capacity=capacity)
         except ValueError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.edit_original_response(content=str(exc), view=None)
             return
         if not self.plan_id and not self.confirmed:
             from features.plan_delivery_ui import Draft
             view = Draft(self.cog, channel, interaction.user, dict(changes, instant=self.instant), self.delivery_options)
-            await interaction.response.send_message(view.summary(), view=view, ephemeral=True, allowed_mentions=NONE)
+            await interaction.edit_original_response(content=view.summary(), view=view, allowed_mentions=NONE)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.cog.lock:
             try:
                 if self.plan_id:
