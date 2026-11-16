@@ -11,6 +11,7 @@ from discord.ext import commands
 from config import GUILD_ID
 from features.menu_stats import run_stats
 from features.member_activity import credit_success
+from features.member_hints import add_member_hint
 from core.action_guard import claim_action
 from core.discord_interactions import require_public_send
 from core.safe_send import send_or_followup
@@ -183,6 +184,7 @@ class Drink(commands.Cog):
             result_embed.set_footer(
                 text=f"{meta['emoji']} {meta['label']} · {drink.typ}"
             )
+            await add_member_hint(self.bot, interaction, result_embed, context='drink')
             try:
                 await interaction.edit_original_response(
                     content=to.mention if to else None,
