@@ -1,8 +1,25 @@
 # Con9sole 現行整合與驗收總表
 
-## 2026-11-16 現行部署與桌面驗收（本節優先）
+## 2026-11-16 12:23 香港追加狀態（本節優先）
 
-正式版本已由 [release #188](https://github.com/jeff-drlecter/Con9sole-Bartender/pull/188) 部署，main/runtime commit 均為 `87dc4569606ea6806ff2e4a6fa1136791815d343`。下方舊段落中的「未部署」、登入阻擋及舊 main 均為歷史快照。#181–185、#187 的內容已整合於 #188；#165–168 亦已經歷史整合，不因 PR 仍 open 再次合併。所有後續驗收修正及最新 runtime SHA 以[草稿回應修正 PR 的現行結果表](https://github.com/jeff-drlecter/Con9sole-Bartender/pulls?q=head%3Afix%2Fdraft-response-timeout)為追加證據；未獲新部署證據前，下列正式版本保持有效。
+[修正 #189](https://github.com/jeff-drlecter/Con9sole-Bartender/pull/189) 已部署，現行 runtime/main 為 `71d894169cd117981ed106806eb9aad293b70a99`，tree `abdca81b0c86df53a32c1bfb8753f5b8cfd12717`。[部署 43802653201](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43802653201) 全部成功；04:14:15 UTC 讀回 commit。PR CI `43802479453` 與部署 pipeline 均通過 962 tests，前者亦完成依賴審核與容器檢查。
+
+新備份 `20261116T041343Z-d897a48feca84f4db738fb33c808d09d`，65 stores，回讀通過；仍是同一 machine／volume。更新前兩次持久活動／交付盤點均空閒，origins 欄位已存在；EXP、偏好及收據保留。這次小修的回復 image 是 `registry.fly.io/con9sole-bartender:git-87dc4569606ea6806ff2e4a6fa1136791815d343`，只回程式、不恢復舊資料。
+
+| 最新實測／修正 | 已核實結果 | 限制與下一項證據 |
+|---|---|---|
+| 草稿取消逾時 | #189 已部署；同一 Helper 帳號 12:16、12:22 均顯示草稿已取消 | 保留 12:01 舊版失敗紀錄，不能抹成一直通過 |
+| 成局／最高人數表單 | 12:16 及 Tester 區 12:22 實際改為成局 2、最高 4 | 發現改人數會重新開啟自動活動；後續修正保留手動選擇，見[修正 PR 最新結果表](https://github.com/jeff-drlecter/Con9sole-Bartender/pulls?q=head%3Afix%2Fpreserve-draft-event-choice)；未有該版部署與重測前不算通過 |
+| 自動活動／報名提醒開關 | Tester 區私人草稿分別關閉成功 | 未發公開約局、Event 或測試提醒 |
+| 舊足跡卡再約 | Tester 區 11 月 13 日原卡按「發起下次」成功帶入測試遊戲／卡片流程測試，並建立可取消私人草稿 | 不代表報名→語音→結束的完整真人流程通過 |
+| Helper 健康頁 | 12:12 基本狀態、返回入口可見；管理員專用新聞／直播詳細區未顯示 | 撤權／來源失效及 Admin 詳細區未真人驗證 |
+| 主選單及 HK | 重啟後新選單成功，文案指向統一通知中心；HK 偏好保留 | TW／中性仍只有程式回歸，未真人切換 |
+
+Jeff 追加要求所有後續測試在 Tester 區，並明確授權目前帳號加入 Tester。12:20 透過 Channels & Roles 的「社群測試區」自選入口，已為 `jeff_con9sole` 新增 `🧪 Tester`；前後 profile 核對其餘角色不變（包括 Helpers、Verified、HK 和既有遊戲角色）。正式實測身份現在是 **Helper＋Tester**，不是純 Tester 或普通成員。未改角色定義／頻道 overwrite。現用 `體驗交流💬` 頻道 `1564479770014785577`；普通區未發布測試卡、訊息或通知，之前僅私人 ephemeral 草稿，已取消。
+
+## 2026-11-16 首批 release 證據與分項範圍（部署版本以上方追加為準）
+
+首批正式版本由 [release #188](https://github.com/jeff-drlecter/Con9sole-Bartender/pull/188) 部署，main/runtime commit 均為 `87dc4569606ea6806ff2e4a6fa1136791815d343`。下方舊段落中的「未部署」、登入阻擋及舊 main 均為歷史快照。#181–185、#187 的內容已整合於 #188；#165–168 亦已經歷史整合，不因 PR 仍 open 再次合併。所有後續驗收修正及最新 runtime SHA 以[草稿回應修正 PR 的現行結果表](https://github.com/jeff-drlecter/Con9sole-Bartender/pulls?q=head%3Afix%2Fdraft-response-timeout)為追加證據；該次版本已由上方 #189 追加證據更新；下列表格保留首批驗收快照。
 
 ### 程式、部署與保存證據
 

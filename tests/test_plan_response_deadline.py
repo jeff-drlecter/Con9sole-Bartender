@@ -118,6 +118,29 @@ class ResponseDeadlineTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.cog.book.all())
             i.edit_original_response.assert_awaited_once()
 
+    async def test_changing_numbers_preserves_event_and_notice_choices(self):
+        for auto in (False, True):
+            for notices in (False, True):
+                view = Draft(self.cog, self.channel, self.owner, self.data)
+                view.settings.update(auto_event=auto, host_notices=notices)
+                form = Numbers(view, self.owner)
+                form.minimum._value, form.capacity._value = '2', '4'
+                with patch('features.plan_services.fresh_source', new=AsyncMock(return_value=(self.owner, self.channel))):
+                    await form.on_submit(self.interaction())
+                self.assertEqual(view.settings['auto_event'], auto)
+                self.assertEqual(view.settings['host_notices'], notices)
+                self.assertEqual((view.settings['minimum'], view.data['capacity']), (2, 4))
+
+    async def test_blank_threshold_disables_event_and_new_number_does_not_opt_in(self):
+        view = Draft(self.cog, self.channel, self.owner, self.data)
+        with patch('features.plan_services.fresh_source', new=AsyncMock(return_value=(self.owner, self.channel))):
+            for value in ('', '2'):
+                form = Numbers(view, self.owner)
+                form.minimum._value = value
+                await form.on_submit(self.interaction())
+                self.assertFalse(view.settings['auto_event'])
+        self.assertFalse(view.auto.disabled)  # The owner can explicitly turn it on.
+
     async def test_published_settings_acknowledge_before_source_and_keep_cas(self):
         p = self.cog.book.create(guild=self.guild.id, channel=20, owner=1, **self.data)
         self.cog.book.publish(p['id'], 99)
