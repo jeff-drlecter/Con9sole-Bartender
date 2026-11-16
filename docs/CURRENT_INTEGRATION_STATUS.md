@@ -1,5 +1,11 @@
 # Con9sole 現行整合與驗收總表
 
+> **2026-11-16 部署執行更新（本段優先；下文保留歷史）**：Jeff 再次明確要求部署並允許切換帳號。正式 release 候選包含 #185 的四項整合與 #187 的 03 Event／發起人提醒。#187 head `5083b771ae39caae13a6f568984485c08ab7e775` 已通過 950 tests、鎖定依賴審核及容器檢查（PR CI `43743363310`）。新 release 另加入正式 workflow 的強制單機／持久卷／idle receipts 與活動檢查、近期 observer 健康、備份回讀及實際 commit 核對；最終結果以 release PR／本次 Actions 為準，不能用上一 SHA 的結果代替。正常合併授權 release 到 main 後，production job 在更換機器前執行關卡，失敗就停止；production environment 及 main required `validate` 均保留。舊段落「未合併／未部署／沒有進入 main」僅是當時狀態，不能凌駕後續執行證據。
+>
+> Chrome 已看到 `jeff_con9sole`，但顯示「Please log in again」，已打開登入頁等候 Jeff 完成；目前仍是 `jeff_drlecter`，未以它代普通成員通過。所有未完成身份矩陣保留未驗證；iPhone 繼續略過。
+>
+> 部署先只建 image、不啟動 Bot；盤點及新備份成功後，只更新已記錄的單一 machine，`--ha=false --update-only --only-machines`。build fallback 不再重跑結果未知的部署。部署後核對 `APP_COMMIT` 與 release SHA、唯一機器及既有健康檢查。兩次 idle 盤點之間服務仍在線，並非原子鎖；語音與按鈕仍可能短暫受重啟影響。回復必須保留現行 `/data`，已有 Linked Event 或未分類收據時按下文保留新同步器／dispatcher，不直接回舊 image。
+
 > 03 追加候選（2026-11-16）：Jeff 已要求部署最新 03 設計。#186 `4315ef7` 僅為規格；本 `feat/confirmed-plan-events` 分支新增成局 VOICE Event、發起人報名提醒及持久交付保護，依賴下述 #185 `9a53a22`。完整新增狀態／接口／資料／回復見 [03 追加交接](PLAN_EVENTS_HOST_NOTICES_HANDOFF.md)，精確 head／CI 由本分支 Draft PR 記錄。以下 #185 的 918 tests 等證據是基線，不當作本候選通過。正式版本、真人驗收與放行阻擋仍未改變，沒有部署新功能。
 
 更新：2026-11-16（香港）。本文件記錄本輪 02–05 的整合候選，不是發布公告或放行證明。版本以 GitHub PR head / Actions 的完整 SHA 為準；舊文件只代表當時快照。iPhone Mirroring／實機依 Jeff 指示略過，不計通過，也不作部署阻擋。

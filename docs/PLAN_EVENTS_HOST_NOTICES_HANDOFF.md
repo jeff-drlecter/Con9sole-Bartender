@@ -1,5 +1,7 @@
 # 03 追加功能：成局 Event 與發起人提醒
 
+> 後續執行狀態以 [現行總表頂部](CURRENT_INTEGRATION_STATUS.md) 及 release PR／Actions 為準。以下是 #187 候選交接快照；950 項完整回歸、依賴與容器 CI 已通過，但真人帳號、正式盤點及部署結果仍須逐項更新，不能由舊候選文字推定通過或失敗。
+
 2026-11-16（香港）。**程式候選，未部署；普通成員／Helper／Tester／Admin 新版實測均未驗證。**
 
 本文件接續 [03 已確認規格](PLAN_EVENTS_HOST_NOTICES_SPEC.md)，該規格來自 Draft PR #186，commit `4315ef782e1753ae20eb52ac5b214f125e61a78a`。規格 PR 本身沒有功能程式。

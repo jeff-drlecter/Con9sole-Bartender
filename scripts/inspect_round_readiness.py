@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
 from contextlib import closing
 
 
@@ -51,9 +52,35 @@ def inspect(root, environ=None):
         deployment_approved=False)
 
 
+def require_idle(result):
+    """A deployment guard, not a substitute for identity acceptance.
+
+    Refuse even valid pending work: this release must not replace a dispatcher
+    while delivery or a voice/plan operation is in progress. Missing evidence
+    is blocked rather than interpreted as an empty store.
+    """
+    flags = ('unclassified_active_receipts_present', 'pending_receipts_present',
+             'uncertain_receipts_present', 'uncertain_card_posts_present',
+             'active_plans_present', 'plan_posting_or_voice_attempt_present',
+             'plan_event_unresolved_present', 'host_notice_unresolved_present',
+             'persisted_active_voice_sessions_present')
+    blocked = [key for key in flags if result.get(key) is not False]
+    if result.get('notification_store') != 'integrity_checked':
+        blocked.append('notification_store')
+    if result.get('inspection') != 'completed_read_only':
+        blocked.append('inspection')
+    if blocked:
+        raise ValueError('Deployment held: ' + ', '.join(blocked))
+
+
 if __name__=='__main__':
     try:
         result=inspect(os.getenv('DRINK_DATA_DIR') or '/data')
     except (OSError,sqlite3.Error,ValueError,KeyError,TypeError):
         raise SystemExit('Readiness inspection unavailable; deployment remains unverified') from None
     print(json.dumps(result,ensure_ascii=False))
+    if '--require-idle' in sys.argv:
+        try:
+            require_idle(result)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
