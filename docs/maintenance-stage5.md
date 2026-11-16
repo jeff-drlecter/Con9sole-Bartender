@@ -50,3 +50,10 @@ This is in-process monitoring: a stopped Fly machine, disconnected Bot, missing 
 Snapshots are sequential REST reads, not atomic Discord transactions. Consecutive checks reduce transient noise; they cannot prove every operation succeeded. Changes between observations can be missed. Missing access is reported as unknown. Core Bot member reads fail closed; a Bot removal is not silently accepted as a healthy baseline.
 
 Not covered: Carl/Dyno dashboard settings, external Bot runtime logic, guild-wide security/onboarding settings, role hierarchy order, general member role assignments, archived/private thread membership, webhooks/invite inventories, native mobile UI, production disaster recovery and out-of-process uptime. Names/positions are deliberately excluded. Apart from the explicitly approved new private destination, this stage does not change existing channel/member permissions, XP, subscription logic, anti-scam actions or HK/TW preferences.
+# 2026-11-16：移除閒置 Bot 的相容處理
+
+本次移除由 Owner 確認：YAGPDB 的 Helper 提醒由 Bartender 接替；Dyno 的用途由 Carl 與 Bartender 覆蓋。新基準只要求 Carl 與 Bartender，不再要求 Dyno。
+
+既有基準內的 Bot ID 仍逐一查詢。Discord 明確回覆 Unknown Member（10007）時，以空角色清單記錄缺席，讓移除及日後重新加入仍會產生可見差異；其他 404、權限錯誤或逾時仍顯示讀取不完整。舊基準、通知紀錄與其他設定的監察全部保留，不自動確認任何差異。
+
+此程式修正不會自行移除 Bot、發公告或改 Discord 權限。實際移除及後續唯讀核對另行記錄。部署沿用既有閒置狀態檢查及資料備份；回復舊程式前須注意舊版本仍要求 Dyno 在場。

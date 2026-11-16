@@ -204,8 +204,69 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         with patch('utils.is_temp_vc_id', return_value=False):
             value = await self.cog.collect(guild)
         self.assertIn('20', value['channels'])
-        self.assertEqual(set(value['bots']), {'7', '8', '9'})
+        self.assertEqual(set(value['bots']), {'7', '9'})
+        self.assertEqual(guild.fetch_member.await_count, 2)
+
+    async def test_retired_baseline_bot_does_not_abort_other_reads_or_hide_drift(self):
+        del self.cog.collect
+        self.bot.user = NS(id=9)
+        roles = [role(1), role(2, bot=9), role(4, bot=7, name='Carl-bot')]
+        before = snapshot(roles, [channel(10)], [], {7: [1], 8: [1], 9: [1]})
+        token = self.cog.store.preview(1, 7, before, 10)
+        self.cog.store.accept(1, 7, token, before)
+
+        async def member(uid):
+            if uid == 8:
+                raise discord.NotFound(NS(status=404, reason='Not Found'),
+                                       {'code': 10007, 'message': 'Unknown Member'})
+            return NS(roles=[roles[0]])
+
+        guild = NS(id=1, fetch_roles=AsyncMock(return_value=roles),
+                   fetch_automod_rules=AsyncMock(return_value=[]),
+                   fetch_member=AsyncMock(side_effect=member),
+                   _state=NS(http=NS(get_all_guild_channels=AsyncMock(return_value=[channel(10)]))))
+        with patch('utils.is_temp_vc_id', return_value=False):
+            result = await self.cog.check(guild, background=False)
+        self.assertEqual(result['drift'], {'bots': ['8']})
+        self.assertIn('health', result)
+        self.assertNotIn('read_error', result)
+        self.cog.health.assert_awaited_once()
+        self.destination.send.assert_not_awaited()
+        self.assertEqual(self.cog.store.state(1)['baseline']['snapshot'], before)
         self.assertEqual(guild.fetch_member.await_count, 3)
+
+        # A later explicit baseline can acknowledge absence; a rejoin is drift.
+        absent = dict(before, bots=dict(before['bots'], **{'8': []}))
+        self.assertEqual(differences(absent, before), {'bots': ['8']})
+
+    async def test_other_member_read_failures_still_fail_closed(self):
+        del self.cog.collect
+        self.bot.user = NS(id=9)
+        roles = [role(1), role(2, bot=9), role(4, bot=7, name='Carl-bot')]
+        guild = NS(id=1, fetch_roles=AsyncMock(return_value=roles),
+                   fetch_automod_rules=AsyncMock(return_value=[]), fetch_member=AsyncMock(),
+                   _state=NS(http=NS(get_all_guild_channels=AsyncMock(return_value=[channel(10)]))))
+        for error in [
+            discord.NotFound(NS(status=404, reason='Not Found'), {'code': 10004, 'message': 'Unknown Guild'}),
+            discord.Forbidden(NS(status=403, reason='Forbidden'), 'Missing Access'),
+            TimeoutError(),
+        ]:
+            guild.fetch_member.side_effect = error
+            self.assertEqual(await self.cog.check(guild, background=False), {'read_error': True})
+        self.cog.health.assert_not_awaited()
+        self.destination.send.assert_not_awaited()
+
+    async def test_fresh_baseline_requires_carl_and_bartender_not_dyno(self):
+        del self.cog.collect
+        self.bot.user = NS(id=9)
+        # No existing baseline in this new guild; Dyno cannot replace Carl.
+        roles = [role(2, bot=9), role(3, bot=8, name='Dyno')]
+        guild = NS(id=2, fetch_roles=AsyncMock(return_value=roles),
+                   fetch_automod_rules=AsyncMock(return_value=[]), fetch_member=AsyncMock(),
+                   _state=NS(http=NS(get_all_guild_channels=AsyncMock(return_value=[]))))
+        with self.assertRaises(ValueError):
+            await self.cog.collect(guild)
+        guild.fetch_member.assert_not_awaited()
 
     async def test_fresh_authority_ignores_stale_cached_permissions(self):
         member = NS(id=7, _roles=[2], guild_permissions=discord.Permissions.all())
