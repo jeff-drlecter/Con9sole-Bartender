@@ -388,11 +388,14 @@ class RenameRoomModal(SafeModal, title="改小隊房名"):
 
 
 class TempVCControlView(SafeView):
-    def __init__(self, cog: "TempVC", *, channel_id: int, guild_id: int | None = None):
+    def __init__(self, cog: "TempVC", *, channel_id: int, guild_id: int | None = None, user_id: int | None = None):
         super().__init__(timeout=600)
         self.cog = cog
         self.channel_id = channel_id
         room = cog.bot.get_channel(channel_id)
+        from features import voice_invite_trial
+        if not voice_invite_trial.visible(getattr(cog.bot, 'get_cog', lambda _: None)('SquadCards'), room, user_id):
+            self.remove_item(self.recruit_button)
         guild_id = guild_id or (room.guild.id if room is not None else None)
         if guild_id is not None:
             self.add_item(discord.ui.Button(label="加入語音房", emoji="🎧", url=f"https://discord.com/channels/{guild_id}/{channel_id}", row=0))
@@ -404,6 +407,25 @@ class TempVCControlView(SafeView):
     @discord.ui.button(label="改人數上限", emoji="👥", style=discord.ButtonStyle.secondary, row=1)
     async def change_limit_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(wording_modal(interaction.user, ChangeLimitModal(self.cog, self.channel_id)))
+
+    @discord.ui.button(label="招人入隊", emoji="📣", style=discord.ButtonStyle.primary, row=0)
+    async def recruit_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        member, channel, error = self.cog._get_control_channel(interaction, self.channel_id)
+        if error or channel is None or member is None:
+            await send_or_followup(interaction, content=error or "搵唔到房間。", ephemeral=True)
+            return
+        from features import voice_invite_trial
+        if not voice_invite_trial.visible(self.cog.bot.get_cog('SquadCards'), channel, member.id):
+            await send_or_followup(interaction, content='呢個招人入隊入口唔屬於目前已核准的試行範圍。', ephemeral=True)
+            return
+        if member.id != tempvc_storage.creator_id(channel.id) and not user_can_admin_teardown(member):
+            await send_or_followup(interaction, content="招人入隊只限開房者或管理員。", ephemeral=True)
+            return
+        cards = self.cog.bot.get_cog("SquadCards")
+        if cards is None:
+            await send_or_followup(interaction, content="招募功能暫時未載入，請稍後再試。", ephemeral=True)
+            return
+        await cards.share_voice(interaction, channel.id)
 
     @discord.ui.button(label="刪除小隊 call", emoji="🧹", style=discord.ButtonStyle.danger, row=2)
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -808,7 +830,7 @@ class TempVC(commands.Cog):
                 if current_member is None or not (room.permissions_for(current_member).view_channel and room.permissions_for(current_member).connect):
                     await interaction.edit_original_response(content=wording_text(interaction.user, "你之前間小隊房目前無法存取，請聯絡管理員。"))
                     return
-                await interaction.edit_original_response(content=wording_text(interaction.user, "🎧 你間小隊 call：{room}").format(room=room.mention), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=guild.id)))
+                await interaction.edit_original_response(content=wording_text(interaction.user, "🎧 你間小隊 call：{room}").format(room=room.mention), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=guild.id, user_id=interaction.user.id)))
                 return
             async with shared_async_lock("voice-create", guild.id):
                 if self._unloading:
@@ -827,7 +849,7 @@ class TempVC(commands.Cog):
                     await interaction.edit_original_response(content=wording_text(interaction.user, "暫時開唔到房，請稍後再試；如持續出現，請通知管理員。"))
                     return
             await record_usage("tempvc", interaction.user.id, guild.id)
-            await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32, wording_member=interaction.user), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id)))
+            await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32, wording_member=interaction.user), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id, user_id=interaction.user.id)))
 
     async def open_control_panel_from_menu(self, interaction: discord.Interaction) -> None:
         member, channel, error = self._get_current_member_temp_vc(interaction)
@@ -843,7 +865,7 @@ class TempVC(commands.Cog):
         await _send_interaction_message(
             interaction,
             _build_control_panel_message(channel, wording_member=interaction.user),
-            view=TempVCControlView(self, channel_id=channel.id, guild_id=channel.guild.id),
+            view=TempVCControlView(self, channel_id=channel.id, guild_id=channel.guild.id, user_id=interaction.user.id),
             ephemeral=True,
         )
 
