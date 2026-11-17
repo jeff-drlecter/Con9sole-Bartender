@@ -17,7 +17,7 @@ def member(uid=100, *, verified=False, admin=False, manage=False, helper=False, 
     result.id, result.bot = uid, bot
     result.roles = ([SimpleNamespace(id=config.VERIFIED_ROLE_ID, name='Verified')] if verified else [])
     if helper:
-        result.roles.append(SimpleNamespace(id=999, name='Helper'))
+        result.roles.append(SimpleNamespace(id=999, name=config.HELPER_ROLE_NAMES[0]))
     result.guild_permissions = SimpleNamespace(administrator=admin, manage_guild=manage)
     return result
 
@@ -85,12 +85,12 @@ class DirectoryCommandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_role_boundaries_and_fresh_roles_each_operation(self):
         await self.create()
-        for actor in [member(), member(helper=True), member(bot=True, admin=True)]:
+        for actor in [member(), member(200), member(bot=True, admin=True)]:
             self.actor = actor
             for command, kwargs in [('list_cards', {}), ('show', {'key': 'team-a'})]:
                 inter = await self.call(command, **kwargs)
                 self.assertNotIn('embed', inter.followup.send.call_args.kwargs)
-        for actor in [member(verified=True), member(verified=True, helper=True)]:
+        for actor in [member(verified=True), member(200, verified=True)]:
             self.actor = actor
             inter = await self.call('list_cards')
             self.assertIn('embed', inter.followup.send.call_args.kwargs)
@@ -109,6 +109,100 @@ class DirectoryCommandTests(unittest.IsolatedAsyncioTestCase):
         count = self.bot.fetch_guild.await_count
         await self.call('list_cards', inter)
         self.assertEqual(self.bot.fetch_guild.await_count, count)
+
+    async def test_helper_create_edit_pic_and_active_views_without_verified(self):
+        for actor in [member(helper=True), member(helper=True, verified=True)]:
+            self.actor = actor
+            key = 'verified-helper' if actor.roles[0].name == 'Verified' else 'helper'
+            await self.create(key, key, notes='Original')
+            for command, kwargs in [('list_cards', {}), ('show', dict(key=key))]:
+                inter = await self.call(command, **kwargs)
+                self.assertIn('embed', inter.followup.send.call_args.kwargs)
+            self.contact = member(300)
+            await self.call('edit', key=key, name=key + ' edited', game='New game',
+                            pic=discord.Object(id=300), notes='Updated', status='closed')
+            card = Directory(self.path, config.GUILD_ID).get(key)
+            self.assertEqual((card['name'], card['game'], card['pic_id'], card['notes'], card['status']),
+                             (key + ' edited', 'New game', 300, 'Updated', 'closed'))
+            await self.call('edit', key=key, clear_notes=True)
+            self.assertEqual(self.cog.directory.get(key)['notes'], '')
+        # The existing central Helper role-ID path also applies when its name changes.
+        self.actor = member()
+        self.actor.roles = [SimpleNamespace(id=777, name='Renamed role')]
+        with patch('core.permissions.HELPER_ROLE_IDS', {777}):
+            await self.create('role-id', 'Role ID')
+        self.assertEqual(self.cog.directory.get('role-id')['name'], 'Role ID')
+
+    async def test_helper_cannot_archive_restore_query_or_edit_archived(self):
+        await self.create(notes='Archived content')
+        self.actor = member(helper=True)
+        before = self.path.read_bytes()
+        await self.call('archive', key='team-a')
+        self.assertEqual(self.path.read_bytes(), before)
+        self.actor = member(admin=True)
+        await self.call('archive', key='team-a')
+        before = self.path.read_bytes()
+        for actor in [member(helper=True), member(helper=True, verified=True), member(200)]:
+            self.actor = actor
+            for command, kwargs in [('restore', dict(key='team-a')),
+                                    ('list_cards', dict(archived=True)), ('show', dict(key='team-a')),
+                                    ('edit', dict(key='team-a', name='Forbidden', pic=discord.Object(id=300)))]:
+                inter = await self.call(command, **kwargs)
+                self.assertNotIn('embed', inter.followup.send.call_args.kwargs)
+                inter.guild.fetch_member.assert_not_awaited()
+                self.assertEqual(self.path.read_bytes(), before)
+        self.actor = member(manage=True)
+        inter = await self.call('show', key='team-a')
+        self.assertIn('embed', inter.followup.send.call_args.kwargs)
+        inter = await self.call('list_cards', archived=True)
+        self.assertEqual(len(inter.followup.send.call_args.kwargs['embed'].fields), 1)
+        await self.call('edit', key='team-a', name='Admin repaired')
+        await self.call('restore', key='team-a')
+        self.assertEqual(self.cog.directory.get('team-a')['name'], 'Admin repaired')
+        self.assertFalse(self.cog.directory.get('team-a')['archived'])
+
+    async def test_helper_revocation_and_pic_only_cannot_write(self):
+        await self.create()
+        before = self.path.read_bytes()
+        for command, kwargs in [('create', dict(key='new', name='New', game='Game', pic=discord.Object(id=200))),
+                                ('edit', dict(key='team-a', pic=discord.Object(id=300)))]:
+            self.fresh_guild.fetch_member.side_effect = [member(helper=True), member(verified=True)]
+            await self.call(command, **kwargs)
+            self.assertEqual(self.path.read_bytes(), before)
+            self.fresh_guild.fetch_member.side_effect = lambda uid: member(200)
+            await self.call(command, **kwargs)
+            self.assertEqual(self.path.read_bytes(), before)
+        # A stale interaction Helper role must not override REST revocation.
+        inter = self.interaction()
+        inter.user = member(helper=True)
+        self.fresh_guild.fetch_member.side_effect = lambda uid: member(verified=True)
+        await self.call('edit', inter, key='team-a', notes='Forbidden')
+        self.assertEqual(self.path.read_bytes(), before)
+
+    async def test_helper_edit_rechecks_archive_after_pic_and_final_authorization(self):
+        await self.create()
+        self.actor = member(helper=True)
+        for stage in ['pic', 'final_auth']:
+            self.cog.directory.save('team-a', archived=False)
+            original = self.cog.directory.get('team-a')
+            inter = self.interaction()
+            if stage == 'pic':
+                async def pic_lookup(uid):
+                    self.cog.directory.save('team-a', archived=True)
+                    return member(300)
+                inter.guild.fetch_member.side_effect = pic_lookup
+            else:
+                calls = 0
+                async def final_auth(uid):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 2:
+                        self.cog.directory.save('team-a', archived=True)
+                    return self.actor
+                self.fresh_guild.fetch_member.side_effect = final_auth
+            await self.call('edit', inter, key='team-a', name='Must not save', pic=discord.Object(id=300))
+            self.assertEqual(self.cog.directory.get('team-a'), dict(original, archived=True))
+            self.assertNotIn('embed', inter.followup.send.call_args.kwargs)
 
     async def test_member_lookup_failures_and_revocation_do_not_write(self):
         await self.create()
