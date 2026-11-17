@@ -30,6 +30,9 @@ jobs:
       - name: Compile Python source
         run: python -m compileall -q .
 
+      - name: Validate Codex agent configuration
+        run: python scripts/validate_codex_agents.py
+
       - name: Run unit tests
         run: timeout 120 python -m unittest discover -s tests -v
 
