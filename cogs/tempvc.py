@@ -196,12 +196,20 @@ async def _order_temp_channels(guild: discord.Guild, category_id: int | None) ->
     Fetch the server state so newly created rooms and a recent reorder are included.
     Submit one atomic reorder, retaining all unrelated voice channels' relative order.
     """
-    channels = await guild.fetch_channels()
-    voices = sorted(
-        (ch for ch in channels if isinstance(ch, discord.VoiceChannel)
-         and ch.category_id == category_id),
-        key=lambda ch: (ch.position, ch.id),
-    )
+    # Guild.fetch_channels() rejects the entire response for an unknown channel
+    # type, even outside this category. Use the same authenticated/rate-limited
+    # REST inventory, constructing only exact voice types in this category.
+    # Unknown types are left untouched; the cache is not a complete fresh inventory.
+    rows = await guild._state.http.get_all_guild_channels(guild.id)
+    # REST snowflakes are strings; a null/absent parent means uncategorized.
+    parent_id = str(category_id) if category_id is not None else None
+    channels = [
+        discord.VoiceChannel(state=guild._state, guild=guild, data=row)
+        for row in rows
+        if row['type'] == discord.ChannelType.voice.value
+        and row.get('parent_id') == parent_id
+    ]
+    voices = sorted(channels, key=lambda ch: (ch.position, ch.id))
     hub = next((ch for ch in voices if _is_hub_channel(ch)), None)
     if hub is None:
         return
@@ -228,7 +236,6 @@ async def _try_order_temp_channels(guild: discord.Guild, category_id: int | None
     try:
         await _order_temp_channels(guild, category_id)
     except (discord.HTTPException, discord.InvalidData):
-        # New Discord channel types may make the bulk channel fetch fail.
         # Cosmetic ordering must not prevent the creation reply/cleanup setup.
         # Ordering failure must not strand the creator in the hub or orphan a room.
         log.exception("Could not sort temp VCs: guild=%s category=%s", guild.id, category_id)

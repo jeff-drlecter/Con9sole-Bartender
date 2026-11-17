@@ -1,0 +1,4 @@
+# Project-scoped settings; keep the main chat's model and permission policy.
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3

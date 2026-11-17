@@ -89,3 +89,41 @@ class ReadableTests(unittest.IsolatedAsyncioTestCase):
         text=cog.emit.await_args.args[2]
         self.assertIn('舊身份組',text); self.assertIn('已刪除',text)
         self.assertNotIn('<@&123>',text)
+
+    async def test_sdk_channel_audit_without_target_still_emits_known_details(self):
+        guild=NS(id=config.GUILD_ID,_state=NS(),get_member=lambda _:None,get_channel=lambda _:None)
+        for target_fields in ({'target_id':None},{}):
+            with self.subTest(target_fields=target_fields):
+                entry=discord.AuditLogEntry(
+                    guild=guild,users={},integrations={},app_commands={},automod_rules={},webhooks={},
+                    data={'id':'123456','action_type':11,'user_id':None,'reason':'synthetic reason',
+                          'changes':[{'key':'name','old_value':'old','new_value':'new'}],**target_fields})
+                # Exercise the actual locked SDK converter, not a mocked target.
+                with self.assertRaises(TypeError):
+                    _=entry.target
+                cog=CommunityAudit(NS()); cog.emit=AsyncMock()
+                await cog.on_audit_log_entry_create(entry)
+                cog.emit.assert_awaited_once()
+                args=cog.emit.await_args.args
+                self.assertEqual(args[:2],('server','官方審核｜修改頻道'))
+                self.assertIn('**對象**\n未提供',args[2])
+                self.assertIn('synthetic reason',args[2])
+                self.assertIn('old',args[2]); self.assertIn('new',args[2])
+                self.assertNotIn('<#',args[2])
+                self.assertEqual(cog.emit.await_args.kwargs['key'],'audit:123456')
+
+    async def test_non_null_target_conversion_error_is_not_swallowed(self):
+        class BrokenEntry:
+            guild=NS(id=config.GUILD_ID)
+            user=None
+            user_id=None
+            _target_id=123
+
+            @property
+            def target(self):
+                raise TypeError('unrelated converter error')
+
+        cog=CommunityAudit(NS()); cog.emit=AsyncMock()
+        with self.assertRaisesRegex(TypeError,'unrelated converter error'):
+            await cog.on_audit_log_entry_create(BrokenEntry())
+        cog.emit.assert_not_awaited()

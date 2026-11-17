@@ -333,19 +333,28 @@ class CommunityAudit(commands.Cog):
         actor_user=entry.user
         if actor_user is not None: actor_user=entry.guild.get_member(actor_user.id) or actor_user
         actor=who(actor_user) if actor_user else (f'<@{entry.user_id}>' if entry.user_id else '未知')
-        target=getattr(entry.target,'id',None)
+        try:
+            target_obj=entry.target
+        except TypeError:
+            # discord.py 2.7.1 constructs Object(id=None) for a missing channel
+            # target. Preserve this audit event without inventing its target;
+            # unrelated conversion errors must still surface.
+            if getattr(entry,'_target_id',0) is not None:
+                raise
+            target_obj=None
+        target=getattr(target_obj,'id',None)
         kind=entry.action.target_type
         target_label=f'ID `{target}`' if target else '未提供'
         if target and kind=='role':
-            obj=entry.guild.get_role(target) or entry.target
+            obj=entry.guild.get_role(target) or target_obj
             if not getattr(obj,'name',None):
                 from types import SimpleNamespace
                 obj=SimpleNamespace(id=target,name=getattr(entry.before,'name',None) or getattr(entry.after,'name',None) or '未快取名稱')
             target_label=role_label(obj,deleted=entry.action.name=='role_delete')
-        elif target and (kind=='user' or isinstance(entry.target,(discord.Member,discord.User))):
-            target_label=who(entry.guild.get_member(target) or entry.target)
+        elif target and (kind=='user' or isinstance(target_obj,(discord.Member,discord.User))):
+            target_label=who(entry.guild.get_member(target) or target_obj)
         elif target and kind in {'channel','thread'}:
-            target_label=f'**{safe(getattr(entry.target,"name","未快取名稱"),100)}** · <#{target}>'
+            target_label=f'**{safe(getattr(target_obj,"name","未快取名稱"),100)}** · <#{target}>'
         action=ACTIONS.get(entry.action.name,entry.action.name.replace('_',' '))
         detail=f'**操作者**\n{actor}\n**對象**\n{target_label}\n原因：{safe(entry.reason or "未提供",500)}\n審核編號：`{entry.id}`'
         # This entry is authoritative only for its own target/action, never guessed onto a message.

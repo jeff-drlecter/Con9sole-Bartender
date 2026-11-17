@@ -1,5 +1,21 @@
 # Con9sole 現行整合與驗收總表
 
+## 2026-11-17 整合發布索引
+
+使用者已在本輪明確要求「合併同部署」。本次只整合 #193（`317f499403930f1c6e68871032f2d0083683068b`）、#194（`b0477e8e5930389a602ca4aa89e5e7837499b15f`）、#195（`405ffadf84a992f7d4a2b927642eb898fad40002`）、#196（`f192d0c3ed3d485651f97d04fff0867b09cfe48f`）及 #198（`fb202e7bdbd6ed19b244d1d4edb057475dc0a31f`），不納入四個大版本升級。
+
+本節是發布前的版本清單，不預稱已部署。精確 release head、最終 CI、main SHA、部署流程及讀回結果集中於 [#197](https://github.com/jeff-drlecter/Con9sole-Bartender/issues/197) 與 [本次 release PR](https://github.com/jeff-drlecter/Con9sole-Bartender/pulls?q=head%3Arelease%2F20261117-growth-and-codex)。沿用現有 idle／delivery、單機、備份讀回及 runtime SHA 閘門；不新增 Bot 程序、不改正式 Discord 設定、不發布六篇內容草稿或公告。真人 UI、05 cohort 接口及 Codex 模型 metadata 限制不會因部署而自動變成通過。
+
+下方及來源候選文件的「不合併／不部署／維持 Draft」屬授權前歷史；本輪合併部署授權以本節及 release PR 證據為準，不擴大為其他正式操作授權。
+
+## 2026-11-17 待辦整理（本節為此次核對狀態）
+
+核對 main 為 `9565192ac5d9027b1468b51efc7108a8f3c57388`（#192）；對應 [Fly Deploy 43898217858](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43898217858) 成功。這是已存在的部署紀錄，本次整理沒有重新部署或聲稱即時健康驗證。
+
+待辦、已關閉來源 PR、續作版本及尚未通過的條件統一記錄於 [#197](https://github.com/jeff-drlecter/Con9sole-Bartender/issues/197)。#165–168、#181–187 已按歷史整合／規格取代證據關閉，不再因 Draft 狀態重播。#133 舊語言方案、#18 舊依賴檔更新及 #1 流程測試亦已整理關閉；原提交、分支及驗收限制保留。
+
+#193 統計、#194 草稿、#195 驗收工具、#196 Codex 配置仍是獨立候選；tempVC 未知頻道型態排序及 audit null target 修復亦須以其 PR 的固定 SHA／CI／06 驗收為準。本節不批准合併、部署、改正式 Discord 或發布內容。下方「現行／最新／未部署」字眼均屬其標示日期的歷史快照，不能取代 #197 的續作紀錄。
+
 ## 2026-11-16 12:23 香港追加狀態（本節優先）
 
 [修正 #189](https://github.com/jeff-drlecter/Con9sole-Bartender/pull/189) 已部署，現行 runtime/main 為 `71d894169cd117981ed106806eb9aad293b70a99`，tree `abdca81b0c86df53a32c1bfb8753f5b8cfd12717`。[部署 43802653201](https://github.com/jeff-drlecter/Con9sole-Bartender/actions/runs/43802653201) 全部成功；04:14:15 UTC 讀回 commit。PR CI `43802479453` 與部署 pipeline 均通過 962 tests，前者亦完成依賴審核與容器檢查。

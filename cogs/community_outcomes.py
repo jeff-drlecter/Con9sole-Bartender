@@ -141,19 +141,28 @@ class CommunityOutcomes(commands.Cog):
             await inter.response.send_message(wording_text(inter.user,'只限本伺服器管理員。'),ephemeral=True)
             return
         view=discord.ui.View(timeout=180)
-        for label, method in [('約局成效','report'),('首次觀察／再次到場','returns_report')]:
+        for label, method in [('約局成效','report'),('首次觀察／再次到場','returns_report'),
+                              ('成員／觀測基線','baseline_report')]:
             button=discord.ui.Button(label=label,style=discord.ButtonStyle.secondary)
             async def choose(i, method=method):
                 if i.user.id!=inter.user.id or i.guild_id!=inter.guild_id:
-                    await i.response.send_message('請開啟自己的管理選單。',ephemeral=True)
+                    await i.response.send_message(wording_text(i.user, '請開啟自己的管理選單。'),ephemeral=True,
+                                                  allowed_mentions=discord.AllowedMentions.none())
                     return
-                await getattr(type(self),method).callback(self,i)
+                handler = getattr(type(self),method)
+                await getattr(handler, 'callback', handler)(self,i)
             button.callback=choose
             view.add_item(button)
-        await inter.response.send_message('選擇私人統計範圍。',view=view,ephemeral=True)
+        if not await self.authorized(inter):
+            await inter.response.send_message(wording_text(inter.user, '權限已改變，統計未送出。'),ephemeral=True,
+                                              allowed_mentions=discord.AllowedMentions.none())
+            return
+        await inter.response.send_message(wording_text(inter.user, '選擇私人統計範圍。'),view=view,ephemeral=True,
+                                          allowed_mentions=discord.AllowedMentions.none())
 
     async def authorized(self, inter):
-        if inter.guild_id != config.GUILD_ID or inter.guild is None:
+        if (inter.guild_id != config.GUILD_ID or inter.guild is None
+                or getattr(inter.guild, 'id', None) != config.GUILD_ID):
             return False
         try:
             from core.private_source import fresh_member, SourceUnavailable
@@ -161,6 +170,59 @@ class CommunityOutcomes(commands.Cog):
         except SourceUnavailable:
             return False
         return not member.bot and is_server_admin(member)
+
+    def baseline_scope(self, guild, as_of):
+        """A transient session snapshot, never historical skip/attendance counts."""
+        cards, plans = self.bot.get_cog('SquadCards'), self.bot.get_cog('SquadPlans')
+        if not cards or not plans:
+            return dict(as_of=as_of,status='sources_unavailable',counts={})
+        counts = {}
+        for key, session in list(cards.state['sessions'].items()):
+            channel = guild.get_channel(int(key))
+            origin = session_origin(session, plans.book.get(session.get('plan_id')), guild.id)
+            reason = ('channel_unavailable' if channel is None else
+                      'afk' if channel == guild.afk_channel else origin)
+            counts[reason] = counts.get(reason, 0) + 1
+        return dict(as_of=as_of,status='recorded_sessions_only',counts=counts,
+                    historical_reason='historical_reason_not_recorded')
+
+    async def baseline_report(self, inter: discord.Interaction):
+        from features.growth_baseline import enumerate_members, baseline, render
+        await inter.response.defer(ephemeral=True,thinking=True)
+        if not await self.authorized(inter):
+            await inter.followup.send(wording_text(inter.user, '只限本伺服器管理員。'),ephemeral=True,
+                                      allowed_mentions=discord.AllowedMentions.none())
+            return
+        try:
+            members = await enumerate_members(inter.guild)
+            now = time.time()
+            scope = self.baseline_scope(inter.guild, now)
+            # No confirmed private test-account registry has been supplied.
+            result = await asyncio.to_thread(baseline,self.store.path,inter.guild_id,now,members,
+                                             excluded_channels=self.excluded)
+            result['session_scope'] = scope
+            result['current_health'] = self.health_status()
+            output = render(result,language(inter.user))
+        except Exception:
+            # Exception text and IDs must not reach the private report or public logs.
+            log.warning('Growth baseline unavailable; no missing counts inferred')
+            output = wording_text(inter.user, '統計資料暫時無法讀取；缺漏未當作零。')
+        if not await self.authorized(inter):
+            await inter.followup.send(wording_text(inter.user, '權限已改變，統計未送出。'),ephemeral=True,
+                                      allowed_mentions=discord.AllowedMentions.none())
+            return
+        # Split on authored line boundaries; recheck fresh Admin rights per output.
+        chunks = ['']
+        for line in output.splitlines():
+            if len(chunks[-1]) + len(line) + 1 > 1900:
+                chunks.append('')
+            chunks[-1] += ('\n' if chunks[-1] else '') + line
+        for index, chunk in enumerate(chunks):
+            if index and not await self.authorized(inter):
+                await inter.followup.send(wording_text(inter.user, '權限已改變，統計未送出。'),ephemeral=True,
+                                          allowed_mentions=discord.AllowedMentions.none())
+                return
+            await inter.followup.send(chunk,ephemeral=True,allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     @app_commands.default_permissions(manage_guild=True)
