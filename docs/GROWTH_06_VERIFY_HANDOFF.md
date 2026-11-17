@@ -62,14 +62,51 @@ in #193/#194. Re-check heads/main after 04 supplies code.
 
 ### A remains partial
 
-Fly and GitHub web sessions presented sign-in walls; the available GitHub connector
-reads code/Actions but has no private runtime shell or workflow-dispatch operation.
+Historical access note: Fly and GitHub web sessions initially presented sign-in
+walls. After Jeff signed in, Fly machine/image, volume/configuration and retained
+logs were read on 2026-11-17 HKT. The running image tag matches the full main SHA
+above. The configured persistent mount is `/data`; this is not a fresh process-env
+or resolved-path read. Existing volume snapshots were listed, not restored or
+validated for SQLite/WAL consistency. Exact operational details remain private.
+
+The inspected Fly pages expose no private execution terminal. The available
+GitHub connector reads code/Actions but has no private runtime shell or
+workflow-dispatch operation.
 No credential extraction, protection bypass, second Bot, restart, repair or
 migration was attempted. Local `/data` is absent and must not be confused with
 the production volume. The last deployed SHA is verified historically; fresh
 `APP_COMMIT`, current resolved data paths, route/channel permissions, session
-state, five-table raw aggregates, card-post correlation, dated errors, complete
+state, raw table aggregates, card-post correlation, complete
 membership enumeration and personal-invite exclusion are **not yet verified**.
+
+### Dated logs and isolated reproductions
+
+Retained logs supplied dated evidence for two failures. With the project's locked
+`discord.py==2.7.1`, synthetic payloads reproduce both locally without network or
+production writes:
+
+- `cogs/tempvc.py:199`: one unrelated channel with `type=20` in the all-channel
+  response causes `Guild.fetch_channels()` to raise `InvalidData` before category
+  filtering. `_try_order_temp_channels` catches it and returns; the synthetic
+  bulk-position mutation count remains zero. This proves failed cosmetic sorting,
+  not failed room creation or missing attendance. `core/news_channel_inventory.py`
+  already handles unsupported types for its own news scope, but is not a general
+  temp-VC replacement. Hand this exact condition to 01 for 03 coordination; no
+  route/session code was changed here.
+- `cogs/community_audit.py:336`: a channel-target audit entry with null `target_id`
+  raises `TypeError` while resolving `entry.target`, before the outer `getattr`
+  can supply its default. A synthetic action 11/null-target entry reproduces the
+  error with zero `emit` calls. The real event's action was not in the trace; do
+  not assert that its action was 11. The affected audit event does not complete
+  this listener's output. No evidence links this to outcome collection loss.
+
+Gateway resume records were also found. `CommunityOutcomes.on_disconnect()`
+increments the cumulative failure counter; unsuccessful not-ready scans can do
+so too. Resume chronology is consistent with the observed counter increase,
+but per-run DB evidence is still required before assigning an exact cause/count.
+The selected last-24-hour Grafana search for `"Outcome"` returned no data; this
+is limited to that query, window and retained logs, not proof of no failure.
+Later resume records must not be retroactively assigned to earlier UI totals.
 
 The private UI's empty eligible cohort does not distinguish an empty raw table,
 all-test/excluded records, guild/window mismatch or a query omission. Do not
