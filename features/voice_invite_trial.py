@@ -167,3 +167,39 @@ async def enforce(cog, channel, session):
             stop(cog, session, str(exc))
     if invite.get('scope_stopped'):
         await withdraw(cog, session)
+
+
+def render_allowed(cog, session, *, manual=False):
+    """An automatic card refresh must not bypass a failed scope URL cleanup.
+
+    Explicit recruitment settings can retry after the same backoff; success then
+    restores ordinary roster/settings updates. No network work happens here.
+    """
+    cleanup = session.get('voice_scope_cleanup')
+    if not session.get('message') or not cleanup or cleanup['state'] == 'done':
+        return True
+    if cleanup['retry_at'] > time.time() or cleanup['state'] == 'deferred' and not manual:
+        return False
+    cleanup['retry_at'] = time.time() + 60
+    cog.save()  # A cancelled manual refresh also observes the backoff.
+    return True
+
+
+def render_failed(cog, session, exc):
+    cleanup = session.setdefault('voice_scope_cleanup', dict(deadline=time.time()+300))
+    cleanup.update(state='deferred' if isinstance(exc, discord.Forbidden) else 'pending',
+                   retry_at=time.time()+60, error=type(exc).__name__)
+    if cleanup['state'] == 'deferred':
+        cog.state.setdefault('voice_invite_cleanup_pending', {})[session['id']+':scope'] = dict(
+            id=session['id'], destination=session.get('destination'), message=session.get('message'),
+            cleanup=dict(cleanup))
+    cog.save()
+
+
+def render_succeeded(cog, session):
+    cleanup = session.get('voice_scope_cleanup')
+    if cleanup:
+        cleanup.update(state='done', retry_at=0)
+        cleanup.pop('error', None)
+        cog.state.get('voice_invite_cleanup_pending', {}).pop(session['id']+':scope', None)
+        cog.save()

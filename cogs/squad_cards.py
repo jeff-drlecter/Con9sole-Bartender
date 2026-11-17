@@ -89,7 +89,7 @@ class ModePicker(discord.ui.Select):
                 session["profile"] = self.profile
             session["dirty"] = True
             self.cog.save()
-            await self.cog.render(channel, session)
+            await self.cog.render(channel, session, manual_refresh=True)
         await interaction.followup.send("已更新遊戲模式。", ephemeral=True)
 
 
@@ -119,7 +119,7 @@ class GamePicker(discord.ui.Select):
             sync_mode_name(self.cog, channel, session)
             session["dirty"] = True
             self.cog.save()
-            await self.cog.render(channel, session)
+            await self.cog.render(channel, session, manual_refresh=True)
         await interaction.edit_original_response(
             content=wording_text(getattr(interaction, "user", None), "遊戲已更新，模式同人數都可以唔填。"),
             view=wording_view(interaction.user, RecruitmentChoices(self.cog, self.key, session)))
@@ -154,7 +154,7 @@ class Details(discord.ui.Modal, title="組隊狀態"):
             sync_mode_name(self.cog, channel, session)
             session["dirty"] = True
             self.cog.save()
-            await self.cog.render(channel, session)
+            await self.cog.render(channel, session, manual_refresh=True)
         await interaction.followup.send("已更新組隊狀態。", ephemeral=True)
 
 
@@ -188,7 +188,7 @@ class RecruitmentChoices(discord.ui.View):
             session["missing"] = value
             session["dirty"] = True
             self.cog.save()
-            await self.cog.render(channel, session)
+            await self.cog.render(channel, session, manual_refresh=True)
         await interaction.followup.send(
             f"已更新：缺 {value} 人。" if value else "已更新：不限人數，歡迎加入！",
             ephemeral=True)
@@ -559,8 +559,11 @@ class SquadCards(commands.Cog):
                 view=wording_view(interaction.user, RecruitmentChoices(self, str(voice_id), session)),
                 ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
-    async def render(self, channel, session, ended=False):
+    async def render(self, channel, session, ended=False, *, manual_refresh=False):
         session["dirty"] = True
+        if not ended and session.get("voice_invite", {}).get("scope_stopped"):
+            if not invite_trial.render_allowed(self, session, manual=manual_refresh):
+                return False
         token = voice_invites.presence_token(self, channel.id) if channel and session.get('voice_invite') else None
         def check():
             if not ended and token is not None:
@@ -575,7 +578,12 @@ class SquadCards(commands.Cog):
                 voice_invites.checkpoint(self, channel, session, token,
                     qualified=not session.get('message') or session.get('share_waiting', False))
         async def checked(operation):
-            result = await operation
+            try:
+                result = await operation
+            except (discord.HTTPException, OSError, TimeoutError) as exc:
+                if not ended and session.get('voice_invite', {}).get('scope_stopped'):
+                    invite_trial.render_failed(self, session, exc)
+                raise
             check()
             return result
         if not ended and session.get('voice_invite'):
@@ -708,6 +716,8 @@ class SquadCards(commands.Cog):
                 if session.get('voice_invite'):
                     content = voice_invites.content(content, session, ended=ended)
                 await checked(message.edit(content=content, **kwargs))
+                if session.get('voice_invite', {}).get('scope_stopped'):
+                    invite_trial.render_succeeded(self, session)
                 session["dirty"] = False
                 session.pop('share_waiting', None)
                 if value:
@@ -742,15 +752,20 @@ class SquadCards(commands.Cog):
         ready=getattr(self.bot,'is_ready',None)
         if callable(ready) and not ready():return
         attempt = await run_stats(squad_interest.begin_card_post,session['id'],destination.id,channel.id) if session.get('id') else None
-        if callable(ready) and not ready():
-            if attempt:await checked(run_stats(squad_interest.finish_card_post,attempt,rejected=True))
-            return
         try:
-            check()
-        except voice_invites.PresenceChanged:
+            ready_to_send = not callable(ready) or ready()
+            if ready_to_send:
+                check()
+        except BaseException:
+            # The send has not started: all failures here (including scope drift)
+            # are definite non-sends, not uncertain network outcomes.
             if attempt:
                 await run_stats(squad_interest.finish_card_post, attempt, rejected=True)
             raise
+        if not ready_to_send:
+            if attempt:
+                await run_stats(squad_interest.finish_card_post, attempt, rejected=True)
+            return
         try:
             message = await destination.send(**kwargs)
         except discord.HTTPException as exc:
@@ -1084,11 +1099,18 @@ class SquadCards(commands.Cog):
                     elif session.get("qualified") is None:
                         session["qualified"] = now
                     elif now - session["qualified"] >= 30:
-                        await self.render(channel, session)
-                elif changed or (session.get('voice_invite', {}).get('state') in {'requested', 'active', 'revoking'} and (
+                        if await self.render(channel, session) is False:
+                            if before != session['participants']:
+                                self.save()
+                            continue
+                elif changed or (not session.get('voice_invite', {}).get('scope_stopped')
+                        and session.get('voice_invite', {}).get('state') in {'requested', 'active', 'revoking'} and (
                         session['voice_invite'].get('check_at', 0) <= now
                         or session['voice_invite'].get('expires', float('inf')) <= now)):
-                    await self.render(channel, session)
+                    if await self.render(channel, session) is False:
+                        if before != session['participants']:
+                            self.save()
+                        continue
                 if session.get('message') and not session.get('share_waiting'):
                     await self.notify_interested(channel,session)
                 # Commit the roster only after rendering succeeds so a failed edit

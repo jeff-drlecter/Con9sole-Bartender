@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as N
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 from cogs.squad_cards import SquadCards
@@ -151,6 +151,86 @@ class TrialTests(unittest.IsolatedAsyncioTestCase):
         f.revoked.delete.assert_awaited_once()
         self.assertNotIn('discord.gg',f.message.content)
         f.destination.send.assert_awaited_once()  # Original automatic card is retained.
+
+    async def test_scope_drift_after_claim_rejects_and_reload_can_post_once(self):
+        import cogs.squad_cards as cards
+        from features import squad_interest
+        f=self.f
+        value=squad_interest.topic(1,'Synthetic restore')
+        squad_interest.remember(value)
+        squad_interest.toggle(value['id'],1,8,'once')
+        notified=[]
+        real_stats=cards.run_stats
+        async def notify(channel,session):
+            users=await real_stats(squad_interest.reserve,session['id'],value['id'],[8])
+            if users: notified.append(users)
+        f.cog.notify_interested=notify
+        await f.cog.share_voice(f.interaction(),10)
+        async def drift(function,*args,**kwargs):
+            result=await real_stats(function,*args,**kwargs)
+            if function is squad_interest.begin_card_post:
+                f.destination.category_id=21
+            return result
+        f.now=1030
+        with patch.object(cards,'run_stats',side_effect=drift):
+            await f.sweep()
+        session=f.cog.state['sessions']['10']
+        self.assertIsNone(squad_interest.uncertain_card(session['id']))
+        self.assertEqual(squad_interest.latest_card_post(session['id'])['state'],'rejected')
+        f.destination.send.assert_not_awaited()
+        self.assertFalse(notified)
+        self.assertEqual(squad_interest.preferences(value['id']),{8:'once'})
+        f.destination.category_id=20
+        f.cog.state=json.loads(Path(f.cog.path).read_text())
+        f.now+=60; await f.sweep()
+        await f.sweep(); f.now+=5; await f.sweep()
+        f.destination.send.assert_awaited_once()
+        f.voice.create_invite.assert_awaited_once()
+        self.assertEqual(notified,[[8]])
+        self.assertIsNone(squad_interest.uncertain_card(session['id']))
+
+    async def test_deferred_scope_cleanup_cannot_be_bypassed_by_roster_dirty_or_invite_timer(self):
+        from cogs.squad_cards import RecruitmentChoices
+        f=self.f; session=await f.ready()
+        f.cog.state['voice_invite_trial']={'schema':1,'enabled':False}
+        f.revoked.delete.side_effect=OSError('synthetic revoke unavailable')
+        f.destination.fetch_message.side_effect=discord.Forbidden(N(status=403,reason='Forbidden'),{'message':'denied'})
+        await trial.enforce(f.cog,f.voice,session)
+        self.assertEqual(session['voice_scope_cleanup']['state'],'deferred')
+        self.assertEqual(session['voice_invite']['state'],'revoking')
+        count=f.destination.fetch_message.await_count
+        f.now+=60; await f.sweep()
+        for index in range(3):
+            f.now+=5
+            session['dirty']=True
+            f.member.display_name='Changed '+str(index)
+            f.voice.members=[f.member,N(id=8+index,bot=False,display_name='Synthetic peer')]
+            await f.sweep()
+        self.assertEqual(f.destination.fetch_message.await_count,count)
+        self.assertEqual(f.revoked.delete.await_count,2)  # Only the 60-second revoke retry.
+        persisted=json.loads(Path(f.cog.path).read_text())['sessions']['10']
+        self.assertIn('10',persisted['participants'])  # Backoff does not lose the footprint roster.
+        view=RecruitmentChoices(f.cog,'10',session)
+        # Explicit settings may try after backoff, but repeated clicks cannot hammer 403.
+        with self.assertRaises(discord.Forbidden):
+            await view.set_count(f.interaction(),2)
+        count+=1
+        await view.set_count(f.interaction(),3)
+        await f.sweep()
+        self.assertEqual(f.destination.fetch_message.await_count,count)
+        self.assertEqual(session['missing'],3)  # Desired state is durable while inaccessible.
+        # Restoring access and explicitly refreshing resumes normal card behaviour.
+        f.now+=60; f.destination.fetch_message.side_effect=None; f.revoked.delete.side_effect=None
+        await view.set_count(f.interaction(),3)
+        self.assertEqual(session['voice_scope_cleanup']['state'],'done')
+        self.assertNotIn(session['id']+':scope',f.cog.state.get('voice_invite_cleanup_pending',{}))
+        self.assertIn('缺 3 人',f.message.edit.call_args.kwargs['embed'].title)
+        before=f.destination.fetch_message.await_count
+        f.member.display_name='Restored roster'; await f.sweep()
+        self.assertGreater(f.destination.fetch_message.await_count,before)
+        self.assertNotIn('discord.gg',f.message.content)
+        f.destination.send.assert_awaited_once(); f.voice.create_invite.assert_awaited_once()
+
 
 
 class FreshScopeTests(unittest.IsolatedAsyncioTestCase):

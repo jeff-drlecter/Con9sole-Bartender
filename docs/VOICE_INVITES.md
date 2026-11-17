@@ -12,7 +12,7 @@
 
 只有白名單內、目前位於指定分類小隊房的開房者或 server admin 可以主動分享；管理員亦不可繞過白名單。另一個帳號按原生 Join Voice 仍由 Discord 既有權限控制，程式不額外給權限。新按鈕只對符合已存範圍的 viewer 顯示；舊按鈕、直接 share／authorize／prepare、REST 後及 POST 前都重新核對範圍。顯示按鈕的 cache 檢查不取代 fresh REST audience／權限檢查。
 
-`disable` 先持久保存關閉狀態，再撤銷已知本局邀請並只移除原訊息的邀請 URL，保留原 embed/view、舊語音入口、正常招募卡及通知政策。清理失敗沿60秒退避／5分鐘公開訊息截止保留私人待查；已知邀請持續嘗試撤銷直至成功或到期。設定漂移、移動分類、route 不符、revision 改變及重啟後失效亦會停止舊分享。不為停用補發卡片；同局停用後不重新建立另一個 invite，須由新的場次重新主動要求。
+`disable` 先持久保存關閉狀態，再撤銷已知本局邀請並只移除原訊息的邀請 URL，保留原 embed/view、舊語音入口、正常招募卡及通知政策。清理失敗沿60秒退避／5分鐘公開訊息截止保留私人待查；已知邀請持續嘗試撤銷直至成功或到期。設定漂移、移動分類、route 不符、revision 改變及重啟後失效亦會停止舊分享。不為停用補發卡片；同局停用後不重新建立另一個 invite，須由新的場次重新主動要求。已停止分享的邀請撤銷排程不會觸發普通卡片 render；公開訊息待查／退避亦不能被 dirty 或 roster 更新繞過。恢復頻道存取後，在原卡明確操作「招募設定」可於60秒退避後嘗試更新；成功後恢復正常名單／設定更新及既有通知流程，仍不恢復原生邀請。
 
 ## 試行中的會員入口
 
@@ -47,7 +47,7 @@
 
 此 adapter 使用 HTTPClient／Ratelimit 私有介面，版本不符便拒絕建立，不能靜默回退 SDK 的重試路徑。升級依賴前須重新檢視 bucket／global 行為、aiohttp POST retry／redirect 規則及完整 transport 回歸。參考 Discord 官方 [Create Channel Invite](https://github.com/discord/discord-api-docs/blob/main/developers/resources/channel.mdx#create-channel-invite)（獨立 `unique` 邀請，未提供 idempotency 欄位）及 [Rate Limits](https://github.com/discord/discord-api-docs/blob/main/developers/topics/rate-limits.mdx)（route/global 與 retry_after）。
 
-語音／連線 listener 在等待 SquadCards lock 前記錄事件 epoch；每次外部 await 返回及邀請 POST／招募 send 前重新驗證。真人已離房重入而最終 cache 又有人，亦不能沿用舊的連續在場起點。已完成請求的 code／message ID 先寫入 journal，才讓後續 epoch 檢查停止公開或通知步驟；POST 尚未開始的卡片 claim 則標記 rejected，可在新的30秒門檻後正常使用。
+語音／連線 listener 在等待 SquadCards lock 前記錄事件 epoch；每次外部 await 返回及邀請 POST／招募 send 前重新驗證。真人已離房重入而最終 cache 又有人，亦不能沿用舊的連續在場起點。已完成請求的 code／message ID 先寫入 journal，才讓後續 epoch 檢查停止公開或通知步驟；POST 尚未開始的卡片 claim，無論因在場檢查、scope drift 或其他發送前錯誤中止，均標記 rejected；範圍恢復及重啟後可按正常門檻出卡。真正呼叫 send 後結果未知的 claim 仍保持 uncertain，不盲目重送。
 
 ## 驗證及受控試行 UI 閘門
 
