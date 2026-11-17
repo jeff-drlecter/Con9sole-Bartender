@@ -482,9 +482,12 @@ class SquadCards(commands.Cog):
             if not channel or not destination_id or (session and session.get('ended') is not None):
                 await interaction.followup.send('房間不存在、未設招募路線，或本局正在結束；未建立邀請。', ephemeral=True)
                 return
+            token = voice_invites.presence_token(self, voice_id)
+            check = lambda: voice_invites.checkpoint(self, channel, session, token)
             try:
                 await voice_invites.authorize(self.bot, interaction.guild_id, voice_id,
-                                              destination_id, interaction.user.id)
+                                              destination_id, interaction.user.id, check=check)
+                check()
             except (voice_invites.ShareDenied, discord.HTTPException, OSError, TimeoutError) as exc:
                 text = str(exc) if isinstance(exc, voice_invites.ShareDenied) else '暫時無法核實房間或權限，請稍後再試。'
                 await interaction.followup.send(text, ephemeral=True)
@@ -499,14 +502,19 @@ class SquadCards(commands.Cog):
                 self.state['sessions'][str(voice_id)] = session
                 if str(voice_id) in getattr(self, 'startup_occupied', set()):
                     self.interest_baseline.add(session['id'])
+            self.__dict__.setdefault('_invite_presence_starts', {}).setdefault(voice_id, session.get('qualified') or now)
             invite = session.get('voice_invite')
-            if not invite or invite['state'] == 'denied':
+            if not invite or invite['state'] == 'denied' or (invite['state'] == 'rate_limited' and invite['retry_at'] <= now):
                 session['voice_invite'] = dict(state='requested', requester=interaction.user.id,
                                                voice=voice_id, plan=linked['id'] if linked else None)
+            if not session.get('message'):
+                session['share_waiting'] = True
             session['dirty'] = True
             self.save()
             try:
                 await self.render(channel, session)
+            except voice_invites.PresenceChanged:
+                pass  # Persisted intent waits for a new continuous presence window.
             except (discord.HTTPException, OSError, TimeoutError, RuntimeError):
                 log.exception('Voice share incomplete: session=%s', session['id'])
             self.save()
@@ -529,6 +537,8 @@ class SquadCards(commands.Cog):
                 text += '\n建立邀請結果待核對；為免重複，唔會自動再建。'
             elif invite.get('error'):
                 text += '\n' + invite['error']
+                if invite['state'] == 'rate_limited':
+                    text += f"（<t:{int(invite['retry_at'])}:R>）"
             elif invite['state'] in {'expired', 'revoked', 'revoking'}:
                 text += '\n本局邀請已到期或正在撤銷；請使用原卡語音入口。'
             await interaction.followup.send(text,
@@ -537,8 +547,19 @@ class SquadCards(commands.Cog):
 
     async def render(self, channel, session, ended=False):
         session["dirty"] = True
+        token = voice_invites.presence_token(self, channel.id) if channel and session.get('voice_invite') else None
+        def check():
+            if not ended and token is not None:
+                voice_invites.checkpoint(self, channel, session, token,
+                    qualified=not session.get('message') or session.get('share_waiting', False))
+        async def checked(operation):
+            result = await operation
+            check()
+            return result
+        if not ended and session.get('voice_invite'):
+            voice_invites.sync_presence(self, channel, session)
         # The private pre-card settings UI must not bypass continuous presence.
-        if not ended and not session.get('message') and 'qualified' in session:
+        if not ended and (not session.get('message') or session.get('share_waiting')) and 'qualified' in session:
             if session['qualified'] is None or time.time() - session['qualified'] < 30:
                 self.save()
                 return
@@ -554,13 +575,13 @@ class SquadCards(commands.Cog):
             if session.get('message') and session['message'] != plan['message']:
                 old_destination = self.bot.get_channel(session['destination'])
                 try:
-                    old = await old_destination.fetch_message(session['message'])
+                    old = await checked(old_destination.fetch_message(session['message']))
                     if old.author.id != self.bot.user.id:
                         raise RuntimeError('Linked squad card author mismatch')
                     url = f"https://discord.com/channels/{plan['guild']}/{plan['channel']}/{plan['message']}"
-                    await old.edit(content=f'本局已連接約局 · [前往原卡]({url})', embed=None, view=None,
-                                   allowed_mentions=discord.AllowedMentions.none())
-                    await run_stats(squad_interest.forget_card, old.id)
+                    await checked(old.edit(content=f'本局已連接約局 · [前往原卡]({url})', embed=None, view=None,
+                                   allowed_mentions=discord.AllowedMentions.none()))
+                    await checked(run_stats(squad_interest.forget_card, old.id))
                 except discord.NotFound:
                     pass
             if session.get('game') != plan['game']:
@@ -579,50 +600,33 @@ class SquadCards(commands.Cog):
             # A cancelled or detached plan cannot keep sending its session notifications.
             session['missing_card'] = True
             if session.get('voice_invite'):
-                await voice_invites.revoke(self, session)
+                await checked(voice_invites.revoke(self, session))
                 destination = self.bot.get_channel(session['destination'])
                 if destination and session.get('message'):
                     try:
-                        message = await destination.fetch_message(session['message'])
+                        message = await checked(destination.fetch_message(session['message']))
                         if message.author.id != self.bot.user.id:
                             raise RuntimeError('Voice invite card author mismatch')
-                        await message.edit(content=voice_invites.content(message.content, session, ended=True),
-                                           allowed_mentions=discord.AllowedMentions.none())
+                        await checked(message.edit(content=voice_invites.content(message.content, session, ended=True),
+                                           allowed_mentions=discord.AllowedMentions.none()))
                     except discord.NotFound:
                         pass
             return
         if session.get('id') and not session.get('plan_id'):
-            latest = await run_stats(squad_interest.latest_card_post,session['id'])
+            latest = await checked(run_stats(squad_interest.latest_card_post,session['id']))
             if latest and latest['state']=='sent' and latest['message_id'] and session.get('message')!=latest['message_id']:
                 session['message']=latest['message_id']
                 self.save()
         destination = self.bot.get_channel(session["destination"])
         if not destination:
             if ended and session.get('voice_invite'):
-                await voice_invites.revoke(self, session)
+                await checked(voice_invites.revoke(self, session))
             raise RuntimeError("Squad card destination unavailable")
-        if session.get('voice_invite'):
-            if ended:
-                # Remove the public entry before attempting network revocation.
-                if session.get('message'):
-                    try:
-                        original = await destination.fetch_message(session['message'])
-                        if original.author.id != self.bot.user.id:
-                            raise RuntimeError('Voice invite card author mismatch')
-                        await original.edit(content='本局已結束 · 正在整理足跡', embed=None,
-                            view=None, allowed_mentions=discord.AllowedMentions.none())
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        await voice_invites.revoke(self, session)
-                else:
-                    await voice_invites.revoke(self, session)
-            else:
-                await voice_invites.prepare(self, channel, session)
-                if session['voice_invite']['state'] == 'revoking':
-                    await voice_invites.revoke(self, session)
-                if not self.bot.is_ready() or not humans(channel):
-                    return
+        if session.get('voice_invite') and not ended:
+            await checked(voice_invites.prepare(self, channel, session, check=check))
+            if session['voice_invite']['state'] == 'revoking':
+                await checked(voice_invites.revoke(self, session))
+            check()
         members = humans(channel) if channel else []
         names = session["participants"] if ended else {str(m.id): m.display_name for m in members}
         profile = game_profile(channel, session)
@@ -657,8 +661,8 @@ class SquadCards(commands.Cog):
             session['last_interest_topic']=value
             if ended:
                 session["interest_topic"] = value
-            await run_stats(squad_interest.remember, value)
-            preferences = await run_stats(squad_interest.preferences, value['id'])
+            await checked(run_stats(squad_interest.remember, value))
+            preferences = await checked(run_stats(squad_interest.preferences, value['id']))
             roster = interest_roster(self.bot.get_guild(value['guild_id']), destination, preferences)
             add_interest_fields(embed, roster, preferences)
         view = (FootprintView(self, value) if value else None) if ended else CardView(self, str(channel.id), session)
@@ -668,28 +672,29 @@ class SquadCards(commands.Cog):
         kwargs = dict(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         if session.get("message"):
             try:
-                message = await destination.fetch_message(session["message"])
+                message = await checked(destination.fetch_message(session["message"]))
                 if ended and session.get('id'):
-                    await self.finish_footprint(destination, message, session, embed, view, value)
+                    await checked(self.finish_footprint(destination, message, session, embed, view, value))
                     if plan:
                         closed = plans.book.sync_session(plan['id'], plan['voice'], session['id'],
                                                          ended=True, footprint=session.get('footprint'))
                         if closed:
-                            await plans.refresh(closed)
+                            await checked(plans.refresh(closed))
                     return
-                await run_stats(squad_participants.save, message.id, config.GUILD_ID, destination.id, names)
+                await checked(run_stats(squad_participants.save, message.id, config.GUILD_ID, destination.id, names))
                 content = None if ended else message.content
                 if session.get('voice_invite'):
                     content = voice_invites.content(content, session, ended=ended)
-                await message.edit(content=content, **kwargs)
+                await checked(message.edit(content=content, **kwargs))
                 session["dirty"] = False
+                session.pop('share_waiting', None)
                 if value:
-                    await run_stats(squad_interest.track_card, value['id'], destination.id,
-                                    session['message'], '' if ended else session['id'])
+                    await checked(run_stats(squad_interest.track_card, value['id'], destination.id,
+                                    session['message'], '' if ended else session['id']))
                 if ended and value:
                     self.bot.add_view(FootprintView(self, value))
                 if not ended:
-                    await self.notify_interested(channel, session)
+                    await checked(self.notify_interested(channel, session))
                 return
             except discord.NotFound:
                 if session.get('voice_invite') and not ended:
@@ -716,25 +721,32 @@ class SquadCards(commands.Cog):
         if callable(ready) and not ready():return
         attempt = await run_stats(squad_interest.begin_card_post,session['id'],destination.id,channel.id) if session.get('id') else None
         if callable(ready) and not ready():
-            if attempt:await run_stats(squad_interest.finish_card_post,attempt,rejected=True)
+            if attempt:await checked(run_stats(squad_interest.finish_card_post,attempt,rejected=True))
             return
+        try:
+            check()
+        except voice_invites.PresenceChanged:
+            if attempt:
+                await run_stats(squad_interest.finish_card_post, attempt, rejected=True)
+            raise
         try:
             message = await destination.send(**kwargs)
         except discord.HTTPException as exc:
             if attempt and 400<=exc.status<500 and exc.status!=408:
-                await run_stats(squad_interest.finish_card_post,attempt,rejected=True)
+                await checked(run_stats(squad_interest.finish_card_post,attempt,rejected=True))
             raise
         session["message"] = message.id
         if attempt:
-            await run_stats(squad_interest.finish_card_post,attempt,message_id=message.id)
-        await run_stats(squad_participants.save, message.id, config.GUILD_ID, destination.id, names)
+            await checked(run_stats(squad_interest.finish_card_post,attempt,message_id=message.id))
+        await checked(run_stats(squad_participants.save, message.id, config.GUILD_ID, destination.id, names))
         session["dirty"] = False
+        session.pop('share_waiting', None)
         self.save()
         if value:
-            await run_stats(squad_interest.track_card, value['id'], destination.id,
-                            message.id, '' if ended else session['id'])
+            await checked(run_stats(squad_interest.track_card, value['id'], destination.id,
+                            message.id, '' if ended else session['id']))
         if not ended:
-            await self.notify_interested(channel, session)
+            await checked(self.notify_interested(channel, session))
 
     async def finish_footprint(self, destination, original, session, embed, view, value):
         """Journal the separate closing post before sending; never replay uncertainty."""
@@ -820,12 +832,21 @@ class SquadCards(commands.Cog):
 
     @commands.Cog.listener()
     async def on_disconnect(self):
+        voice_invites.observe_connection(self, connected=False)
         async with self.lock:
             for session in self.state['sessions'].values():
                 session.pop('empty_since', None)
-                if not session.get('message'):
+                if not session.get('message') or session.get('share_waiting'):
                     session['qualified']=None
             self.save()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        voice_invites.observe_connection(self, connected=True)
+
+    @commands.Cog.listener()
+    async def on_resumed(self):
+        voice_invites.observe_connection(self, connected=True)
 
     async def refresh_interest_cards(self, value):
         preferences = await run_stats(squad_interest.preferences, value['id'])
@@ -1000,10 +1021,11 @@ class SquadCards(commands.Cog):
                         session.setdefault("ended", now)
                         self.save()  # Persist terminal state before any awaited finalization.
                         await run_stats(squad_interest.end_session,session['id'])
-                        if session.get("message"):
+                        if session.get('voice_invite'):
+                            if not await voice_invites.close_session(self, channel, session):
+                                continue
+                        elif session.get("message"):
                             await self.render(channel, session, ended=True)
-                        if session.get('voice_invite') and not await voice_invites.revoke(self, session):
-                            continue
                         if session.get('voice_invite'):
                             voice_invites.retire(self, session)
                         del self.state["sessions"][key]
@@ -1030,6 +1052,8 @@ class SquadCards(commands.Cog):
                 if isinstance(getattr(plans, 'book', None), PlanBook):
                     linked = plans.book.for_voice(channel.id)
                     changed = changed or bool(linked and linked['id'] != session.get('plan_id'))
+                if session.get('voice_invite'):
+                    voice_invites.sync_presence(self, channel, session)
                 if not session.get("message"):
                     if len(members) < 1:
                         session["qualified"] = None
@@ -1041,7 +1065,7 @@ class SquadCards(commands.Cog):
                         session['voice_invite'].get('check_at', 0) <= now
                         or session['voice_invite'].get('expires', float('inf')) <= now)):
                     await self.render(channel, session)
-                if session.get('message'):
+                if session.get('message') and not session.get('share_waiting'):
                     await self.notify_interested(channel,session)
                 # Commit the roster only after rendering succeeds so a failed edit
                 # remains pending and is retried by the next reconciliation.
@@ -1086,12 +1110,14 @@ class SquadCards(commands.Cog):
     async def on_voice_state_update(self, member, before, after):
         if member.guild.id != config.GUILD_ID or before.channel == after.channel:
             return
+        if not member.bot:
+            voice_invites.observe_voice(self, before.channel, after.channel)
+        if before.channel:
+            self.arrivals.pop((before.channel.id, member.id), None)
+        if after.channel and not member.bot:
+            self.arrivals[(after.channel.id, member.id)] = time.time()
         try:
             async with self.lock:
-                if before.channel:
-                    self.arrivals.pop((before.channel.id, member.id), None)
-                if after.channel and not member.bot:
-                    self.arrivals[(after.channel.id, member.id)] = time.time()
                 await self.reconcile()
         except Exception:
             log.exception("Failed to update squad card after voice change")

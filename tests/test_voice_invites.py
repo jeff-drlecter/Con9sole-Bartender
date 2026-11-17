@@ -55,6 +55,13 @@ class VoiceShareTests(unittest.IsolatedAsyncioTestCase):
         p = patch.object(invites, 'authorize', new=AsyncMock(return_value=(self.voice,self.destination)))
         self.auth = p.start(); self.addCleanup(p.stop)
 
+        async def create_once(voice, *, max_age, reason, before_send):
+            before_send()
+            result = await voice.create_invite(max_age=max_age,max_uses=0,temporary=False,unique=True,reason=reason)
+            return {'code':result.code}
+        p = patch.object(invites.transport, 'create_once', side_effect=create_once)
+        p.start(); self.addCleanup(p.stop)
+
     def interaction(self):
         return N(guild_id=1, user=self.member, response=N(defer=AsyncMock()), followup=N(send=AsyncMock()))
 
@@ -198,6 +205,115 @@ class VoiceShareTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.share_voice(self.interaction(),10)
         self.assertIn(self.cog.state['sessions']['10']['id'],self.cog.interest_baseline)
 
+    async def test_slow_share_leave_rejoin_preserves_event_history(self):
+        for cache_already_rejoined in (False,True):
+            with self.subTest(cache_already_rejoined=cache_already_rejoined):
+                # Each scenario uses a fresh synthetic session in the same fixture.
+                self.cog.state['sessions']={}; self.cog.__dict__.pop('_invite_presence_starts',None)
+                self.cog.__dict__.pop('_invite_voice_epochs',None)
+                self.now=1000; self.member.guild=self.guild
+                self.auth.side_effect=None
+                await self.cog.share_voice(self.interaction(),10)
+                entered,release=asyncio.Event(),asyncio.Event()
+                async def delayed(*args,**kwargs):
+                    entered.set(); await release.wait(); return self.voice,self.destination
+                self.auth.side_effect=delayed; self.now=1010
+                share=asyncio.create_task(self.cog.share_voice(self.interaction(),10)); await entered.wait()
+                self.now=1020
+                self.voice.members=[self.member] if cache_already_rejoined else []
+                leave=asyncio.create_task(self.cog.on_voice_state_update(self.member,N(channel=self.voice),N(channel=None)))
+                await asyncio.sleep(0)
+                self.now=1021; self.voice.members=[self.member]
+                rejoin=asyncio.create_task(self.cog.on_voice_state_update(self.member,N(channel=None),N(channel=self.voice)))
+                await asyncio.sleep(0); self.now=1040; release.set()
+                await asyncio.gather(share,leave,rejoin)
+                self.destination.send.assert_not_awaited(); self.voice.create_invite.assert_not_awaited()
+                self.assertEqual(self.cog.state['sessions']['10']['qualified'],1021)
+        self.auth.side_effect=None; self.now=1051; await self.sweep()
+        self.destination.send.assert_awaited_once(); self.voice.create_invite.assert_awaited_once()
+
+    async def test_disconnect_reconnect_during_slow_authorization_restarts_clock(self):
+        await self.cog.share_voice(self.interaction(),10)
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def delayed(*args,**kwargs):
+            entered.set(); await release.wait(); return self.voice,self.destination
+        self.auth.side_effect=delayed; self.now=1010
+        share=asyncio.create_task(self.cog.share_voice(self.interaction(),10)); await entered.wait()
+        self.now=1020; disconnected=asyncio.create_task(self.cog.on_disconnect()); await asyncio.sleep(0)
+        self.now=1021; await self.cog.on_resumed()
+        self.now=1040; release.set(); await asyncio.gather(share,disconnected)
+        await self.sweep()
+        self.destination.send.assert_not_awaited(); self.voice.create_invite.assert_not_awaited()
+        self.assertEqual(self.cog.state['sessions']['10']['qualified'],1021)
+        self.now=1051; await self.sweep()
+        self.destination.send.assert_awaited_once(); self.voice.create_invite.assert_awaited_once()
+
+    async def test_presence_changes_during_prepare_block_invite_post(self):
+        await self.cog.share_voice(self.interaction(),10); self.member.guild=self.guild
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def delayed(*args,**kwargs):
+            entered.set(); await release.wait(); return self.voice,self.destination
+        self.auth.side_effect=delayed; self.now=1030
+        sweep=asyncio.create_task(self.sweep()); await entered.wait()
+        self.now=1031; self.voice.members=[]
+        leave=asyncio.create_task(self.cog.on_voice_state_update(self.member,N(channel=self.voice),N(channel=None)))
+        await asyncio.sleep(0); self.now=1032; self.voice.members=[self.member]
+        join=asyncio.create_task(self.cog.on_voice_state_update(self.member,N(channel=None),N(channel=self.voice)))
+        await asyncio.sleep(0); self.now=1040; release.set(); await asyncio.gather(sweep,leave,join)
+        self.destination.send.assert_not_awaited(); self.voice.create_invite.assert_not_awaited()
+        self.now=1062; await self.sweep()
+        self.destination.send.assert_awaited_once(); self.voice.create_invite.assert_awaited_once()
+
+    async def test_card_claim_aborted_before_send_is_rejected_not_uncertain(self):
+        import cogs.squad_cards as cards
+        await self.cog.share_voice(self.interaction(),10); self.member.guild=self.guild
+        entered,release=asyncio.Event(),asyncio.Event(); real_stats=cards.run_stats
+        async def delayed(function,*args,**kwargs):
+            if function is squad_interest.begin_card_post:
+                entered.set(); await release.wait()
+            return await real_stats(function,*args,**kwargs)
+        self.now=1030
+        with patch.object(cards,'run_stats',side_effect=delayed):
+            sweep=asyncio.create_task(self.sweep()); await entered.wait()
+            self.now=1031; self.voice.members=[]
+            leave=asyncio.create_task(self.cog.on_voice_state_update(self.member,N(channel=self.voice),N(channel=None)))
+            await asyncio.sleep(0); self.now=1032; self.voice.members=[self.member]
+            join=asyncio.create_task(self.cog.on_voice_state_update(self.member,N(channel=None),N(channel=self.voice)))
+            await asyncio.sleep(0); release.set(); await asyncio.gather(sweep,leave,join)
+        session=self.cog.state['sessions']['10']
+        self.assertIsNone(squad_interest.uncertain_card(session['id']))
+        self.destination.send.assert_not_awaited()
+        self.now=1062; await self.sweep()
+        self.destination.send.assert_awaited_once(); self.voice.create_invite.assert_awaited_once()
+
+    async def test_deleted_room_forbidden_card_retires_with_private_evidence(self):
+        session=await self.ready(); self.guild.voice_channels=[]
+        self.destination.fetch_message.side_effect=discord.Forbidden(N(status=403,reason='Forbidden'),{'message':'denied'})
+        await self.sweep()
+        self.assertFalse(self.cog.state['sessions'])
+        self.assertEqual(session['voice_invite']['state'],'revoked')
+        self.assertEqual(self.cog.state['voice_invite_cleanup_pending'][session['id']]['message'],99)
+        count=self.destination.fetch_message.await_count
+        self.cog.state=json.loads(Path(self.cog.path).read_text())
+        for _ in range(3):
+            self.now+=5; await self.sweep()
+        self.assertEqual(self.destination.fetch_message.await_count,count)
+        self.destination.send.assert_awaited_once()
+
+    async def test_message_cleanup_backoff_deadline_survives_restart(self):
+        session=await self.ready(); self.guild.voice_channels=[]
+        self.destination.fetch_message.side_effect=OSError('offline')
+        await self.sweep(); count=self.destination.fetch_message.await_count
+        self.cog.state=json.loads(Path(self.cog.path).read_text())
+        self.now+=5; await self.sweep()
+        self.assertEqual(self.destination.fetch_message.await_count,count)
+        self.now+=55; await self.sweep()
+        self.assertEqual(self.destination.fetch_message.await_count,count+1)
+        self.now+=240; await self.sweep()
+        self.assertFalse(self.cog.state['sessions'])
+        self.assertIn(session['id'],self.cog.state['voice_invite_cleanup_pending'])
+        self.destination.send.assert_awaited_once()
+
     async def test_old_room_controls_remain_and_share_is_private(self):
         view=TempVCControlView(N(bot=self.bot),channel_id=10)
         labels={b.label for b in view.children}
@@ -229,6 +345,30 @@ class AudienceTests(unittest.TestCase):
         self.assertTrue(invites.compatible_audience(guild,voice,destination))
         destination.overwrites={}
         self.assertFalse(invites.compatible_audience(guild,voice,destination))
+
+    def test_real_discord_private_view_gate_keeps_raw_connect_for_visible_role(self):
+        client=discord.Client(intents=discord.Intents.none())
+        base=discord.Permissions(view_channel=True,connect=True)
+        guild=discord.Guild(state=client._connection,data={'id':'1','name':'synthetic','owner_id':'99',
+            'roles':[{'id':'1','name':'@everyone','permissions':str(base.value)},
+                     {'id':'2','name':'Verified','permissions':'0'},
+                     {'id':'3','name':'Other','permissions':'0'}]})
+        view=discord.Permissions(view_channel=True).value
+        overwrites=[{'id':'1','type':0,'allow':'0','deny':str(view)},
+                    {'id':'2','type':0,'allow':str(view),'deny':'0'}]
+        voice=discord.VoiceChannel(state=client._connection,guild=guild,
+            data={'id':'10','type':2,'name':'private','position':0,'bitrate':64000,'user_limit':0,'permission_overwrites':overwrites})
+        destination=discord.TextChannel(state=client._connection,guild=guild,
+            data={'id':'30','type':0,'name':'private-text','position':0,'permission_overwrites':overwrites})
+        self.assertFalse(voice.permissions_for(guild.default_role).connect)
+        self.assertTrue(voice.permissions_for(guild.get_role(2)).connect)
+        self.assertTrue(destination.permissions_for(guild.get_role(2)).view_channel)
+        self.assertTrue(invites.compatible_audience(guild,voice,destination))
+        broader=discord.TextChannel(state=client._connection,guild=guild,
+            data={'id':'31','type':0,'name':'broader','position':0,'permission_overwrites':overwrites+[
+                {'id':'3','type':0,'allow':str(view),'deny':'0'}]})
+        self.assertFalse(invites.compatible_audience(guild,voice,broader))
+
 
 
 class FreshAuthorizationTests(unittest.IsolatedAsyncioTestCase):

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import discord
+from features import voice_invite_transport as transport
 
 MAX_AGE = 3600
 RETRY_SECONDS = 60
@@ -15,6 +16,69 @@ PREFIX = '📣 本局語音邀請：'
 
 class ShareDenied(ValueError):
     pass
+
+
+class PresenceChanged(ShareDenied):
+    pass
+
+
+def presence_token(cog, voice_id):
+    return (getattr(cog, '_invite_connection_epoch', 0),
+            getattr(cog, '_invite_voice_epochs', {}).get(voice_id, 0))
+
+
+def observe_voice(cog, before, after):
+    """Called before the listener's first await; cache may already show a rejoin.
+
+    A human departure conservatively restarts an unpublished room's qualification,
+    even if other people stayed. Never erase that event using the final cache roster.
+    """
+    epochs = cog.__dict__.setdefault('_invite_voice_epochs', {})
+    starts = cog.__dict__.setdefault('_invite_presence_starts', {})
+    departures = cog.__dict__.setdefault('_invite_departed', set())
+    if before:
+        epochs[before.id] = epochs.get(before.id, 0) + 1
+        starts[before.id] = time.time()
+        departures.add(before.id)
+    if after:
+        epochs[after.id] = epochs.get(after.id, 0) + 1
+        if after.id in departures or after.id not in starts:
+            starts[after.id] = time.time()
+        departures.discard(after.id)
+
+
+def observe_connection(cog, *, connected):
+    cog._invite_connection_epoch = getattr(cog, '_invite_connection_epoch', 0) + 1
+    cog._invite_connected_since = time.time() if connected else None
+
+
+def sync_presence(cog, channel, session):
+    if session.get('message') and not session.get('share_waiting'):
+        return
+    previous = session.get('qualified')
+    if (not cog.bot.is_ready() or not any(not m.bot for m in channel.members)
+            or (hasattr(cog, '_invite_connected_since') and cog._invite_connected_since is None)):
+        session['qualified'] = None
+    else:
+        cutoff = max(getattr(cog, '_invite_presence_starts', {}).get(channel.id, 0),
+                     getattr(cog, '_invite_connected_since', 0) or 0)
+        if previous is None:
+            session['qualified'] = max(session.get('started', 0), cutoff) if cutoff else time.time()
+        elif cutoff > previous:
+            session['qualified'] = cutoff
+    if session.get('qualified') != previous:
+        cog.save()
+
+
+def checkpoint(cog, channel, session, token, *, qualified=False):
+    if session is not None:
+        sync_presence(cog, channel, session)
+    if (presence_token(cog, channel.id) != token or not cog.bot.is_ready()
+            or not any(not m.bot for m in channel.members)
+            or (hasattr(cog, '_invite_connected_since') and cog._invite_connected_since is None)):
+        raise PresenceChanged('在場或連線狀態已改變；已保留設定，請連續留滿30秒後再試。')
+    if qualified and (session.get('qualified') is None or time.time() - session['qualified'] < 30):
+        raise PresenceChanged('未連續留滿30秒；已保留設定，等候出卡。')
 
 
 def _signature(guild, channel, bit):
@@ -33,24 +97,35 @@ def compatible_audience(guild, voice, destination):
     view predicate. Unprovable private layouts fail closed without changing access.
     """
     default = voice.permissions_for(guild.default_role)
+    # Discord masks connect when @everyone cannot view. Once view implication
+    # is proven, raw everyone connect plus no deny is sufficient for viewers.
+    raw_connect = guild.default_role.permissions.connect
+    for target, overwrite in voice.overwrites.items():
+        if target.id == guild.default_role.id and overwrite.connect is not None:
+            raw_connect = overwrite.connect
     for bit in ('view_channel', 'connect'):
-        universal = getattr(default, bit) and not any(
+        universal = (raw_connect if bit == 'connect' else getattr(default, bit)) and not any(
             getattr(overwrite, bit) is False for overwrite in voice.overwrites.values())
         if not universal and _signature(guild, voice, bit) != _signature(guild, destination, 'view_channel'):
             return False
     return True
 
 
-async def authorize(bot, guild_id, voice_id, destination_id, requester_id):
+async def authorize(bot, guild_id, voice_id, destination_id, requester_id, *, check=lambda: None):
     # fetch_guild includes fresh roles; fetched channels/members share that snapshot.
     # Cache is used only for live gateway presence, never for permission calculations.
     if not bot.is_ready():
         raise ShareDenied('Bot 連線正在恢復，請稍後再試；離線時間唔計入30秒。')
     guild = await bot.fetch_guild(guild_id)
+    check()
     member = await guild.fetch_member(requester_id)
+    check()
     me = await guild.fetch_member(bot.user.id)
+    check()
     voice = await guild.fetch_channel(voice_id)
+    check()
     destination = await guild.fetch_channel(destination_id)
+    check()
     if not isinstance(voice, discord.VoiceChannel) or not isinstance(destination, discord.TextChannel):
         raise ShareDenied('房間或招募頻道不存在，請重新開啟房控。')
     from cogs.tempvc import user_can_admin_teardown, tempvc_storage
@@ -92,7 +167,7 @@ def content(original, session, *, ended=False):
     return '\n'.join(lines) or None
 
 
-async def prepare(cog, channel, session):
+async def prepare(cog, channel, session, *, check=lambda: None):
     invite = session.get('voice_invite')
     if not invite or invite['state'] not in {'requested', 'active'}:
         return
@@ -102,7 +177,10 @@ async def prepare(cog, channel, session):
         return
     try:
         voice, _ = await authorize(cog.bot, channel.guild.id, channel.id,
-                                   session['destination'], invite['requester'])
+                                   session['destination'], invite['requester'], check=check)
+        check()
+    except PresenceChanged:
+        raise
     except (ShareDenied, discord.HTTPException, OSError, TimeoutError) as exc:
         invite['error'] = str(exc) if isinstance(exc, ShareDenied) else '暫時無法核實房間權限。'
         # Retain a known code for revocation, but never publish after access changes.
@@ -112,21 +190,35 @@ async def prepare(cog, channel, session):
     invite['check_at'] = time.time() + RETRY_SECONDS
     if invite['state'] == 'active':
         return
-    invite.update(state='uncertain', expires=time.time() + MAX_AGE)
-    cog.save()  # Fence cancellation, timeout and success followed by process death.
+    def before_send():
+        check()
+        # Gates may wait arbitrarily long. Journal immediately before the only POST.
+        # Unknown result's horizon is deliberately conservative, not server expiry.
+        invite.update(state='uncertain', expires=time.time() + MAX_AGE + transport.REQUEST_TIMEOUT)
+        cog.save()
     try:
-        created = await voice.create_invite(max_age=MAX_AGE, max_uses=0,
-            temporary=False, unique=True, reason='Squad session ' + session['id'])
+        created = await transport.create_once(voice, max_age=MAX_AGE,
+            reason='Squad session ' + session['id'], before_send=before_send)
+    except transport.TransportUnavailable:
+        if invite['state'] != 'uncertain':
+            invite.update(state='denied', error='邀請傳送介面需要維護核對；未發送建立邀請請求。')
+            cog.save()
+        raise
+    except transport.InviteRateLimited as exc:
+        invite.update(state='rate_limited', retry_at=exc.retry_at,
+                      error='Discord 暫時限制建立邀請；請等候後再按，未自動重送。')
+        cog.save()
+        return
     except discord.HTTPException as exc:
-        if 400 <= exc.status < 500 and exc.status != 408:
+        if 400 <= exc.status < 500 and exc.status not in {408, 429}:
             invite.update(state='denied', error='Discord 拒絕建立邀請；請核對權限後重按。')
             cog.save()
         raise
-    # Start our cleanup horizon after success, so request latency never makes us
-    # assume server expiry early and skip revoking a still-live code.
-    invite.update(state='active', code=created.code, creator=cog.bot.user.id,
+    # Save a known result before any presence fence can abort publication.
+    invite.update(state='active', code=created['code'], creator=cog.bot.user.id,
                   expires=time.time() + MAX_AGE)
     cog.save()
+    check()
 
 
 async def revoke(cog, session):
@@ -163,6 +255,11 @@ async def revoke(cog, session):
 def retire(cog, session):
     """Keep uncertain-create evidence after the room disappears; never replay it."""
     invite = session.get('voice_invite', {})
+    cleanup = session.get('voice_cleanup', {})
+    if cleanup.get('state') == 'deferred':
+        evidence = {key: session.get(key) for key in ('id', 'destination', 'message', 'ended', 'footprint')}
+        evidence['cleanup'] = dict(cleanup)
+        cog.state.setdefault('voice_invite_cleanup_pending', {})[session['id']] = evidence
     if invite.get('state') == 'uncertain':
         history = cog.state.setdefault('voice_invite_uncertain', {})
         history[session['id']] = dict(invite)
@@ -170,3 +267,41 @@ def retire(cog, session):
         for key, item in list(history.items()):
             if item.get('expires', 0) + 86400 < time.time():
                 del history[key]
+
+
+async def close_session(cog, channel, session):
+    """Revocation is independent of inaccessible public-message finalization.
+
+    Only message cleanup has a five-minute deadline. Known invite revocation keeps
+    its existing bounded backoff until success/expiry. After both gates settle the
+    live session can retire; unresolved message evidence stays private in JSON.
+    """
+    revoked = await revoke(cog, session)
+    cleanup = session.setdefault('voice_cleanup', dict(state='pending', attempts=0,
+        retry_at=0, deadline=session['ended'] + 300))
+    if cleanup['state'] in {'done', 'deferred'}:
+        return revoked
+    now = time.time()
+    if now >= cleanup['deadline']:
+        cleanup['state'] = 'deferred'
+        cog.save()
+        return revoked
+    if cleanup['retry_at'] > now:
+        return False
+    cleanup['attempts'] += 1
+    # Persist the next window before awaiting; even cancellation/restart backs off.
+    cleanup['retry_at'] = now + RETRY_SECONDS
+    cog.save()
+    try:
+        if session.get('message'):
+            await cog.render(channel, session, ended=True)
+    except Exception as exc:
+        cleanup['error'] = type(exc).__name__
+        cleanup['status'] = getattr(exc, 'status', None)
+        if isinstance(exc, discord.Forbidden):
+            cleanup['state'] = 'deferred'  # Known lost access: retain evidence, no hot loop.
+        cog.save()
+        return revoked and cleanup['state'] == 'deferred'
+    cleanup['state'] = 'done'
+    cog.save()
+    return revoked
