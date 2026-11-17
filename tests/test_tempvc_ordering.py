@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -9,22 +10,31 @@ from cogs.tempvc import _order_temp_channels, _try_order_temp_channels
 
 
 def voice(cid, name, position, category=10):
-    channel = MagicMock(spec=discord.VoiceChannel)
-    channel.id, channel.name = cid, name
-    channel.position, channel.category_id = position, category
-    return channel
+    return {
+        'id': str(cid), 'type': discord.ChannelType.voice.value,
+        'name': name, 'position': position,
+        'parent_id': str(category) if category is not None else None,
+        'bitrate': 64000, 'user_limit': 0, 'permission_overwrites': [],
+    }
+
+
+def guild_with_channels(channels):
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 123
+    guild.channels = []  # Deliberately incomplete cache: REST is authoritative.
+    guild._state.http.get_all_guild_channels = AsyncMock(return_value=channels)
+    guild._state.http.bulk_channel_update = AsyncMock()
+    return guild
 
 
 class TempVCOrderingTests(unittest.IsolatedAsyncioTestCase):
-    async def order(self, channels, tracked):
-        guild = MagicMock()
-        guild.id = 123
-        guild.fetch_channels = AsyncMock(return_value=channels)
-        guild._state.http.bulk_channel_update = AsyncMock()
+    async def order(self, channels, tracked, *, category=10, guild=None):
+        guild = guild if guild is not None else guild_with_channels(channels)
         with patch('cogs.tempvc.is_temp_vc_id', side_effect=lambda cid: cid in tracked), \
              patch('cogs.tempvc.get_hub_channel_name', return_value='開一個小隊 call'), \
              patch('cogs.tempvc.get_temp_channel_base_name', return_value='小隊call •'):
-            await _order_temp_channels(guild, 10)
+            await _order_temp_channels(guild, category)
+        guild._state.http.get_all_guild_channels.assert_awaited_once_with(123)
         return guild._state.http.bulk_channel_update
 
     async def test_numeric_order_before_hub_preserves_other_channels(self):
@@ -63,8 +73,88 @@ class TempVCOrderingTests(unittest.IsolatedAsyncioTestCase):
             voice(3, "REC • 2", 3)], {2, 3})
         self.assertEqual([x["id"] for x in update.await_args.args[1]], [3, 2, 1])
 
+    async def test_unknown_types_do_not_block_sorting_or_enter_update(self):
+        # Real SDK conversion fails before category filtering, including when
+        # the unsupported channel belongs to an unrelated category.
+        for unknown_category in (10, 20):
+            with self.subTest(unknown_category=unknown_category):
+                unknown = {'id': '90', 'type': 20, 'position': 3,
+                           'parent_id': str(unknown_category)}
+                channels = [voice(1, '開一個小隊 call', 1), unknown,
+                            voice(2, '小隊call • 10', 5),
+                            voice(3, '小隊call • 2', 9)]
+                before = deepcopy(channels)
+                guild = guild_with_channels(channels)
+                with self.assertRaises(discord.InvalidData):
+                    await discord.Guild.fetch_channels(guild)
+                guild._state.http.get_all_guild_channels.reset_mock()
+                update = await self.order(channels, {2, 3, 90}, guild=guild)
+                update.assert_awaited_once_with(123, [
+                    {'id': 3, 'position': 1},
+                    {'id': 2, 'position': 5},
+                    {'id': 1, 'position': 9},
+                ], reason='Sort small-team calls above their creation hub')
+                self.assertEqual(channels, before)
+
+    async def test_only_exact_voice_type_in_requested_category_is_reordered(self):
+        ignored = [
+            {'id': str(100 + kind), 'type': kind, 'parent_id': '10'}
+            for kind in (0, 4, 5, 13, 15, 16, 20)
+        ]
+        channels = [voice(1, '開一個小隊 call', 1),
+                    voice(2, '小隊call • 1', 8),
+                    voice(3, '小隊call • 2', 9, category=20), *ignored]
+        update = await self.order(channels, {2, 3, *range(100, 121)})
+        self.assertEqual(update.await_args.args[1], [
+            {'id': 2, 'position': 1}, {'id': 1, 'position': 8}])
+
+    async def test_uncategorized_channels_use_fresh_inventory(self):
+        channels = [voice(1, '開一個小隊 call', 2, category=None),
+                    voice(2, '小隊call • 1', 8, category=None),
+                    voice(3, '小隊call • 2', 9)]
+        update = await self.order(channels, {2, 3}, category=None)
+        self.assertEqual(update.await_args.args[1], [
+            {'id': 2, 'position': 2}, {'id': 1, 'position': 8}])
+
+    async def test_other_category_voice_data_is_not_constructed(self):
+        for category, ignored_parent in ((10, '20'), (10, None), (None, '20')):
+            with self.subTest(category=category, ignored_parent=ignored_parent):
+                # This out-of-scope voice lacks SDK-required fields. It must
+                # be excluded before conversion, including a null parent.
+                ignored = {'id': '90', 'type': 2, 'parent_id': ignored_parent}
+                channels = [voice(1, '開一個小隊 call', 1, category=category),
+                            ignored,
+                            voice(2, '小隊call • 1', 8, category=category)]
+                before = deepcopy(channels)
+                update = await self.order(channels, {2, 90}, category=category)
+                self.assertEqual(update.await_args.args[1], [
+                    {'id': 2, 'position': 1}, {'id': 1, 'position': 8}])
+                self.assertEqual(channels, before)
+
+    async def test_fetch_failure_does_not_write_or_use_incomplete_cache(self):
+        guild = guild_with_channels([])
+        response = MagicMock(status=403, reason='Forbidden')
+        guild._state.http.get_all_guild_channels.side_effect = discord.Forbidden(
+            response, 'missing permissions')
+        with self.assertLogs('con9sole-bartender.tempvc', level='ERROR'):
+            await _try_order_temp_channels(guild, 10)
+        guild._state.http.bulk_channel_update.assert_not_awaited()
+
+    async def test_bulk_update_failure_remains_cosmetic(self):
+        guild = guild_with_channels([voice(1, '開一個小隊 call', 1),
+                                     voice(2, '小隊call • 1', 2)])
+        response = MagicMock(status=403, reason='Forbidden')
+        guild._state.http.bulk_channel_update.side_effect = discord.Forbidden(
+            response, 'missing permissions')
+        with patch('cogs.tempvc.is_temp_vc_id', side_effect=lambda cid: cid == 2), \
+             patch('cogs.tempvc.get_hub_channel_name', return_value='開一個小隊 call'), \
+             self.assertLogs('con9sole-bartender.tempvc', level='ERROR'):
+            await _try_order_temp_channels(guild, 10)
+        guild._state.http.bulk_channel_update.assert_awaited_once()
+
     async def test_permission_failure_does_not_break_creation(self):
         response = MagicMock(status=403, reason='Forbidden')
         with patch('cogs.tempvc._order_temp_channels',
-                   side_effect=discord.Forbidden(response, 'missing permissions')):
+                   side_effect=discord.Forbidden(response, 'missing permissions')), \
+             self.assertLogs('con9sole-bartender.tempvc', level='ERROR'):
             await _try_order_temp_channels(MagicMock(id=123), 10)

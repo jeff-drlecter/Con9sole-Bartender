@@ -118,16 +118,28 @@ class TempVCFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_channel_type_does_not_orphan_created_room(self):
         guild = MagicMock()
         guild.id, guild.bitrate_limit = 1, 64000
-        guild.fetch_channels = AsyncMock(side_effect=discord.InvalidData("Unknown channel type 20"))
+        guild._state.http.get_all_guild_channels = AsyncMock(return_value=[
+            {"id": "900", "type": 20, "parent_id": "20"},
+            {"id": "776", "type": 2, "parent_id": "10", "position": 0,
+             "name": "開一個小隊 call", "bitrate": 64000, "user_limit": 0},
+            {"id": "777", "type": 2, "parent_id": "10", "position": 1,
+             "name": "小隊call • 1", "bitrate": 64000, "user_limit": 0},
+        ])
+        guild._state.http.bulk_channel_update = AsyncMock()
         room = MagicMock(spec=discord.VoiceChannel)
         room.id, room.guild, room.name = 777, guild, "小隊call • 1"
         guild.create_voice_channel = AsyncMock(return_value=room)
-        with patch("cogs.tempvc.schedule_delete_if_empty", new_callable=AsyncMock) as cleanup:
+        with patch("cogs.tempvc.schedule_delete_if_empty", new_callable=AsyncMock) as cleanup, \
+             patch("cogs.tempvc.get_hub_channel_name", return_value="開一個小隊 call"):
             result = await self.cog._create_manual_temp_vc(guild, MagicMock(id=10), name="測試", creator_id=10)
         self.assertIs(result, room)
         self.assertEqual(tempvc_storage.creator_id(777), 10)
         cleanup.assert_awaited_once_with(room, force=False)
         room.delete.assert_not_called()
+        guild._state.http.get_all_guild_channels.assert_awaited_once_with(1)
+        guild._state.http.bulk_channel_update.assert_awaited_once_with(1, [
+            {"id": 777, "position": 0}, {"id": 776, "position": 1},
+        ], reason="Sort small-team calls above their creation hub")
 
     async def test_existing_owned_room_is_reused(self):
         utils.track_temp_vc(123, guild_id=1, creator_id=10)
