@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 import discord
-from features import voice_invite_transport as transport
+from features import voice_invite_transport as transport, voice_invite_trial as trial
 
 MAX_AGE = 3600
 RETRY_SECONDS = 60
@@ -111,9 +111,10 @@ def compatible_audience(guild, voice, destination):
     return True
 
 
-async def authorize(bot, guild_id, voice_id, destination_id, requester_id, *, check=lambda: None):
+async def authorize(bot, guild_id, voice_id, destination_id, requester_id, *, check=lambda: None, trial_cog=None, trial_revision=None):
     # fetch_guild includes fresh roles; fetched channels/members share that snapshot.
     # Cache is used only for live gateway presence, never for permission calculations.
+    trial.require(trial_cog, bot.get_channel(voice_id), bot.get_channel(destination_id), requester_id, guild_id=guild_id)
     if not bot.is_ready():
         raise ShareDenied('Bot 連線正在恢復，請稍後再試；離線時間唔計入30秒。')
     guild = await bot.fetch_guild(guild_id)
@@ -128,8 +129,10 @@ async def authorize(bot, guild_id, voice_id, destination_id, requester_id, *, ch
     check()
     if not isinstance(voice, discord.VoiceChannel) or not isinstance(destination, discord.TextChannel):
         raise ShareDenied('房間或招募頻道不存在，請重新開啟房控。')
-    from cogs.tempvc import user_can_admin_teardown, tempvc_storage
-    if member.id != tempvc_storage.creator_id(voice_id) and not user_can_admin_teardown(member):
+    trial.require(trial_cog, voice, destination, requester_id, guild_id=guild_id, revision=trial_revision)
+    from cogs.tempvc import tempvc_storage
+    from core.permissions import is_server_admin
+    if member.id != tempvc_storage.creator_id(voice_id) and not is_server_admin(member):
         raise ShareDenied('招人入隊只限開房者或管理員。')
     if not bot.is_ready():
         raise ShareDenied('Bot 連線正在恢復，請稍後再試。')
@@ -153,7 +156,7 @@ async def authorize(bot, guild_id, voice_id, destination_id, requester_id, *, ch
 
 def url(session):
     invite = session.get('voice_invite', {})
-    if invite.get('state') == 'active' and invite.get('expires', 0) > time.time() and session.get('ended') is None:
+    if not invite.get('scope_stopped') and invite.get('state') == 'active' and invite.get('expires', 0) > time.time() and session.get('ended') is None:
         return 'https://discord.gg/' + invite['code']
     return None
 
@@ -169,18 +172,25 @@ def content(original, session, *, ended=False):
 
 async def prepare(cog, channel, session, *, check=lambda: None):
     invite = session.get('voice_invite')
-    if not invite or invite['state'] not in {'requested', 'active'}:
+    if invite:
+        await trial.enforce(cog, channel, session)
+    if not invite or invite.get('scope_stopped') or invite['state'] not in {'requested', 'active'}:
         return
     if invite['state'] == 'active' and invite['expires'] <= time.time():
         invite['state'] = 'expired'
         cog.save()
         return
     try:
-        voice, _ = await authorize(cog.bot, channel.guild.id, channel.id,
-                                   session['destination'], invite['requester'], check=check)
+        voice, destination = await authorize(cog.bot, channel.guild.id, channel.id,
+                                   session['destination'], invite['requester'], check=check,
+                                   trial_cog=cog, trial_revision=invite.get('trial_revision'))
         check()
     except PresenceChanged:
         raise
+    except trial.TrialDenied as exc:
+        trial.stop(cog, session, str(exc))
+        await trial.withdraw(cog, session)
+        return
     except (ShareDenied, discord.HTTPException, OSError, TimeoutError) as exc:
         invite['error'] = str(exc) if isinstance(exc, ShareDenied) else '暫時無法核實房間權限。'
         # Retain a known code for revocation, but never publish after access changes.
@@ -192,6 +202,9 @@ async def prepare(cog, channel, session, *, check=lambda: None):
         return
     def before_send():
         check()
+        trial.require(cog, cog.bot.get_channel(channel.id), cog.bot.get_channel(session['destination']),
+                      invite['requester'], revision=invite.get('trial_revision'))
+        trial.require(cog, voice, destination, invite['requester'], revision=invite.get('trial_revision'))
         # Gates may wait arbitrarily long. Journal immediately before the only POST.
         # Unknown result's horizon is deliberately conservative, not server expiry.
         invite.update(state='uncertain', expires=time.time() + MAX_AGE + transport.REQUEST_TIMEOUT)
@@ -199,6 +212,10 @@ async def prepare(cog, channel, session, *, check=lambda: None):
     try:
         created = await transport.create_once(voice, max_age=MAX_AGE,
             reason='Squad session ' + session['id'], before_send=before_send)
+    except trial.TrialDenied as exc:
+        trial.stop(cog, session, str(exc))
+        await trial.withdraw(cog, session)
+        return
     except transport.TransportUnavailable:
         if invite['state'] != 'uncertain':
             invite.update(state='denied', error='邀請傳送介面需要維護核對；未發送建立邀請請求。')
@@ -218,6 +235,13 @@ async def prepare(cog, channel, session, *, check=lambda: None):
     invite.update(state='active', code=created['code'], creator=cog.bot.user.id,
                   expires=time.time() + MAX_AGE)
     cog.save()
+    try:
+        trial.require(cog, cog.bot.get_channel(channel.id), cog.bot.get_channel(session['destination']),
+                      invite['requester'], revision=invite.get('trial_revision'))
+    except trial.TrialDenied as exc:
+        trial.stop(cog, session, str(exc))
+        await trial.withdraw(cog, session)
+        return
     check()
 
 

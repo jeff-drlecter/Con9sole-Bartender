@@ -39,17 +39,18 @@ class VoiceShareTests(unittest.IsolatedAsyncioTestCase):
         async def send(**kw):
             self.message.content = kw.get('content', '') or ''
             return self.message
-        self.destination = N(id=30, send=AsyncMock(side_effect=send), fetch_message=AsyncMock(return_value=self.message))
+        self.destination = N(id=30, guild=self.guild, category_id=20, send=AsyncMock(side_effect=send), fetch_message=AsyncMock(return_value=self.message))
         self.plans = None
         self.revoked = N(inviter=N(id=42), channel=N(id=10), delete=AsyncMock())
         self.bot = N(user=N(id=42), get_channel=lambda x:{10:self.voice,30:self.destination}.get(x),
                      get_guild=lambda _:self.guild, is_ready=lambda:True,
-                     get_cog=lambda name:self.plans if name=='SquadPlans' else None,
+                     get_cog=lambda name:self.plans if name=='SquadPlans' else self.cog if name=='SquadCards' else None,
                      fetch_invite=AsyncMock(return_value=self.revoked), add_view=MagicMock())
         self.cog = object.__new__(SquadCards)
         self.cog.bot = self.bot
         self.cog.path = str(Path(self.tmp.name)/'sessions.json')
-        self.cog.state = {'settings':{'routes':{'20':30}},'sessions':{}}
+        self.cog.state = {'settings':{'routes':{'20':30}},'sessions':{},
+                          'voice_invite_trial':dict(schema=1,enabled=True,guild=1,category=20,destination=30,testers=[7,8],revision='a'*32)}
         self.cog.lock = asyncio.Lock(); self.cog.arrivals = {}; self.cog.interest_baseline = set()
         self.cog.notify_interested = AsyncMock()
         p = patch.object(invites, 'authorize', new=AsyncMock(return_value=(self.voice,self.destination)))
@@ -315,7 +316,7 @@ class VoiceShareTests(unittest.IsolatedAsyncioTestCase):
         self.destination.send.assert_awaited_once()
 
     async def test_old_room_controls_remain_and_share_is_private(self):
-        view=TempVCControlView(N(bot=self.bot),channel_id=10)
+        view=TempVCControlView(N(bot=self.bot),channel_id=10,user_id=7)
         labels={b.label for b in view.children}
         self.assertTrue({'改名','改人數上限','刪除小隊 call','返回吧枱','加入語音房','招人入隊'} <= labels)
         inter=self.interaction(); await self.cog.share_voice(inter,10)
@@ -382,16 +383,20 @@ class FreshAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.destination=MagicMock(spec=discord.TextChannel); self.destination.id=30
         self.destination.overwrites={}; self.destination.permissions_for.return_value=self.dp
         role=N(id=1,permissions=self.vp)
-        self.guild=N(default_role=role,roles=[role],
+        self.guild=N(id=1,default_role=role,roles=[role],
             fetch_member=AsyncMock(side_effect=lambda uid:self.member if uid==7 else self.me),
             fetch_channel=AsyncMock(side_effect=lambda cid:self.voice if cid==10 else self.destination))
-        self.current=N(members=[N(id=7,bot=False)])
-        self.bot=N(user=N(id=42),fetch_guild=AsyncMock(return_value=self.guild),get_channel=lambda _:self.current,is_ready=lambda:True)
+        self.voice.guild=self.guild; self.voice.category_id=20
+        self.destination.guild=self.guild; self.destination.category_id=20
+        self.current=N(id=10,guild=self.guild,category_id=20,members=[N(id=7,bot=False)])
+        self.bot=N(user=N(id=42),fetch_guild=AsyncMock(return_value=self.guild),get_channel=lambda cid:self.current if cid==10 else self.destination,is_ready=lambda:True)
+        self.trial_cog=N(state={'settings':{'routes':{'20':30}},
+            'voice_invite_trial':dict(schema=1,enabled=True,guild=1,category=20,destination=30,testers=[7],revision='a'*32)})
 
     async def test_fresh_guild_roles_channels_and_members_used(self):
         self.fixture()
         with patch('cogs.tempvc.tempvc_storage.creator_id',return_value=7):
-            result=await invites.authorize(self.bot,1,10,30,7)
+            result=await invites.authorize(self.bot,1,10,30,7,trial_cog=self.trial_cog,trial_revision='a'*32)
         self.assertEqual(result,(self.voice,self.destination))
         self.bot.fetch_guild.assert_awaited_once_with(1)
         self.assertEqual([c.args[0] for c in self.guild.fetch_member.call_args_list],[7,42])
@@ -407,12 +412,12 @@ class FreshAuthorizationTests(unittest.IsolatedAsyncioTestCase):
                 else: setattr(self.dp,bit,False)
                 with patch('cogs.tempvc.tempvc_storage.creator_id',return_value=7):
                     with self.assertRaises(invites.ShareDenied):
-                        await invites.authorize(self.bot,1,10,30,7)
+                        await invites.authorize(self.bot,1,10,30,7,trial_cog=self.trial_cog,trial_revision='a'*32)
                 self.voice.create_invite.assert_not_called()
 
     async def test_former_admin_does_not_use_cached_authority(self):
         self.fixture()
-        with patch('cogs.tempvc.tempvc_storage.creator_id',return_value=8), patch('cogs.tempvc.user_can_admin_teardown',return_value=False) as admin:
+        with patch('cogs.tempvc.tempvc_storage.creator_id',return_value=8), patch('core.permissions.is_server_admin',return_value=False) as admin:
             with self.assertRaises(invites.ShareDenied):
-                await invites.authorize(self.bot,1,10,30,7)
+                await invites.authorize(self.bot,1,10,30,7,trial_cog=self.trial_cog,trial_revision='a'*32)
             admin.assert_called_once_with(self.member)

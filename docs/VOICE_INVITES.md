@@ -1,6 +1,22 @@
 # 小隊房原生語音邀請
 
-TempVC 私人房控新增「📣 招人入隊」。現時身處該房的開房者或原有房控管理員可以使用；保留加入、改名、改人數、刪房及返回吧枱。目的地沿用既有 SquadCards 分類 route；已綁約局則沿用 PlanBook 原訊息，不建立另一個 Plan。
+此版本是**預設關閉、只可精確範圍試行**的候選程式；未部署，候選真人 UI 驗收尚未完成。使用原有正式 Bot 的單一 process，不建立第二個 Bot、staging 服務、新資料庫、Fly secret 或部署環境參數。沒有全伺服器開放模式。
+
+## 私人試行管理
+
+管理員以 `/squad_invite_trial` 選擇 `configure`、`status` 或 `disable`。三種操作均先以 REST 重新確認管理伺服器／Administrator 權限，只作 ephemeral 回覆，不發公告或 ping。Helper 身份本身不足以管理試行。
+
+啟用操作必須在指定目的**文字頻道內**使用，明確選擇該文字頻道、其所在分類，以及一至兩個使用者自有測試帳號。程式逐一重新取得指定分類／目的頻道及兩位被選帳號，不讀取會員名單；兩個頻道必須屬同一精確 guild/category，既有 SquadCards route 必須已指向同一 destination。名稱含「測試」、提供任意 URL 或選擇其他分類都不能代替授權；亦不修改 route 或 overwrite。
+
+設定只保存於現有 `squad_cards.json` 的 optional `voice_invite_trial`（schema、enabled、guild/category/destination IDs、tester IDs、revision）。缺省、未知格式、缺欄位、錯誤型別、額外 broad 開關一律關閉。Repository 不包含任何 live ID 或啟用設定。每次設定建立新 revision，既有場次不可借新設定繼續舊分享意圖。
+
+只有白名單內、目前位於指定分類小隊房的開房者或 server admin 可以主動分享；管理員亦不可繞過白名單。另一個帳號按原生 Join Voice 仍由 Discord 既有權限控制，程式不額外給權限。新按鈕只對符合已存範圍的 viewer 顯示；舊按鈕、直接 share／authorize／prepare、REST 後及 POST 前都重新核對範圍。顯示按鈕的 cache 檢查不取代 fresh REST audience／權限檢查。
+
+`disable` 先持久保存關閉狀態，再撤銷已知本局邀請並只移除原訊息的邀請 URL，保留原 embed/view、舊語音入口、正常招募卡及通知政策。清理失敗沿60秒退避／5分鐘公開訊息截止保留私人待查；已知邀請持續嘗試撤銷直至成功或到期。設定漂移、移動分類、route 不符、revision 改變及重啟後失效亦會停止舊分享。不為停用補發卡片；同局停用後不重新建立另一個 invite，須由新的場次重新主動要求。
+
+## 試行中的會員入口
+
+允許的 TempVC 私人房控顯示「📣 招人入隊」。白名單內、現時身處該房的開房者或 server admin 可以使用；保留加入、改名、改人數、刪房及返回吧枱。目的地沿用既有 SquadCards 分類 route；已綁約局則沿用 PlanBook 原訊息，不建立另一個 Plan。
 
 按一次會儲存本局分享意圖，並顯示原有招募設定（遊戲、模式、缺額皆選填）。真人未連續留滿30秒時只儲存意圖／設定，私人回覆等候，不發卡、不建 invite、不提前通知。斷線／重啟仍重設未出卡計時。分享中的真人離房事件會保守重設尚未出卡的30秒計時（即使另有人仍留房），避免慢 REST 查詢掩蓋離房／重入。
 
@@ -33,7 +49,7 @@ TempVC 私人房控新增「📣 招人入隊」。現時身處該房的開房�
 
 語音／連線 listener 在等待 SquadCards lock 前記錄事件 epoch；每次外部 await 返回及邀請 POST／招募 send 前重新驗證。真人已離房重入而最終 cache 又有人，亦不能沿用舊的連續在場起點。已完成請求的 code／message ID 先寫入 journal，才讓後續 epoch 檢查停止公開或通知步驟；POST 尚未開始的卡片 claim 則標記 rejected，可在新的30秒門檻後正常使用。
 
-## 驗證及部署前 UI 閘門
+## 驗證及受控試行 UI 閘門
 
 離線 synthetic tests：`python -m unittest discover -s tests -p 'test_voice_invite*.py' -v`。涵蓋同時按鈕／30秒 sweeper、未出卡設定、已出卡重按、未知建立／發送與重載、權限拒絕／變更、私房 audience、邀請到期、空房寬限、刪房、撤銷退避、只撤銷本局 Bot code、Plan 原訊息及原房控。另以真實 HTTPClient bucket＋synthetic wire 核實5xx／reset／timeout／cancel／redirect僅一個 POST、429及global gate；慢查詢離房重入／斷線重連、cache預先更新、卡片claim前後競態、403收尾及重啟退避截止亦有回歸。
 
@@ -44,4 +60,7 @@ TempVC 私人房控新增「📣 招人入隊」。現時身處該房的開房�
 - 原有 `/vc_new` 重用同一房；改名後原生卡同步房名；原房控改人數成功。
 - 兩個測試帳號離房後，既有30秒空房寬限及招募卡轉足跡可見；主控已移除唯一手動測試訊息的邀請 URL，測試房亦由既有空房機制自動刪除。
 
-**尚未驗證**：候選 Bot 的同訊息 `content URL + embed + view` 原生預覽、候選新按鈕的真人流程、純一般會員及手機 UI。Draft PR 不代表已部署。正式部署前須在測試區驗證該組合；若 Discord 不顯示原生預覽，保留同一 canonical 卡及私人 URL，不能為美觀無追蹤多發一次。邀請可以透過私人回覆取得，原卡語音入口仍可使用。
+**尚未驗證**：候選 Bot 的同訊息 `content URL + embed + view` 原生預覽、候選新按鈕的真人流程、純一般會員及手機 UI。Draft PR 不代表已部署。交付次序是「只限測試區受控試行 → 真人驗收 → 另行廣泛開放」；經審查後只可先部署預設關閉的程式，再由管理員在指定測試區精確啟用。候選按鈕及 Bot 同訊息組合需在該試行範圍完成真人驗收；此版本沒有直接廣泛開放開關，日後擴大範圍需另行授權與實作。若 Discord 不顯示原生預覽，保留同一 canonical 卡及私人 URL，不能為美觀無追蹤多發一次。邀請可以透過私人回覆取得，原卡語音入口仍可使用。
+
+
+試行 scope 回歸另包括缺省關閉、未知 schema、guild/category/destination/user 越界、舊按鈕／直接 handler、fresh REST 與 cache 不同、rate gate 等候途中停用、重啟／route drift／revision、fresh admin 及私人 configure/status/disable、撤銷與去 URL 不補發卡，並繼續跑原有30秒／通知去重及房控測試。

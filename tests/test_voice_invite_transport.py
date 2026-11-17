@@ -38,14 +38,17 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.http=HTTPClient(asyncio.get_running_loop())
         self.http._global_over=asyncio.Event(); self.http._global_over.set()
         self.wire=Wire(response); self.http._HTTPClient__session=self.wire
-        self.voice=N(id=10,guild=N(id=1),_state=N(http=self.http))
+        self.voice=N(id=10,guild=N(id=1),category_id=20,_state=N(http=self.http))
+        self.destination=N(id=30,guild=self.voice.guild,category_id=20)
         self.session={'id':'synthetic','destination':30,
-                      'voice_invite':{'state':'requested','requester':7,'voice':10}}
+                      'voice_invite':{'state':'requested','requester':7,'voice':10,'trial_revision':'a'*32}}
         self.saved=[]
-        self.cog=N(bot=N(user=N(id=42)),save=lambda:self.saved.append(dict(self.session['voice_invite'])))
+        self.cog=N(bot=N(user=N(id=42),get_channel=lambda cid:self.voice if cid==10 else self.destination),
+            state={'settings':{'routes':{'20':30}},'voice_invite_trial':dict(schema=1,enabled=True,guild=1,category=20,destination=30,testers=[7],revision='a'*32)},
+            save=lambda:self.saved.append(dict(self.session['voice_invite'])))
 
     async def prepare(self):
-        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,None))):
+        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,self.destination))):
             await invites.prepare(self.cog,self.voice,self.session)
 
     async def asyncTearDown(self):
@@ -94,7 +97,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         bucket.expires=asyncio.get_running_loop().time()+0.01
         check_calls=[]
         def check(): check_calls.append('checked')
-        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,None))):
+        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,self.destination))):
             task=asyncio.create_task(invites.prepare(self.cog,self.voice,self.session,check=check))
             await asyncio.sleep(0)
             self.assertEqual(self.session['voice_invite']['state'],'requested')
@@ -109,12 +112,24 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.http._global_over.clear(); changed=False
         def check():
             if changed: raise invites.PresenceChanged('changed')
-        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,None))):
+        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,self.destination))):
             task=asyncio.create_task(invites.prepare(self.cog,self.voice,self.session,check=check))
             await asyncio.sleep(0); changed=True; self.http._global_over.set()
             with self.assertRaises(invites.PresenceChanged): await task
         self.assertFalse(self.wire.posts)
         self.assertEqual(self.session['voice_invite']['state'],'requested')
+
+    async def test_trial_disabled_while_global_gate_waits_never_posts(self):
+        self.fixture(Response(data={'code':'must-not-create'}))
+        self.http._global_over.clear()
+        with patch.object(invites,'authorize',new=AsyncMock(return_value=(self.voice,self.destination))):
+            task=asyncio.create_task(invites.prepare(self.cog,self.voice,self.session))
+            await asyncio.sleep(0)
+            self.cog.state['voice_invite_trial']={'schema':1,'enabled':False}
+            self.http._global_over.set()
+            await task
+        self.assertFalse(self.wire.posts)
+        self.assertTrue(self.session['voice_invite']['scope_stopped'])
 
     async def test_definitive_forbidden_and_validated_global_429_are_distinct(self):
         self.fixture(Response(status=403,data={'message':'denied'}))

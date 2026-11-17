@@ -19,7 +19,7 @@ from core.permissions import is_admin_or_helper, is_server_admin
 from core.action_guard import shared_async_lock
 from core.storage_paths import DATA_DIR
 from core.ui import SafeView
-from features import squad_interest, squad_participants, voice_invites
+from features import squad_interest, squad_participants, voice_invites, voice_invite_trial as invite_trial
 from features.menu_stats import run_stats
 
 log = logging.getLogger(__name__)
@@ -482,14 +482,21 @@ class SquadCards(commands.Cog):
             if not channel or not destination_id or (session and session.get('ended') is not None):
                 await interaction.followup.send('房間不存在、未設招募路線，或本局正在結束；未建立邀請。', ephemeral=True)
                 return
+            try:
+                scope = invite_trial.require(self, channel, self.bot.get_channel(destination_id),
+                                             interaction.user.id, guild_id=interaction.guild_id)
+            except invite_trial.TrialDenied as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
             token = voice_invites.presence_token(self, voice_id)
             check = lambda: voice_invites.checkpoint(self, channel, session, token)
             try:
                 await voice_invites.authorize(self.bot, interaction.guild_id, voice_id,
-                                              destination_id, interaction.user.id, check=check)
+                                              destination_id, interaction.user.id, check=check,
+                                              trial_cog=self, trial_revision=scope['revision'])
                 check()
-            except (voice_invites.ShareDenied, discord.HTTPException, OSError, TimeoutError) as exc:
-                text = str(exc) if isinstance(exc, voice_invites.ShareDenied) else '暫時無法核實房間或權限，請稍後再試。'
+            except (voice_invites.ShareDenied, invite_trial.TrialDenied, discord.HTTPException, OSError, TimeoutError) as exc:
+                text = str(exc) if isinstance(exc, (voice_invites.ShareDenied, invite_trial.TrialDenied)) else '暫時無法核實房間或權限，請稍後再試。'
                 await interaction.followup.send(text, ephemeral=True)
                 return
             now = time.time()
@@ -504,15 +511,22 @@ class SquadCards(commands.Cog):
                     self.interest_baseline.add(session['id'])
             self.__dict__.setdefault('_invite_presence_starts', {}).setdefault(voice_id, session.get('qualified') or now)
             invite = session.get('voice_invite')
+            if invite and invite.get('scope_stopped'):
+                await interaction.followup.send('本局分享已停止；請在下一個新場次再試，原卡及房控照常。', ephemeral=True)
+                return
             if not invite or invite['state'] == 'denied' or (invite['state'] == 'rate_limited' and invite['retry_at'] <= now):
                 session['voice_invite'] = dict(state='requested', requester=interaction.user.id,
-                                               voice=voice_id, plan=linked['id'] if linked else None)
+                                               voice=voice_id, plan=linked['id'] if linked else None,
+                                               trial_revision=scope['revision'])
             if not session.get('message'):
                 session['share_waiting'] = True
             session['dirty'] = True
             self.save()
             try:
                 await self.render(channel, session)
+            except invite_trial.TrialDenied as exc:
+                invite_trial.stop(self, session, str(exc))
+                await invite_trial.withdraw(self, session)
             except voice_invites.PresenceChanged:
                 pass  # Persisted intent waits for a new continuous presence window.
             except (discord.HTTPException, OSError, TimeoutError, RuntimeError):
@@ -550,6 +564,14 @@ class SquadCards(commands.Cog):
         token = voice_invites.presence_token(self, channel.id) if channel and session.get('voice_invite') else None
         def check():
             if not ended and token is not None:
+                invite = session['voice_invite']
+                if invite.get('state') == 'active' and not invite.get('scope_stopped'):
+                    try:
+                        invite_trial.require(self, self.bot.get_channel(channel.id), self.bot.get_channel(session['destination']),
+                                             invite['requester'], revision=invite.get('trial_revision'))
+                    except invite_trial.TrialDenied as exc:
+                        invite_trial.stop(self, session, str(exc))
+                        raise
                 voice_invites.checkpoint(self, channel, session, token,
                     qualified=not session.get('message') or session.get('share_waiting', False))
         async def checked(operation):
@@ -1005,6 +1027,8 @@ class SquadCards(commands.Cog):
                 channel = channels.get(key)
                 members = humans(channel) if channel else []
                 session = self.state["sessions"].get(key)
+                if channel is not None and session and session.get('ended') is None and session.get('voice_invite'):
+                    await invite_trial.enforce(self, channel, session)
                 if session and session.get('id'):
                     latest=await run_stats(squad_interest.latest_card_post,session['id'])
                     if latest and latest['state']=='sent' and latest['message_id'] and not session.get('plan_id'):
@@ -1178,6 +1202,51 @@ class SquadCards(commands.Cog):
                 await interaction.followup.send('測試未完成，請保留現有卡片供核對。', ephemeral=True)
             finally:
                 self.interest_baseline.discard(session['id'])
+
+    @app_commands.command(name='squad_invite_trial', description='管理員私人設定／查看／停用精確範圍語音邀請試行')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(action=[app_commands.Choice(name='設定試行', value='configure'),
+                                  app_commands.Choice(name='查看狀態', value='status'),
+                                  app_commands.Choice(name='停用試行', value='disable')])
+    async def squad_invite_trial(self, interaction: discord.Interaction, action: str,
+                                 category: discord.CategoryChannel | None = None,
+                                 destination: discord.TextChannel | None = None,
+                                 tester_one: discord.Member | None = None,
+                                 tester_two: discord.Member | None = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if interaction.guild_id != config.GUILD_ID or action not in {'configure', 'status', 'disable'}:
+            await interaction.followup.send('請在原伺服器使用指定管理操作。', ephemeral=True)
+            return
+        try:
+            guild = await self.bot.fetch_guild(interaction.guild_id)
+            actor = await guild.fetch_member(interaction.user.id)
+            if not is_server_admin(actor):
+                raise invite_trial.TrialDenied('只限有管理伺服器權限的管理員設定試行。')
+            async with self.lock:
+                if action == 'configure':
+                    value = await invite_trial.configuration(self, guild, interaction, category, destination,
+                        [member for member in (tester_one, tester_two) if member is not None])
+                    self.state['voice_invite_trial'] = value
+                    self.save()
+                elif action == 'disable':
+                    self.state['voice_invite_trial'] = {'schema': 1, 'enabled': False}
+                    self.save()  # Persist shutdown before any awaited revocation or card edit.
+                if action != 'status':
+                    for key, session in self.state['sessions'].items():
+                        if session.get('voice_invite'):
+                            await invite_trial.enforce(self, self.bot.get_channel(int(key)), session)
+                value = invite_trial.settings(self)
+                if value is None:
+                    text = '語音邀請試行：已關閉。原有房控、招募卡及通知照常；已知邀請撤銷／URL清理如失敗會按退避處理。'
+                else:
+                    testers = '、'.join(f'<@{uid}>' for uid in value['testers'])
+                    text = (f"語音邀請試行：已啟用精確範圍\n伺服器：{value['guild']}\n"
+                            f"分類：{value['category']}\n目的地：<#{value['destination']}>\n"
+                            f"試行帳號：{testers}\n只限白名單開房者／管理員身處該分類的小隊房使用，未向全伺服器開放。")
+        except (invite_trial.TrialDenied, discord.HTTPException, OSError, TimeoutError) as exc:
+            text = str(exc) if isinstance(exc, invite_trial.TrialDenied) else '暫時無法核實設定或權限；請查看狀態後再試。'
+        await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name='squad_recover', description='核對並連結發送結果不明嘅現有召人卡')
     @app_commands.guild_only()
