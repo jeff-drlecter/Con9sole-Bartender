@@ -19,7 +19,7 @@ from core.permissions import is_admin_or_helper, is_server_admin
 from core.action_guard import shared_async_lock
 from core.storage_paths import DATA_DIR
 from core.ui import SafeView
-from features import squad_interest, squad_participants
+from features import squad_interest, squad_participants, voice_invites
 from features.menu_stats import run_stats
 
 log = logging.getLogger(__name__)
@@ -456,13 +456,100 @@ class SquadCards(commands.Cog):
     def cog_unload(self):
         self.tick.cancel()
 
+    async def share_voice(self, interaction, voice_id):
+        """Explicit opt-in; all sends/creates serialize with the lifecycle sweeper."""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        async with self.lock:
+            channel = self.bot.get_channel(voice_id)
+            settings = self.state['settings']
+            routes = dict(settings.get('routes', {}))
+            if 'category' in settings:
+                routes.setdefault(str(settings['category']), settings['destination'])
+            session = self.state['sessions'].get(str(voice_id))
+            destination_id = (session.get('destination') if session else
+                              routes.get(str(getattr(channel, 'category_id', None))))
+            plans = self.bot.get_cog('SquadPlans')
+            linked = plans.book.for_voice(voice_id) if plans else None
+            if linked and linked['status'] in {'gathering', 'live'}:
+                original_plan = session and (session.get('plan_id') or session.get('voice_invite', {}).get('plan'))
+                if original_plan and original_plan != linked['id']:
+                    await interaction.followup.send('原約局連接已改變，未建立另一張招募卡。', ephemeral=True)
+                    return
+                destination_id = linked['channel']
+            elif session and (session.get('plan_id') or session.get('voice_invite', {}).get('plan')):
+                await interaction.followup.send('原約局已結束或解除連接，未建立新招募卡。', ephemeral=True)
+                return
+            if not channel or not destination_id or (session and session.get('ended') is not None):
+                await interaction.followup.send('房間不存在、未設招募路線，或本局正在結束；未建立邀請。', ephemeral=True)
+                return
+            try:
+                await voice_invites.authorize(self.bot, interaction.guild_id, voice_id,
+                                              destination_id, interaction.user.id)
+            except (voice_invites.ShareDenied, discord.HTTPException, OSError, TimeoutError) as exc:
+                text = str(exc) if isinstance(exc, voice_invites.ShareDenied) else '暫時無法核實房間或權限，請稍後再試。'
+                await interaction.followup.send(text, ephemeral=True)
+                return
+            now = time.time()
+            if session is None:
+                members = humans(channel)
+                session = dict(id=uuid.uuid4().hex, started=now, qualified=now,
+                    participants={str(m.id): m.display_name for m in members},
+                    destination=destination_id, first_member=min(members, key=lambda m:
+                        self.arrivals.get((channel.id, m.id), now)).id)
+                self.state['sessions'][str(voice_id)] = session
+                if str(voice_id) in getattr(self, 'startup_occupied', set()):
+                    self.interest_baseline.add(session['id'])
+            invite = session.get('voice_invite')
+            if not invite or invite['state'] == 'denied':
+                session['voice_invite'] = dict(state='requested', requester=interaction.user.id,
+                                               voice=voice_id, plan=linked['id'] if linked else None)
+            session['dirty'] = True
+            self.save()
+            try:
+                await self.render(channel, session)
+            except (discord.HTTPException, OSError, TimeoutError, RuntimeError):
+                log.exception('Voice share incomplete: session=%s', session['id'])
+            self.save()
+            invite = session['voice_invite']
+            text = f"招募目的地：<#{session['destination']}>。模式及缺額選填。"
+            if not session.get('message'):
+                qualified = session.get('qualified')
+                if qualified is None or time.time() - qualified < 30:
+                    text += '\n已儲存招募意圖；真人連續留滿30秒才出卡及按原有規則通知。'
+                else:
+                    text += '\n招募卡未確認發布；如發送結果待查，系統唔會盲目重發，請管理員核對。'
+            else:
+                text += f"\n[原招募卡](https://discord.com/channels/{interaction.guild_id}/{session['destination']}/{session['message']})"
+            if session.get('missing_card'):
+                text += '\n原招募卡已不存在或不可用；未另發新卡。'
+            link = voice_invites.url(session)
+            if link:
+                text += '\n本局語音邀請（最多1小時）：' + link
+            elif invite['state'] == 'uncertain':
+                text += '\n建立邀請結果待核對；為免重複，唔會自動再建。'
+            elif invite.get('error'):
+                text += '\n' + invite['error']
+            elif invite['state'] in {'expired', 'revoked', 'revoking'}:
+                text += '\n本局邀請已到期或正在撤銷；請使用原卡語音入口。'
+            await interaction.followup.send(text,
+                view=wording_view(interaction.user, RecruitmentChoices(self, str(voice_id), session)),
+                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     async def render(self, channel, session, ended=False):
         session["dirty"] = True
+        # The private pre-card settings UI must not bypass continuous presence.
+        if not ended and not session.get('message') and 'qualified' in session:
+            if session['qualified'] is None or time.time() - session['qualified'] < 30:
+                self.save()
+                return
         from features.squad_plans import PlanBook
         plans = getattr(self.bot, 'get_cog', lambda _: None)('SquadPlans')
         if not isinstance(getattr(plans, 'book', None), PlanBook):
             plans = None
-        plan = (plans.book.get(session['plan_id']) if session.get('plan_id') else plans.book.for_voice(channel.id) if channel else None) if plans else None
+        bound_plan = session.get('plan_id') or session.get('voice_invite', {}).get('plan')
+        plan = (plans.book.get(bound_plan) if bound_plan else plans.book.for_voice(channel.id) if channel else None) if plans else None
+        if plan and channel and plan.get('voice') != channel.id:
+            plan = None
         if plan and plan['status'] in {'gathering', 'live'}:
             if session.get('message') and session['message'] != plan['message']:
                 old_destination = self.bot.get_channel(session['destination'])
@@ -488,9 +575,21 @@ class SquadCards(commands.Cog):
                     self.save()
                     return
             self.save()
-        elif session.get('plan_id'):
+        elif bound_plan:
             # A cancelled or detached plan cannot keep sending its session notifications.
             session['missing_card'] = True
+            if session.get('voice_invite'):
+                await voice_invites.revoke(self, session)
+                destination = self.bot.get_channel(session['destination'])
+                if destination and session.get('message'):
+                    try:
+                        message = await destination.fetch_message(session['message'])
+                        if message.author.id != self.bot.user.id:
+                            raise RuntimeError('Voice invite card author mismatch')
+                        await message.edit(content=voice_invites.content(message.content, session, ended=True),
+                                           allowed_mentions=discord.AllowedMentions.none())
+                    except discord.NotFound:
+                        pass
             return
         if session.get('id') and not session.get('plan_id'):
             latest = await run_stats(squad_interest.latest_card_post,session['id'])
@@ -499,7 +598,31 @@ class SquadCards(commands.Cog):
                 self.save()
         destination = self.bot.get_channel(session["destination"])
         if not destination:
+            if ended and session.get('voice_invite'):
+                await voice_invites.revoke(self, session)
             raise RuntimeError("Squad card destination unavailable")
+        if session.get('voice_invite'):
+            if ended:
+                # Remove the public entry before attempting network revocation.
+                if session.get('message'):
+                    try:
+                        original = await destination.fetch_message(session['message'])
+                        if original.author.id != self.bot.user.id:
+                            raise RuntimeError('Voice invite card author mismatch')
+                        await original.edit(content='本局已結束 · 正在整理足跡', embed=None,
+                            view=None, allowed_mentions=discord.AllowedMentions.none())
+                    except discord.NotFound:
+                        pass
+                    finally:
+                        await voice_invites.revoke(self, session)
+                else:
+                    await voice_invites.revoke(self, session)
+            else:
+                await voice_invites.prepare(self, channel, session)
+                if session['voice_invite']['state'] == 'revoking':
+                    await voice_invites.revoke(self, session)
+                if not self.bot.is_ready() or not humans(channel):
+                    return
         members = humans(channel) if channel else []
         names = session["participants"] if ended else {str(m.id): m.display_name for m in members}
         profile = game_profile(channel, session)
@@ -555,7 +678,10 @@ class SquadCards(commands.Cog):
                             await plans.refresh(closed)
                     return
                 await run_stats(squad_participants.save, message.id, config.GUILD_ID, destination.id, names)
-                await message.edit(content=None if ended else message.content, **kwargs)
+                content = None if ended else message.content
+                if session.get('voice_invite'):
+                    content = voice_invites.content(content, session, ended=ended)
+                await message.edit(content=content, **kwargs)
                 session["dirty"] = False
                 if value:
                     await run_stats(squad_interest.track_card, value['id'], destination.id,
@@ -566,6 +692,10 @@ class SquadCards(commands.Cog):
                     await self.notify_interested(channel, session)
                 return
             except discord.NotFound:
+                if session.get('voice_invite') and not ended:
+                    session['missing_card'] = True
+                    self.save()
+                    return  # Sharing never replaces a deliberately deleted canonical card.
                 if plan:
                     session['missing_card'] = True
                     if ended:
@@ -580,6 +710,8 @@ class SquadCards(commands.Cog):
             kwargs["content"] = f"<@{first_id}> 想找隊友？按「招募設定」選擇模式及人數；全部選填。"
             kwargs["allowed_mentions"] = discord.AllowedMentions(
                 users=[discord.Object(id=first_id)], roles=False, everyone=False, replied_user=False)
+        if session.get('voice_invite'):
+            kwargs['content'] = voice_invites.content(kwargs.get('content'), session, ended=ended)
         ready=getattr(self.bot,'is_ready',None)
         if callable(ready) and not ready():return
         attempt = await run_stats(squad_interest.begin_card_post,session['id'],destination.id,channel.id) if session.get('id') else None
@@ -870,6 +1002,10 @@ class SquadCards(commands.Cog):
                         await run_stats(squad_interest.end_session,session['id'])
                         if session.get("message"):
                             await self.render(channel, session, ended=True)
+                        if session.get('voice_invite') and not await voice_invites.revoke(self, session):
+                            continue
+                        if session.get('voice_invite'):
+                            voice_invites.retire(self, session)
                         del self.state["sessions"][key]
                         self.save()
                     continue
@@ -901,7 +1037,9 @@ class SquadCards(commands.Cog):
                         session["qualified"] = now
                     elif now - session["qualified"] >= 30:
                         await self.render(channel, session)
-                elif changed:
+                elif changed or (session.get('voice_invite', {}).get('state') in {'requested', 'active', 'revoking'} and (
+                        session['voice_invite'].get('check_at', 0) <= now
+                        or session['voice_invite'].get('expires', float('inf')) <= now)):
                     await self.render(channel, session)
                 if session.get('message'):
                     await self.notify_interested(channel,session)

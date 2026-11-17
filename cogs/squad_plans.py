@@ -588,7 +588,11 @@ class SquadPlans(commands.Cog):
             message = await channel.fetch_message(p['message'])
             if message.author.id != self.bot.user.id:
                 return False
-            await message.edit(embed=card(p), view=PlanView(self, p), allowed_mentions=NONE)
+            kwargs = {}
+            if p['status'] not in {'gathering', 'live'}:
+                from features.voice_invites import content
+                kwargs['content'] = content(getattr(message, 'content', ''), {}, ended=True)
+            await message.edit(embed=card(p), view=PlanView(self, p), allowed_mentions=NONE, **kwargs)
             self.book.availability(p['id'],'available')
             self.book.clean(p['id'], p.get('revision', 0))
             return True

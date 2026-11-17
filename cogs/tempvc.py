@@ -405,6 +405,21 @@ class TempVCControlView(SafeView):
     async def change_limit_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(wording_modal(interaction.user, ChangeLimitModal(self.cog, self.channel_id)))
 
+    @discord.ui.button(label="招人入隊", emoji="📣", style=discord.ButtonStyle.primary, row=0)
+    async def recruit_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        member, channel, error = self.cog._get_control_channel(interaction, self.channel_id)
+        if error or channel is None or member is None:
+            await send_or_followup(interaction, content=error or "搵唔到房間。", ephemeral=True)
+            return
+        if member.id != tempvc_storage.creator_id(channel.id) and not user_can_admin_teardown(member):
+            await send_or_followup(interaction, content="招人入隊只限開房者或管理員。", ephemeral=True)
+            return
+        cards = self.cog.bot.get_cog("SquadCards")
+        if cards is None:
+            await send_or_followup(interaction, content="招募功能暫時未載入，請稍後再試。", ephemeral=True)
+            return
+        await cards.share_voice(interaction, channel.id)
+
     @discord.ui.button(label="刪除小隊 call", emoji="🧹", style=discord.ButtonStyle.danger, row=2)
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.cog.delete_temp_vc_from_control(interaction, self.channel_id)
