@@ -42,8 +42,9 @@ in #193/#194. Re-check heads/main after 04 supplies code.
 - SquadCards production starts from configured category-to-destination routes;
   `reconcile()` considers voice channels in those categories and excludes AFK.
   Unconfigured voice categories do not automatically produce tracked sessions.
-  Live route configuration and permissions still need private runtime/Discord GET
-  evidence. No route bug has been demonstrated merely by reading this condition.
+  Live route configuration, destination/channel existence and effective Bot
+  permissions were subsequently checked through private runtime and Discord GETs.
+  Scope is explicitly limited; an unrouted category alone is not a proved bug.
 - `SquadCards.last_error` is set on failures but not cleared by successful ticks;
   it has no timestamp. A warning can be stale. Conversely, absence of a warning
   does not prove every card was delivered.
@@ -60,24 +61,40 @@ in #193/#194. Re-check heads/main after 04 supplies code.
   unimplemented 04 baseline. Exact time/aggregate results are in the private
   handoff. No ordinary-member, Helper or pure-Tester acceptance is claimed.
 
-### A remains partial
+### A core evidence collected; identity and historical limits remain
 
-Historical access note: Fly and GitHub web sessions initially presented sign-in
-walls. After Jeff signed in, Fly machine/image, volume/configuration and retained
-logs were read on 2026-11-17 HKT. The running image tag matches the full main SHA
-above. The configured persistent mount is `/data`; this is not a fresh process-env
-or resolved-path read. Existing volume snapshots were listed, not restored or
-validated for SQLite/WAL consistency. Exact operational details remain private.
+Historical access sequence: Fly initially required web sign-in; dashboard access
+then established the image, volume and dated logs, but did not expose a shell.
+That blocker was resolved through the official CLI's normal account sign-in.
+On 2026-11-17 HKT, an explicit command in the **existing** machine read the single
+`bot.py` process's whitelisted environment and resolved paths. Fresh `APP_COMMIT`
+is `9565192ac5d9027b1468b51efc7108a8f3c57388`; the resolved root is `/data` with no
+SquadCards or stats-path overrides. No second Bot or Gateway client was started.
 
-The inspected Fly pages expose no private execution terminal. The available
-GitHub connector reads code/Actions but has no private runtime shell or
-workflow-dispatch operation.
-No credential extraction, protection bypass, second Bot, restart, repair or
-migration was attempted. Local `/data` is absent and must not be confused with
-the production volume. The last deployed SHA is verified historically; fresh
-`APP_COMMIT`, current resolved data paths, route/channel permissions, session
-state, raw table aggregates, card-post correlation, complete
-membership enumeration and personal-invite exclusion are **not yet verified**.
+Private evidence now includes consistent per-DB read transactions, required raw
+outcome tables and schema, current stored sessions/plans, routes, dated observer
+runs, historical card-post receipts and corresponding existing messages, current
+invite metadata and same-window source aggregates. Separate authorized REST GETs
+exhausted member pagination with an empty page, de-duplicated account IDs and
+recorded capture times plus before/after reported counts. Only aggregates were
+retained; credentials, names and complete member lists were not emitted.
+
+Exact values, channel identifiers, timestamps and the raw sanitized aggregates
+are in Jeff's private handoff, not this public repository or Actions. This is
+sufficient for 04 to proceed from an evidenced baseline while preserving unknowns.
+It is not acceptance of the unimplemented 04 feature. Remaining limits:
+
+- Non-Bot accounts are not verified independent humans. A confirmed owned-test
+  registry is still absent; staff/Tester roles were not blanket-excluded.
+- REST enumeration spans time, not an atomic server snapshot. No live voice
+  occupancy was inferred from disk/member lists or the limited REST endpoints.
+- Current scope and raw tables cannot prove that no historical Gateway event was
+  missed. No historical attendance, missing date or test provenance was invented.
+- Owner private-query checks and service-identity REST reads do not substitute for
+  ordinary-member, Helper, pure-Tester or non-Owner Admin UI acceptance.
+- Existing volume snapshots were listed, not restored or validated as a current
+  SQLite/WAL-consistent deployment backup. No production data/configuration,
+  route, role, notification, process, workflow, migration or repair was changed.
 
 ### Dated logs and isolated reproductions
 
@@ -103,17 +120,20 @@ production writes:
 Gateway resume records were also found. `CommunityOutcomes.on_disconnect()`
 increments the cumulative failure counter; unsuccessful not-ready scans can do
 so too. Resume chronology is consistent with the observed counter increase,
-but per-run DB evidence is still required before assigning an exact cause/count.
+and subsequent per-run timestamps/counters agree with that chronology. Individual
+failure timestamps/reasons are not stored, so exact causal attribution remains
+limited; a cumulative total must not be labelled a count of observer exceptions.
 The selected last-24-hour Grafana search for `"Outcome"` returned no data; this
 is limited to that query, window and retained logs, not proof of no failure.
 Later resume records must not be retroactively assigned to earlier UI totals.
 
-The private UI's empty eligible cohort does not distinguish an empty raw table,
-all-test/excluded records, guild/window mismatch or a query omission. Do not
-select a cause until the raw evidence is read. No collector-loss bug is confirmed.
-Old pre-observation cards/logs cannot be used as missing-event evidence.
+The initial UI-only zero did not distinguish raw absence from filtering. The
+subsequent private raw-table transaction resolves this distinction at its capture
+time; use the private handoff's conclusion rather than the earlier access-blocked
+assumptions. No collector-loss bug is confirmed. Historical card checks do not
+justify backfilling observations.
 
-### Prepared diagnostic, not executed against production
+### Manual diagnostic executed read-only; not deployed
 
 `scripts/inspect_growth_readonly.py` is a standalone standard-library inspector.
 It never imports Bot/config/store constructors. SQLite uses `mode=ro`,
@@ -131,8 +151,10 @@ It prints no member/session/plan IDs, names, message content, token values or ra
 exceptions. Route channel IDs and aggregates are still private: **do not attach
 its production output to this public PR, repo or Actions log**.
 
-Invocation in an already authorized private runtime terminal, after independently
-confirming the actual data root and full APP_COMMIT:
+The reviewed script was supplied in-memory to an explicit Python command on the
+existing machine, after checking process identity, full APP_COMMIT and data root.
+It was not installed into the image or attached to an automated job. The general
+invocation, for future authorized private runs, is:
 
 ```sh
 python scripts/inspect_growth_readonly.py --data-dir ACTUAL_DATA_ROOT \
@@ -179,8 +201,8 @@ explicit unknowns. It is not acceptance of an implementation or production data.
 
 04 still owes code, full head/base, modified interfaces, actual implementation
 tests, migration/re-run/rollback evidence if any, and unverified identity scenarios.
-It may use this contract for preparation while missing A evidence stays unknown;
-do not mark A complete or B accepted.
+The private A evidence is now available for implementation; remaining identity,
+historical coverage and UI limitations must stay explicit. B is not accepted.
 
 ## 05 review / required amendments
 
@@ -207,8 +229,9 @@ Before final acceptance, 05 should address:
   agreed interface and evidence exist.
 - P01/P04 remain blocked until real host consent, game/platform compatibility,
   date/time, minimum/maximum/vacancies, effective card and newcomer access are
-  supplied by 03 through 01. Runtime personal-code exclusion and historical
-  source-row-to-code mapping remain unverified; lifetime uses cannot resolve them.
+  supplied by 03 through 01. Runtime personal-code exclusion, current code/channel mapping and bounded join
+  aggregates were subsequently read privately. They do not establish attribution
+  to a particular post, independent humans or first participation.
 
 ## Checks, compatibility, rollback and remaining gate
 
@@ -228,6 +251,7 @@ activity/receipt snapshot, WAL-consistent backup and recoverable image/volume,
 plus 04 final-code acceptance. Current changes have no live process impact because
 they are **not deployed**. iPhone Mirroring skipped, not passed.
 
-Return to 01: A partial / private runtime access required; B blocked on 04 code
-and 05 corrections. This document is prepared for the existing Chats; no claim
+Return to 01: A core raw/runtime/route/member/source evidence collected privately;
+B blocked on 04 implementation and 05 corrections. The former runtime-access
+blocker is resolved; remaining limitations are not promoted to passes. This document is prepared for the existing Chats; no claim
 is made that a message was sent to them or they started the follow-up.
