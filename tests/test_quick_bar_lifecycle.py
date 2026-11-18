@@ -18,6 +18,7 @@ class OfflineLifecycleTests(unittest.TestCase):
 import asyncio, json
 from unittest.mock import AsyncMock
 import discord
+import config
 from bot import Bot
 from data.menu_registry import MENU_ITEMS_BY_LAYER
 
@@ -43,7 +44,14 @@ async def run():
         after = bot.get_cog("TempVC")._sweeper_task
         await bot.reload_extension("cogs.menu")
         await bot.reload_extension("cogs.teams")
-        print(json.dumps({"extensions": len(bot.extensions), "missing": missing,\n            "plans_loaded": bot.get_cog("SquadPlans") is not None,
+        directory = bot.tree.get_command("community", guild=discord.Object(config.GUILD_ID))
+        directory_before = directory
+        await bot.reload_extension("cogs.community_directory")
+        directory = bot.tree.get_command("community", guild=discord.Object(config.GUILD_ID))
+        print(json.dumps({"extensions": len(bot.extensions), "missing": missing,\n            "community_commands": sorted(c.name for c in directory.commands),
+            "community_reloaded": directory is not directory_before,
+            "community_global": bot.tree.get_command("community") is not None,
+            "plans_loaded": bot.get_cog("SquadPlans") is not None,
             "sweeper_restarted": before is not None and after is not None and before is not after,
             "maintenance_restarted": maintenance_before is not maintenance_after and maintenance_before.cancelling() > 0,
             "command_count": len(bot.tree.get_commands(guild=discord.Object(626378673523785731))) }))
@@ -86,9 +94,13 @@ asyncio.run(run())
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(report["extensions"], 36, result.stderr)
+        self.assertEqual(report["extensions"], 37, result.stderr)
         self.assertEqual(report["missing"], [])
         self.assertTrue(report["plans_loaded"])
         self.assertTrue(report["sweeper_restarted"])
         self.assertTrue(report["maintenance_restarted"])
-        self.assertEqual(report["command_count"], 65)
+        self.assertEqual(report["command_count"], 66)
+
+        self.assertEqual(report["community_commands"], ["archive", "create", "edit", "list", "restore", "show"])
+        self.assertTrue(report["community_reloaded"])
+        self.assertFalse(report["community_global"])
