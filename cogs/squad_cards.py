@@ -69,20 +69,33 @@ class ModePicker(discord.ui.Select):
         super().__init__(placeholder="玩咩模式？（選填）", options=options, row=1)
 
     async def callback(self, interaction):
-        async with self.cog.lock:
+        value = self.values[0]
+        if value == "__custom__":
+            # A modal must be the initial response: never wait for the render lock
+            # before opening it. Details rechecks the session and actor on submit.
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
-            if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+            if session is not self.session or session.get("ended") is not None or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
                 await interaction.response.send_message(wording_text(getattr(interaction, "user", None), "呢場已結束，或者你冇修改權限。"), ephemeral=True)
-                return
-            value = self.values[0]
-            if value == "__custom__":
-                await interaction.response.send_modal(wording_modal(interaction.user, Details(self.cog, self.key, session)))
                 return
             if self.profile != game_profile(channel, session):
                 await interaction.response.send_message("遊戲設定已改，請重新開啟招募設定。", ephemeral=True)
                 return
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.send_modal(wording_modal(interaction.user, Details(self.cog, self.key, session)))
+            return
+
+        # Rendering/reconciliation can hold this lock across Discord REST calls.
+        # Acknowledge first, then validate the current state before any mutation.
+        await interaction.response.defer(ephemeral=True)
+        async with self.cog.lock:
+            session = self.cog.state["sessions"].get(self.key)
+            channel = self.cog.bot.get_channel(int(self.key))
+            if session is not self.session or session.get("ended") is not None or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+                await interaction.followup.send(wording_text(getattr(interaction, "user", None), "呢場已結束，或者你冇修改權限。"), ephemeral=True)
+                return
+            if self.profile != game_profile(channel, session):
+                await interaction.followup.send("遊戲設定已改，請重新開啟招募設定。", ephemeral=True)
+                return
             session["mode"] = "" if value == "__none__" else value
             sync_mode_name(self.cog, channel, session)
             if self.profile:
@@ -146,7 +159,7 @@ class Details(discord.ui.Modal, title="組隊狀態"):
         async with self.cog.lock:
             session = self.cog.state["sessions"].get(self.key)
             channel = self.cog.bot.get_channel(int(self.key))
-            if session is not self.session or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
+            if session is not self.session or session.get("ended") is not None or not channel or (not is_admin_or_helper(interaction.user) and interaction.user not in humans(channel)):
                 await interaction.followup.send(wording_text(getattr(interaction, "user", None), "呢場已結束，或者你冇修改權限（需為在場成員、Admin 或 Helper）。"), ephemeral=True)
                 return
             session.update(game=str(self.game.value).strip(), mode=str(self.mode.value).strip(),
