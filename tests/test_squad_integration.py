@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
-from cogs.squad_cards import SquadCards
+from cogs.squad_cards import FootprintView, SquadCards
 from features import squad_interest as store, squad_participants
 from features.squad_subscription_views import SubscriptionView
 from quick_bar_fakes import interaction
@@ -286,7 +286,6 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         store.end_session('s')
         cog,original,destination,session=self.footprint_fixture()
         embed=discord.Embed(title='本局已結束')
-        from cogs.squad_cards import FootprintView
         view=FootprintView(cog,self.topic)
         await cog.finish_footprint(destination,original,session,embed,view,self.topic)
         await cog.finish_footprint(destination,original,session,embed,view,self.topic)
@@ -378,8 +377,73 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         helper.roles=[types.SimpleNamespace(id=123,name='Helpers')]
         self.assertFalse(can_use_staff_tool(helper,'squad_test'))
 
+    async def test_public_footprint_menu_opens_private_quick_bar(self):
+        from cogs.menu import Menu
+        from features.menu_views import QuickBarView
+
+        inter = interaction()
+        inter.type = discord.InteractionType.component
+        inter.message.flags = discord.MessageFlags()
+        menu = object.__new__(Menu)
+        menu.bot = inter.client
+        inter.client.get_cog.return_value = menu
+        store.toggle(self.scope, inter.guild_id, inter.user.id, 'always')
+        view = FootprintView(self.cog(), self.topic)
+        button = next(b for b in view.children if b.label == '開主選單')
+        with patch('features.menu_actions.record_usage', new=AsyncMock()), \
+                patch('features.menu_actions.add_member_hint', new=AsyncMock()):
+            await button.callback(inter)
+
+        inter.client.get_cog.assert_called_once_with('Menu')
+        inter.response.send_message.assert_awaited_once()
+        reply = inter.response.send_message.call_args.kwargs
+        self.assertTrue(reply['ephemeral'])
+        self.assertIsInstance(reply['view'], QuickBarView)
+        self.assertFalse(any(item.item.admin_only for item in reply['view'].children))
+        inter.response.edit_message.assert_not_awaited()
+        inter.edit_original_response.assert_not_awaited()
+        inter.message.edit.assert_not_awaited()
+        inter.channel.send.assert_not_called()
+        self.assertEqual(store.preferences(self.scope), {inter.user.id: 'always'})
+
+    async def test_footprint_menu_denies_invalid_context_and_handles_missing_cog_privately(self):
+        view = FootprintView(None, self.topic)
+        button = next(b for b in view.children if b.label == '開主選單')
+        for guild_id, is_bot, visible in ((2, False, True), (1, True, True), (1, False, False)):
+            with self.subTest(guild=guild_id, bot=is_bot, visible=visible):
+                inter = interaction()
+                inter.guild_id, inter.user.bot, inter.permissions.view_channel = guild_id, is_bot, visible
+                await button.callback(inter)
+                inter.client.get_cog.assert_not_called()
+                self.assertTrue(inter.response.send_message.call_args.kwargs['ephemeral'])
+        inter = interaction()
+        inter.client.get_cog.return_value = None
+        await button.callback(inter)
+        self.assertIn('主選單', inter.response.send_message.call_args.args[0])
+        self.assertTrue(inter.response.send_message.call_args.kwargs['ephemeral'])
+        inter.message.edit.assert_not_awaited()
+
+    async def test_topicless_footprint_menu_is_registered_on_restart_without_topics(self):
+        cog, original, destination, session = self.footprint_fixture()
+        destination.fetch_message = AsyncMock(return_value=original)
+        cog.bot.get_channel.return_value = destination
+        await cog.render(None, session, ended=True)
+        view = destination.send.call_args.kwargs['view']
+        self.assertEqual([button.label for button in view.children], ['開主選單'])
+        with patch('cogs.squad_cards.load_json_object', return_value={'sessions': {}}), \
+                patch.object(store, 'topics', return_value=[]), patch.object(SquadCards, 'tick'):
+            restarted = SquadCards(MagicMock())
+        registered = restarted.bot.add_view.call_args.args[0]
+        self.assertTrue(registered.is_persistent())
+        self.assertEqual([button.custom_id for button in registered.children],
+                         [view.children[0].custom_id])
+        inter = interaction()
+        menu = types.SimpleNamespace(open_main_menu=AsyncMock())
+        inter.client.get_cog.return_value = menu
+        await registered.children[0].callback(inter)
+        menu.open_main_menu.assert_awaited_once_with(inter)
+
     async def test_footprint_next_plan_prefills_game_mode_without_posting(self):
-        from cogs.squad_cards import FootprintView
         from cogs.squad_plans import PlanForm
         cog=self.cog();view=FootprintView(cog,self.topic)
         inter=interaction();inter.permissions=discord.Permissions(view_channel=True)
@@ -399,11 +463,10 @@ class SquadIntegrationTests(unittest.IsolatedAsyncioTestCase):
         plans.menu_entry.assert_not_awaited()
         self.assertEqual(store.preferences(self.scope),{})
         self.assertTrue(view.is_persistent())
-        self.assertEqual(len(view.children),5)
+        self.assertEqual(len(view.children),6)
         view.stop()
 
     async def test_footprint_next_plan_rechecks_destination_permission(self):
-        from cogs.squad_cards import FootprintView
         cog=self.cog();view=FootprintView(cog,self.topic)
         inter=interaction();inter.permissions=discord.Permissions(view_channel=True)
         plans=types.SimpleNamespace(menu_entry=AsyncMock())

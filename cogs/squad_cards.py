@@ -273,10 +273,21 @@ def add_interest_fields(embed, roster, preferences):
 
 
 class FootprintView(SafeView):
-    def __init__(self, cog, value, *, include_plan=True):
+    def __init__(self, cog, value, *, ended=True):
         super().__init__(timeout=None)
-        self.cog, self.topic = cog, dict(value, label=value['label'].split(' · ', 1)[0])
-        self.lock = cog.lock if cog is not None else asyncio.Lock()
+        self.cog = cog
+        self.guild_id = value['guild_id'] if value else config.GUILD_ID
+        if value:
+            self.lock = cog.lock if cog is not None else asyncio.Lock()
+            self.topic = dict(value, label=value['label'].split(' · ', 1)[0])
+            self.add_topic_buttons(value, ended=ended)
+        if ended:
+            menu_id = f"squad-main-menu:{value['id']}" if value else "squad-main-menu"
+            button = discord.ui.Button(label='開主選單', emoji='🍸', custom_id=menu_id, row=0)
+            button.callback = self.open_menu
+            self.add_item(button)
+
+    def add_topic_buttons(self, value, *, ended):
         for kind, label, prefix in (("once", "🙋 下次通知我", "squad-interest"),
                                      ("always", "🔔 每次通知我", "squad-interest-always")):
             button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary,
@@ -292,11 +303,20 @@ class FootprintView(SafeView):
                                    custom_id=f"squad-interest-roster:{value['id']}", row=1)
         button.callback = self.show_roster
         self.add_item(button)
-        if include_plan:
+        if ended:
             button = discord.ui.Button(label='📅 發起下次', style=discord.ButtonStyle.secondary,
                                        custom_id=f"squad-next-plan:{value['id']}", row=1)
             button.callback = self.create_next
             self.add_item(button)
+
+    async def open_menu(self, interaction):
+        if not await self.permitted(interaction):
+            return
+        menu = interaction.client.get_cog('Menu')
+        if menu is None:
+            await interaction.response.send_message('主選單暫時無法開啟，請稍後再試。', ephemeral=True)
+            return
+        await menu.open_main_menu(interaction)
 
     async def show_participants(self, interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -326,7 +346,7 @@ class FootprintView(SafeView):
         await interaction.response.send_modal(wording_modal(interaction.user, form))
 
     async def permitted(self, interaction):
-        if interaction.guild_id != self.topic["guild_id"] or interaction.user.bot:
+        if interaction.guild_id != self.guild_id or interaction.user.bot:
             await interaction.response.send_message(wording_text(getattr(interaction, "user", None), "請喺原本伺服器使用。"), ephemeral=True)
             return False
         if not interaction.permissions.view_channel:
@@ -412,10 +432,7 @@ class CardView(FootprintView):
         value = interest_topic(cog.bot.get_channel(int(key)), session)
         # A room category normally supplies the game; unknown games still get
         # join/settings controls without creating a notification subscription.
-        if value:
-            super().__init__(cog, value, include_plan=False)
-        else:
-            SafeView.__init__(self, timeout=None)
+        super().__init__(cog, value, ended=False)
         self.cog, self.key, self.session = cog, key, session
         interests = list(self.children)
         self.clear_items()
@@ -442,7 +459,7 @@ class CardView(FootprintView):
 
 class SessionNoticeView(FootprintView):
     def __init__(self, cog, value, voice_id):
-        super().__init__(cog, value, include_plan=False)
+        super().__init__(cog, value, ended=False)
         self.add_item(discord.ui.Button(label="🎮 加入語音", style=discord.ButtonStyle.link,
             url=f"https://discord.com/channels/{value['guild_id']}/{voice_id}"))
 
@@ -459,6 +476,7 @@ class SquadCards(commands.Cog):
         for key, session in self.state["sessions"].items():
             if session.get("message") and not session.get('plan_id'):
                 bot.add_view(CardView(self, key, session), message_id=session["message"])
+        bot.add_view(FootprintView(self, None))  # Also dispatch footprints without a game after restart.
         for value in squad_interest.topics():
             bot.add_view(FootprintView(self, value))
         self.tick.start()
@@ -708,7 +726,7 @@ class SquadCards(commands.Cog):
             preferences = await checked(run_stats(squad_interest.preferences, value['id']))
             roster = interest_roster(self.bot.get_guild(value['guild_id']), destination, preferences)
             add_interest_fields(embed, roster, preferences)
-        view = (FootprintView(self, value) if value else None) if ended else CardView(self, str(channel.id), session)
+        view = FootprintView(self, value) if ended else CardView(self, str(channel.id), session)
         if plan and not ended:
             from cogs.squad_plans import PlanView, card
             embed, view = card(plan), PlanView(plans, plan)
@@ -1226,7 +1244,9 @@ class SquadCards(commands.Cog):
                 original = await destination.fetch_message(original.id)
                 assert not original.embeds and not original.components
                 assert footprint.jump_url in original.content
-                assert footprint.embeds and len([c for row in footprint.components for c in row.children]) == 5
+                controls = [c.custom_id for row in footprint.components for c in row.children]
+                assert footprint.embeds and len(controls) == 6
+                assert f"squad-main-menu:{session['interest_topic']['id']}" in controls
                 assert footprint.id > notice.id
                 assert not notice.components and not original.mentions and not footprint.mentions
                 await interaction.followup.send(

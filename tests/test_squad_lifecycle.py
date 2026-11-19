@@ -116,6 +116,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_first_player_ping_only_on_initial_send(self):
+        from cogs.squad_cards import FootprintView
         from unittest.mock import AsyncMock, Mock
         render_method = next(n for c in ast.parse(source.read_text()).body
                              if isinstance(c, ast.ClassDef) and c.name == 'SquadCards'
@@ -137,6 +138,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             AllowedMentions=Mentions, Object=lambda **kw: types.SimpleNamespace(**kw),
             NotFound=type('NotFound', (Exception,), {}))
         scope = dict(discord=fake_discord, humans=namespace['humans'], CardView=lambda *a: None,
+                     FootprintView=FootprintView,
                      game_profile=lambda *a: '', GAME_LABELS={}, interest_topic=lambda *a: None,
                      config=types.SimpleNamespace(GUILD_ID=1), run_stats=AsyncMock(),
                      squad_participants=types.SimpleNamespace(save=object()))
@@ -180,7 +182,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertIn('不代表同時遊玩', embeds[-1].footer.text)
         self.assertNotIn('A、B', embeds[-1].description)
         self.assertLessEqual(len(embeds[-1].description.splitlines()), 3)
-        self.assertIsNone(message.edit.call_args.kwargs['view'])
+        self.assertEqual([b.label for b in message.edit.call_args.kwargs['view'].children], ['開主選單'])
         self.assertIsNone(message.edit.call_args.kwargs['content'])
 
 
