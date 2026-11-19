@@ -1,4 +1,5 @@
 """Persistent public entry; every functional reply is private and member-localized."""
+import asyncio
 from datetime import datetime, timezone
 import discord
 from discord import app_commands
@@ -10,6 +11,7 @@ from core.permissions import is_server_admin
 from core.ui import SafeView
 from core.json_storage import atomic_write_json
 from core.storage_paths import DATA_DIR
+from features.welcome_verification import APPROVED_ROLE_ID, VERIFY_BUTTON, WelcomeVerification, remember
 
 ENTRY_COPY = (
     f'🎮 **歡迎加入社群**\n請先閱讀 <#{config.RULES_CHANNEL_ID}>，再選擇想玩的遊戲。\n'
@@ -39,7 +41,7 @@ def game_entry_moves(guild):
 
 
 class MemberEntryView(SafeView):
-    def __init__(self, *, legacy=False):
+    def __init__(self, *, legacy=False, welcome=False):
         super().__init__(timeout=None)
         buttons = LEGACY_BUTTONS if legacy else ENTRY_BUTTONS
         version = 'v1' if legacy else 'v2'
@@ -51,6 +53,19 @@ class MemberEntryView(SafeView):
                 await self.open(interaction, action)
             button.callback = callback
             self.add_item(button)
+
+        if welcome:
+            button = discord.ui.Button(label='我是活人', style=discord.ButtonStyle.success,
+                                       custom_id=VERIFY_BUTTON, row=0)
+            button.callback = self.verify
+            self.add_item(button)
+
+    async def verify(self, interaction):
+        cog = interaction.client.get_cog('MemberEntry')
+        if cog is None:
+            await interaction.response.send_message('驗證暫時未能使用，請搵 Helper。', ephemeral=True)
+            return
+        await cog.verification.respond(interaction)
 
     async def open(self, interaction, action):
         if (interaction.guild_id != config.GUILD_ID or interaction.channel is None
@@ -75,10 +90,36 @@ class MemberEntryView(SafeView):
 class MemberEntry(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.verification = WelcomeVerification()
 
     async def cog_load(self):
-        self.bot.add_view(MemberEntryView())
+        self.bot.add_view(MemberEntryView(welcome=True))
         self.bot.add_view(MemberEntryView(legacy=True))
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if after.guild.id == config.GUILD_ID and not after.bot:
+            held = any(r.id == APPROVED_ROLE_ID for r in before.roles)
+            holds = any(r.id == APPROVED_ROLE_ID for r in after.roles)
+            if held != holds:
+                await asyncio.to_thread(remember, after.id)
+
+    @commands.Cog.listener()
+    async def on_audit_log_entry_create(self, entry: discord.AuditLogEntry):
+        # Some member updates have no cached 'before'. The role-update audit
+        # event, when available, also identifies exactly which role was changed.
+        if entry.guild.id != config.GUILD_ID or entry.action != discord.AuditLogAction.member_role_update:
+            return
+        for change in (entry.before, entry.after):
+            if any(r.id == APPROVED_ROLE_ID for r in getattr(change, 'roles', ())):
+                if entry.target is not None:
+                    await asyncio.to_thread(remember, entry.target.id)
+                return
+
+    @app_commands.command(name='撤回會員驗證', description='Helper 或管理員：撤回一位成員嘅會員驗證，並停用自行驗證')
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    async def revoke_verification(self, interaction: discord.Interaction, member: discord.Member):
+        await self.verification.respond(interaction, target_id=member.id)
 
     @app_commands.command(name='遊戲入口排序', description='管理員：將各遊戲組隊文字頻道移到分類最前；不改權限')
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))

@@ -127,6 +127,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(v.is_persistent() for v in registered))
         self.assertCountEqual([b.custom_id for v in registered for b in v.children],
                               [f'entry:{action}:v2' for action in ('games', 'menu', 'help')]
+                              + ['entry:verify:v1']
                               + [f'entry:{action}:v1' for action in
                                  ('games', 'menu', 'plan', 'language', 'help', 'observe')])
         i = interaction(channel(2, 'bartender使用指南', writable=False))

@@ -12,11 +12,12 @@ log = logging.getLogger("con9sole-bartender.welcome")
 
 
 def welcome_message(member, rules_mention: str, bot_mention: str) -> str:
-    """One short welcome for this newcomer; no preference means neutral copy."""
+    """Explain what the newcomer can already do and what the button grants."""
     return "\n".join((
         f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！",
-        f"📜 請先閱讀 {rules_mention}，再選擇感興趣的遊戲。",
-        "🎮 想找隊友或調整設定，可開主選單。有問題可按「搵 Helper」查看求助方式。",
+        f"📜 喺 Discord 確認 {rules_mention} 嘅入群守則後，就可以同大家打招呼、搵隊友。",
+        "想用齊會員功能？按下面嘅「我是活人」完成會員驗證。",
+        "想揀遊戲或開主選單，可以用下面嘅按鈕；有問題就按「搵 Helper」。",
     ))
 
 
@@ -51,6 +52,8 @@ class WelcomeLog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         try:
+            if member.bot or member.guild.id != config.GUILD_ID:
+                return
             channel = member.guild.get_channel(config.WELCOME_CHANNEL_ID)
             if isinstance(channel, discord.TextChannel):
                 rules_channel = member.guild.get_channel(config.RULES_CHANNEL_ID)
@@ -70,7 +73,8 @@ class WelcomeLog(commands.Cog):
                     preference_member = member
                 message = welcome_message(preference_member, rules_mention, bot_mention)
                 from cogs.member_entry import MemberEntryView
-                await channel.send(message, view=MemberEntryView())
+                await channel.send(message, view=MemberEntryView(welcome=True),
+                                   allowed_mentions=discord.AllowedMentions.none())
         except Exception as exc:
             log.exception("Failed to send welcome message: member=%s guild=%s", member.id, member.guild.id)
 
