@@ -12,13 +12,20 @@ def words(member, neutral, hk):
 
 
 async def support_destination(interaction):
-    if interaction.guild_id!=config.GUILD_ID or not interaction.guild:return None
+    guild = interaction.guild
+    if guild is None or interaction.guild_id != config.GUILD_ID or guild.id != config.GUILD_ID:
+        return None
     try:
-        member,channel=await fresh_access(interaction.guild,interaction.user.id,config.SUPPORT_CHANNEL_ID)
-        if not isinstance(channel,(discord.TextChannel,discord.ForumChannel)) or channel.guild.id!=config.GUILD_ID or channel.nsfw:return None
-        p=channel.permissions_for(member)
-        if p.view_channel and p.read_message_history and p.send_messages:return channel
-    except (SourceUnavailable,discord.HTTPException,OSError):pass
+        member, channel = await fresh_access(guild, interaction.user.id, config.SUPPORT_CHANNEL_ID)
+    except (SourceUnavailable, discord.HTTPException, OSError):
+        return None
+    if (not isinstance(channel, (discord.TextChannel, discord.ForumChannel))
+            or channel.id != config.SUPPORT_CHANNEL_ID or channel.guild.id != config.GUILD_ID
+            or channel.nsfw or getattr(member, 'pending', False)):
+        return None
+    permissions = channel.permissions_for(member)
+    if permissions.view_channel and permissions.read_message_history and permissions.send_messages:
+        return channel
     return None
 
 
@@ -42,14 +49,25 @@ async def show_route(i,action,*,source=None,return_to=None,replace=False):
     source=source or Source(i.user.id,i.guild_id,i.channel_id)
     if not i.response.is_done():await i.response.defer(ephemeral=True,thinking=not replace)
     try:
-        member,_,_=await source.resolve(i)
-        if action=='observe':
-            content=words(member,'可以先看看。到 <id:customize> 自選聊天、新聞或直播內容；日後也在這裡選擇遊戲，再按「約一局」。','可以先睇吓。去 <id:customize> 自選聊天、新聞或直播內容；之後想玩，就喺同一度揀遊戲，再按「約一局」。')
-        elif action=='help':
-            target=await support_destination(i)
-            content=(words(member,'找不到合適遊戲，或需要協助／建議：','搵唔到啱玩嘅遊戲，或者需要協助／建議：')+target.mention if target else words(member,'目前未能確認你可使用的求助入口。可先選擇遊戲或返回，沒有開放任何新權限。','暫時未能確認你用到嘅求助入口。可以先揀遊戲或者返回，冇開放任何新權限。'))
+        member, _, _ = await source.resolve(i)
+        if action == 'observe':
+            content = words(member,
+                '可以先看看。到 <id:customize> 自選聊天、新聞或直播內容；日後也可在這裡選擇遊戲，再到主選單找隊友。',
+                '可以先睇吓。去 <id:customize> 自選聊天、新聞或直播內容；之後想玩就喺同一度揀遊戲，再去主選單搵隊友。')
+        elif action == 'help':
+            target = await support_destination(i)
+            if target:
+                content = words(member,
+                    f'請到 {target.mention} 留言給 Helper，說明你遇到的問題。',
+                    f'請去 {target.mention} 留言畀 Helper，講低你遇到咩問題。')
+            else:
+                content = words(member,
+                    '目前無法確認你能在求助頻道留言。請先完成入群步驟。若已完成，可在你能發言的頻道詢問 Helper。選擇遊戲請到 <id:customize>。',
+                    '暫時確認唔到你能否喺求助頻道留言。請先完成入群步驟。如果已經完成，可以喺你講到嘢嘅頻道問 Helper。揀遊戲請去 <id:customize>。')
         else:
-            content=words(member,'🎮 到 <id:customize> 選擇遊戲，再按「約一局」。找不到合適遊戲可按「求助／建議」，也可以先觀望。','🎮 去 <id:customize> 揀遊戲，再按「約一局」。搵唔到啱玩嘅可以按「求助／建議」，或者先觀望。')
+            content = words(member,
+                '🎮 到 <id:customize> 選擇遊戲，再到主選單找隊友。找不到想玩的遊戲，可按「找 Helper」或「先觀望」。',
+                '🎮 去 <id:customize> 揀遊戲，再去主選單搵隊友。搵唔到啱玩嘅遊戲，可以按「搵 Helper」或者「先觀望」。')
         await source.resolve(i)
         kwargs=dict(content=content,embed=None,view=NextSteps(source,member,return_to),allowed_mentions=discord.AllowedMentions.none())
     except SourceUnavailable:

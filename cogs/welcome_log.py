@@ -16,7 +16,7 @@ def welcome_message(member, rules_mention: str, bot_mention: str) -> str:
     return "\n".join((
         f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！",
         f"📜 請先閱讀 {rules_mention}，再選擇感興趣的遊戲。",
-        "🎮 按下方按鈕找隊友、發起預約或設定香港／台灣用語。",
+        "🎮 想找隊友或調整設定，可開主選單。有問題可按「搵 Helper」查看求助方式。",
     ))
 
 
@@ -57,7 +57,7 @@ class WelcomeLog(commands.Cog):
                 rules_mention = (
                     rules_channel.mention
                     if isinstance(rules_channel, discord.TextChannel)
-                    else "#rules"
+                    else f"<#{config.RULES_CHANNEL_ID}>"
                 )
                 bot_mention = self.bot.user.mention if self.bot.user else "@Con9sole-Bartender"
 

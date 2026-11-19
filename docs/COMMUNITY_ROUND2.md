@@ -78,7 +78,7 @@ Steam 官方 appdetails／Steam News、Epic 官方優惠資料仍由既有收集
 
 直播仍成員既有角色提醒、朋友台 silent 不 tag；每場一張卡、收台原位更新。誰能看卡由頻道權限決定，誰被提醒由既有觀眾角色／類別決定，兩者不同。Carl 後備，Adventure RPG 保留。本輪不切換任何外部 Bot 或排程；舊 Apps Script 是否已完全停用沒有本輪新證據，不聲稱完成。
 
-Part 1 新人「選擇遊戲」舊按鈕已能回覆求助／先觀望；SUPPORT `1362781427287986407` 必須 fresh View＋History＋Send 且非 NSFW 才顯示連結。未知時不暴露隱藏連結。實際無遊戲新人成員可達性仍需正式權限快照，不能以程式 fallback 宣稱路線可用。
+Part 1 新人「選擇遊戲」舊按鈕已能回覆求助／先觀望；當時的 SUPPORT `1362781427287986407` 必須 fresh View＋History＋Send 且非 NSFW 才顯示連結。未知時不暴露隱藏連結。實際無遊戲新人成員可達性仍需正式權限快照，不能以程式 fallback 宣稱路線可用。現行 Option A 的頻道 ID 及操作方式見[新人三條路線](HELPER_ENTRY_ROUND2.md#新人三條路線)。
 
 ### 待批准的正式名稱／原訊息編輯清單
 

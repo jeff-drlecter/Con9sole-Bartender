@@ -12,9 +12,13 @@ from core.json_storage import atomic_write_json
 from core.storage_paths import DATA_DIR
 
 ENTRY_COPY = (
-    '🎮 **找隊友，約一局**\n'
-    '選擇遊戲後約一局；找不到合適遊戲可按「求助／建議」，或先觀望。\n'
-    '下方操作只向自己顯示；提交約局後才會在所選頻道公開。'
+    f'🎮 **歡迎加入社群**\n請先閱讀 <#{config.RULES_CHANNEL_ID}>，再選擇想玩的遊戲。\n'
+    '想找隊友或調整設定，可開主選單。有問題可按「搵 Helper」查看求助方式。'
+)
+ENTRY_BUTTONS = (('games', '選擇遊戲'), ('menu', '開主選單'), ('help', '搵 Helper'))
+LEGACY_BUTTONS = (
+    ('games', '🎮 選擇遊戲'), ('menu', '🍸 開啟功能'), ('plan', '📅 約一局'),
+    ('language', '🌐 語言設定'), ('help', '求助／建議'), ('observe', '先觀望'),
 )
 GUIDE_NAMES = {'bartender使用指南', '組隊與語音指南', '如何加入不同遊戲分區'}
 
@@ -35,12 +39,13 @@ def game_entry_moves(guild):
 
 
 class MemberEntryView(SafeView):
-    def __init__(self):
+    def __init__(self, *, legacy=False):
         super().__init__(timeout=None)
-        for action, label in [('games', '🎮 選擇遊戲'), ('menu', '🍸 開啟功能'),
-                              ('plan', '📅 約一局'), ('language', '🌐 語言設定'),
-                              ('help', '求助／建議'), ('observe', '先觀望')]:
-            button = discord.ui.Button(label=label, custom_id=f'entry:{action}:v1', row=0 if action in {'games', 'menu'} else 2 if action in {'help', 'observe'} else 1)
+        buttons = LEGACY_BUTTONS if legacy else ENTRY_BUTTONS
+        version = 'v1' if legacy else 'v2'
+        for index, (action, label) in enumerate(buttons):
+            button = discord.ui.Button(label=label, custom_id=f'entry:{action}:{version}',
+                                       row=index // 2 if legacy else 0)
             async def callback(interaction, action=action):
                 await self.open(interaction, action)
             button.callback = callback
@@ -72,6 +77,7 @@ class MemberEntry(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_view(MemberEntryView())
+        self.bot.add_view(MemberEntryView(legacy=True))
 
     @app_commands.command(name='遊戲入口排序', description='管理員：將各遊戲組隊文字頻道移到分類最前；不改權限')
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
@@ -122,7 +128,7 @@ class MemberEntry(commands.Cog):
         # Update only our functional entry; never alter another author's guide.
         async for message in channel.history(limit=50):
             ids = {getattr(item, 'custom_id', None) for row in message.components for item in row.children}
-            if message.author.id == self.bot.user.id and 'entry:menu:v1' in ids:
+            if message.author.id == self.bot.user.id and ids.intersection({'entry:menu:v1', 'entry:menu:v2'}):
                 await message.edit(content=ENTRY_COPY, view=MemberEntryView(), allowed_mentions=discord.AllowedMentions.none())
                 break
         else:

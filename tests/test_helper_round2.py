@@ -118,8 +118,27 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_existing_support_requires_fresh_read_write_and_non_age_gated_channel(self):
         cog,i,m,source,demo,channels=setup()
-        channels[config.SUPPORT_CHANNEL_ID]=source
-        self.assertEqual((await support_destination(i)).id,source.id)
+        source.id=config.SUPPORT_CHANNEL_ID
+        source.mention=f'<#{source.id}>'
+        channels[source.id]=source
+        self.assertEqual(source.id,1364215234717548594)
+        for roles in ([], [N(id=config.VERIFIED_ROLE_ID)]):
+            m.roles=roles
+            await show_route(i,'help')
+            result=i.followup.send.call_args.kwargs
+            self.assertIn(source.mention,result['content'])
+            self.assertTrue(result['ephemeral'])
+            self.assertEqual(result['allowed_mentions'].to_dict()['parse'],[])
+        # Reuse the displayed private panel after access to the destination was withdrawn.
+        source.permissions_for.return_value.send_messages=False
+        await result['view'].children[1].callback(i)
+        revoked=i.edit_original_response.call_args.kwargs['content']
+        self.assertNotIn(source.mention,revoked)
+        self.assertIn('<id:customize>',revoked)
+        source.permissions_for.return_value.send_messages=True
+        m.pending=True
+        self.assertIsNone(await support_destination(i))
+        m.pending=False
         for bit in ('view_channel','read_message_history','send_messages'):
             setattr(source.permissions_for.return_value,bit,False)
             self.assertIsNone(await support_destination(i))
@@ -127,6 +146,7 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
         source.nsfw=True
         await show_route(i,'help')
         self.assertNotIn(source.mention,i.followup.send.call_args.kwargs['content'])
+        self.assertIn('<id:customize>',i.followup.send.call_args.kwargs['content'])
         self.assertTrue(i.followup.send.call_args.kwargs['ephemeral'])
         source.edit.assert_not_called();source.send.assert_not_called()
         source.nsfw=False
