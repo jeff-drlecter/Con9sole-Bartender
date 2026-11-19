@@ -24,6 +24,25 @@ class DirectoryView(discord.ui.View):
     async def on_error(self, interaction, error, item):
         await self.cog.cog_app_command_error(interaction, error)
 
+    async def navigate(self, interaction, render, **params):
+        # Only this owner-bound View may request edits to its ephemeral component source.
+        message = getattr(interaction, 'message', None)
+        metadata = getattr(message, 'interaction_metadata', None)
+        source_user = getattr(metadata, 'user', None)
+        replace = (interaction.user.id == self.owner_id
+                   and getattr(interaction, 'type', None) == discord.InteractionType.component
+                   and getattr(getattr(message, 'flags', None), 'ephemeral', None) is True
+                   and (source_user is None or getattr(source_user, 'id', None) == self.owner_id)
+                   and not interaction.response.is_done())
+        await render(interaction, replace=replace, **params)
+
+    async def back_to_menu(self, interaction):
+        menu = self.cog.bot.get_cog('Menu')
+        if menu is None:
+            await self.cog.reply(interaction, '主選單暫時無法開啟，請稍後再試。')
+            return
+        await menu.open_main_menu(interaction)
+
     def button(self, label, callback, *, disabled=False, style=discord.ButtonStyle.secondary):
         button = discord.ui.Button(label=label, disabled=disabled, style=style)
         button.callback = callback
@@ -38,25 +57,26 @@ class DirectoryView(discord.ui.View):
             ])
 
             async def open_card(interaction):
-                await self.cog.show_card(interaction, key=select.values[0])
+                await self.navigate(interaction, self.cog.render_card, key=select.values[0])
 
             select.callback = open_card
             self.add_item(select)
         if pages > 1:
             for label, target in [('上一頁', page - 1), ('下一頁', page + 1)]:
-                callback = partial(self.cog.list_directory, page=target, archived=archived)
+                callback = partial(self.navigate, render=self.cog.render_directory, page=target, archived=archived)
                 self.button(label, callback, disabled=not 1 <= target <= pages)
         if is_admin_or_helper(member):
             self.button('建立公會卡', self.cog.open_form, style=discord.ButtonStyle.primary)
         if is_server_admin(member):
             self.button('有效公會' if archived else '已封存公會',
-                        partial(self.cog.list_directory, archived=not archived))
+                        partial(self.navigate, render=self.cog.render_directory, archived=not archived))
+        self.button('返回主選單', self.back_to_menu)
 
     def card_controls(self, card, member):
         key = card['key']
-        self.button('返回目錄', partial(self.cog.list_directory, archived=card['archived']))
+        self.button('返回目錄', partial(self.navigate, render=self.cog.render_directory, archived=card['archived']))
         if is_admin_or_helper(member):
-            self.button('編輯公會／交接 PIC', partial(self.cog.open_form, key=key),
+            self.button('編輯公會／交接 PIC', partial(self.cog.open_form, card=card),
                         style=discord.ButtonStyle.primary)
         if is_server_admin(member):
             if card['archived']:
@@ -104,7 +124,7 @@ class DirectoryForm(discord.ui.Modal):
             if pic is None:
                 raise DirectoryError('請選擇公會聯絡 PIC。')
             await self.cog.create_card(interaction, key=self.key.value, name=self.name.value,
-                                  game=self.game.value, notes=self.notes.value, pic=pic)
+                                       game=self.game.value, notes=self.notes.value, pic=pic)
         else:
             await self.cog.update_card(interaction, key=self.card['key'], name=self.name.value,
                                        game=self.game.value, notes=self.notes.value, pic=pic,

@@ -42,12 +42,13 @@ class DirectoryCommandTests(unittest.IsolatedAsyncioTestCase):
     def interaction(self, *, guild_id=None):
         response = SimpleNamespace(is_done=Mock(return_value=False), send_message=AsyncMock(), send_modal=AsyncMock())
         async def defer(**kwargs):
-            self.assertTrue(kwargs['ephemeral'])
+            if kwargs:
+                self.assertTrue(kwargs['ephemeral'])
             response.is_done.return_value = True
         response.defer = AsyncMock(side_effect=defer)
         return SimpleNamespace(guild_id=config.GUILD_ID if guild_id is None else guild_id,
                                guild=SimpleNamespace(fetch_member=AsyncMock(return_value=self.contact)),
-                               user=member(admin=True), response=response,
+                               user=member(admin=True), response=response, edit_original_response=AsyncMock(),
                                followup=SimpleNamespace(send=AsyncMock()))
 
     async def call(self, command, interaction=None, **kwargs):
@@ -454,8 +455,86 @@ class DirectoryCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.cog.directory.get('team-a')['notes'], 'Newer')
         self.cog.directory.save('team-a', archived=True)
         self.actor = member(helper=True)
-        denied = await self.click(view, '編輯公會／交接 PIC')
-        denied.response.send_modal.assert_not_awaited()
-        self.assertTrue(denied.response.send_message.call_args.kwargs['ephemeral'])
-        await self.submit(form, name='Old', game='Example', notes='Before', pic=None, status='open')
+        # Opening a modal never waits for REST or reads fields added after the viewer saw it.
+        click = self.interaction()
+        click.user = self.actor
+        with patch.object(self.cog.directory, 'get', side_effect=AssertionError('must only use snapshot')):
+            with patch.object(self.bot, 'fetch_guild', side_effect=AssertionError('modal must acknowledge first')):
+                await self.click(view, '編輯公會／交接 PIC', click)
+        old = click.response.send_modal.call_args.args[0]
+        self.assertEqual(old.notes.default, 'Before')
+        click.response.defer.assert_not_awaited()
+        await self.submit(old, name='Old', game='Example', notes='Before', pic=None, status='open')
         self.assertEqual(self.cog.directory.get('team-a')['notes'], 'Newer')
+
+        self.actor = member(admin=True)
+        archived = await self.call('show', key='team-a')
+        archived_view = archived.followup.send.call_args.kwargs['view']
+        for actor in [member(helper=True), member(verified=True), member(admin=True, bot=True)]:
+            click = self.interaction()
+            click.user = actor
+            await self.click(archived_view, '編輯公會／交接 PIC', click)
+            click.response.send_modal.assert_not_awaited()
+            self.assertTrue(click.response.send_message.call_args.kwargs['ephemeral'])
+        for click in [self.interaction(guild_id=1), self.interaction()]:
+            if click.guild_id == config.GUILD_ID:
+                click.user = member(verified=True)
+            await self.click(view, '編輯公會／交接 PIC', click)
+            click.response.send_modal.assert_not_awaited()
+            self.assertTrue(click.response.send_message.call_args.kwargs['ephemeral'])
+
+    async def test_directory_navigation_replaces_only_own_ephemeral_component_source(self):
+        for index in range(11):
+            await self.create(f'guild-{index:02}', f'Guild {index:02}')
+        self.actor = member(verified=True)
+        first = await self.call('list_cards')
+        view = first.followup.send.call_args.kwargs['view']
+
+        def component(*, ephemeral=True, owner=100):
+            inter = self.interaction()
+            inter.type = discord.InteractionType.component
+            inter.message = SimpleNamespace(flags=SimpleNamespace(ephemeral=ephemeral),
+                                            interaction_metadata=SimpleNamespace(user=member(owner)))
+            return inter
+
+        page = await self.click(view, '下一頁', component())
+        page.response.defer.assert_awaited_once_with()
+        page.followup.send.assert_not_awaited()
+        edit = page.edit_original_response.call_args.kwargs
+        self.assertIsNone(edit['content'])
+        self.assertEqual(edit['allowed_mentions'].to_dict(), {'parse': []})
+        select = edit['view'].children[0]
+        self.assertEqual([o.value for o in select.options], ['guild-10'])
+        select._values = ['guild-10']
+        card = component()
+        await select.callback(card)
+        edit = card.edit_original_response.call_args.kwargs
+        self.assertEqual(edit['embed'].title, 'Guild 10')
+        back = await self.click(edit['view'], '返回目錄', component())
+        self.assertEqual(back.edit_original_response.call_args.kwargs['embed'].title, '公會目錄')
+
+        wrong_type = component()
+        wrong_type.type = discord.InteractionType.application_command
+        for inter in [component(ephemeral=False), component(ephemeral=None), component(owner=999),
+                      self.interaction(), wrong_type]:
+            await self.click(view, '下一頁', inter)
+            inter.edit_original_response.assert_not_awaited()
+            inter.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+            self.assertTrue(inter.followup.send.call_args.kwargs['ephemeral'])
+
+        # A slash or registry invocation never claims a GUI source to edit.
+        slash = component()
+        await self.call('list_zh', slash)
+        slash.edit_original_response.assert_not_awaited()
+        self.assertTrue(slash.followup.send.call_args.kwargs['ephemeral'])
+        self.actor = member()
+        denied = await self.click(view, '下一頁', component())
+        denied.edit_original_response.assert_not_awaited()
+        self.assertNotIn('embed', denied.followup.send.call_args.kwargs)
+        self.assertTrue(denied.followup.send.call_args.kwargs['ephemeral'])
+
+        menu = SimpleNamespace(open_main_menu=AsyncMock())
+        self.bot.get_cog = Mock(return_value=menu)
+        home = await self.click(view, '返回主選單', component())
+        self.bot.get_cog.assert_called_once_with('Menu')
+        menu.open_main_menu.assert_awaited_once_with(home)

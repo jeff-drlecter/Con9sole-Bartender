@@ -43,12 +43,22 @@ class CommunityDirectory(commands.Cog):
         send = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
         await send(content, **kwargs)
 
-    async def authorize(self, interaction, *, admin=False, editor=False, defer=True):
+    async def send_panel(self, interaction, *, embed, view, replace):
+        if replace:
+            await interaction.edit_original_response(content=None, embed=embed, view=view,
+                                                     allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await self.reply(interaction, embed=embed, view=view)
+
+    async def authorize(self, interaction, *, admin=False, editor=False, replace=False):
         if interaction.guild_id != config.GUILD_ID or interaction.guild is None:
             await self.reply(interaction, '請在本社群伺服器使用公會目錄。')
             return False
-        if defer and not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True, thinking=True)
+        if not interaction.response.is_done():
+            if replace:
+                await interaction.response.defer()
+            else:
+                await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             guild = await self.bot.fetch_guild(config.GUILD_ID)
             member = await guild.fetch_member(interaction.user.id)
@@ -92,24 +102,33 @@ class CommunityDirectory(commands.Cog):
         except (DirectoryError, DirectoryUnavailable) as error:
             await self.cog_app_command_error(interaction, error)
 
-    async def open_form(self, interaction, *, key=None):
-        member = await self.authorize(interaction, editor=True, defer=False)
-        if not member:
+    async def open_form(self, interaction, *, card=None):
+        # The modal is the initial response. Only prefill what this viewer already saw.
+        # Submission fetches fresh roles and checks the stored card before any write.
+        member = interaction.user
+        if interaction.guild_id != config.GUILD_ID or interaction.guild is None:
+            await self.reply(interaction, '請在本社群伺服器使用公會目錄。')
             return
-        card = self.directory.get(key) if key is not None else None
+        if member.bot or not is_admin_or_helper(member):
+            await self.reply(interaction, '只限本社群管理員或 Helper 建立及修改有效公會。')
+            return
         if card and card['archived'] and not is_server_admin(member):
-            raise DirectoryError('此操作只限本社群管理員。')
+            await self.reply(interaction, '此操作只限本社群管理員。')
+            return
         await interaction.response.send_modal(DirectoryForm(self, interaction.user.id, card))
 
     async def saved_reply(self, interaction, key, content):
         view = DirectoryView(self, interaction.user.id)
-        view.button('查看公會卡', partial(self.show_card, key=key))
-        view.button('返回目錄', self.list_directory)
+        view.button('查看公會卡', partial(view.navigate, render=self.render_card, key=key))
+        view.button('返回目錄', partial(view.navigate, render=self.render_directory))
         await self.reply(interaction, content, view=view)
 
     @app_commands.describe(page='頁數，預設第 1 頁', archived='查看已封存公會（只限管理員）')
     async def list_directory(self, interaction: discord.Interaction, page: app_commands.Range[int, 1, 50] = 1, archived: bool = False):
-        member = await self.authorize(interaction, admin=archived)
+        await self.render_directory(interaction, page=page, archived=archived)
+
+    async def render_directory(self, interaction, *, page=1, archived=False, replace=False):
+        member = await self.authorize(interaction, admin=archived, replace=replace)
         if not member:
             return
         cards = self.directory.cards(archived=archived)
@@ -126,11 +145,14 @@ class CommunityDirectory(commands.Cog):
         embed.set_footer(text=f'第 {page}／{pages} 頁 · 共 {len(cards)} 個')
         view = DirectoryView(self, interaction.user.id)
         view.list_controls(visible, page, pages, archived, member)
-        await self.reply(interaction, embed=embed, view=view)
+        await self.send_panel(interaction, embed=embed, view=view, replace=replace)
 
     @app_commands.describe(key='公會固定代碼，可從 /公會 列表 查看')
     async def show_card(self, interaction: discord.Interaction, key: str):
-        if not await self.authorize(interaction):
+        await self.render_card(interaction, key=key)
+
+    async def render_card(self, interaction, *, key, replace=False):
+        if not await self.authorize(interaction, replace=replace):
             return
         card = self.directory.get(key)
         if card['archived'] and not await self.authorize(interaction, admin=True):
@@ -158,7 +180,7 @@ class CommunityDirectory(commands.Cog):
         embed.set_footer(text=('已封存 · ' if card['archived'] else '') + '公開公會資料 · PIC 標示不授予管理權限 · 本回覆只有你看得到')
         view = DirectoryView(self, interaction.user.id)
         view.card_controls(card, viewer)
-        await self.reply(interaction, embed=embed, view=view)
+        await self.send_panel(interaction, embed=embed, view=view, replace=replace)
 
     @app_commands.describe(key='固定代碼：小寫字母／數字／底線／連字號，最多 32 字', name='公會名稱（不可重複），最多 80 字', game='遊戲，最多 80 字', pic='目前在本伺服器的非 Bot 聯絡人', notes='公開簡介／備註，最多 700 字；勿填私人資料', status='招募狀態')
     @app_commands.choices(status=STATUS_CHOICES)
