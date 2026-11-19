@@ -4,19 +4,20 @@ import time
 from datetime import datetime
 import discord
 from core.rss_wording import rss_text
-from core.rss_digest import HK, excerpt, display_link
+from core.rss_digest import HK, NEWS_DATE_FORMAT, excerpt, display_link
 from core.rss_featured import highlights, chart_rows, CHART_PAGE
 
 LABELS={'today':'📌 今日精選','month':'🗓️ 本月精選','hot':'🔥 最近熱門'}
 
 
 def render_featured(kind,rows,now,snapshot=None,compact=False,simulation=True):
-    stamp=datetime.fromtimestamp(now,HK).strftime('%m/%d %H:%M')
+    stamp=datetime.fromtimestamp(now,HK).strftime(NEWS_DATE_FORMAT + ' %H:%M')
     embed=discord.Embed(title=LABELS[kind]+'｜'+stamp)
     if kind=='hot':
         header='Steam 官方 Most Played 榜（PC；非全平台排名）\n'
         if snapshot:
-            header+=f"榜單日期 <t:{int(snapshot['asof'])}:d> · 擷取 <t:{int(snapshot['fetched'])}:R>\n"
+            chart_date = datetime.fromtimestamp(snapshot['asof'], HK).strftime(NEWS_DATE_FORMAT)
+            header+=f"榜單日期 {chart_date} · 擷取 <t:{int(snapshot['fetched'])}:R>\n"
         lines=[f"**#{r['rank']}** [{discord.utils.escape_markdown(excerpt(r['name'],75))}](https://store.steampowered.com/app/{r['appid']}/)" for r in rows]
         footer='\n[官方完整榜單]('+CHART_PAGE+')'
     else:
@@ -24,7 +25,7 @@ def render_featured(kind,rows,now,snapshot=None,compact=False,simulation=True):
         lines=[]
         for row in rows:
             title=discord.utils.escape_markdown(excerpt(row['title'],85))
-            date=datetime.fromtimestamp(row['published'],HK).strftime('%m/%d')
+            date=datetime.fromtimestamp(row['published'],HK).strftime(NEWS_DATE_FORMAT)
             line=f"**{row['reason']}** · [{title}](<{display_link(row['link'])}>)"
             if kind=='month': line+=' · '+date
             if row.get('offer'): line+=f" · {row['offer']['region']} · 截止 <t:{int(row['offer']['deadline'])}:f>"
