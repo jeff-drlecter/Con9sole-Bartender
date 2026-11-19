@@ -19,6 +19,7 @@ from features.admin_actions import (
 from features.menu_actions import (
     open_admin_tool_menu as run_open_admin_tool_menu,
     open_help_menu as run_open_help_menu,
+    is_private_component,
     show_private_menu,
     open_instagram_menu as run_open_instagram_menu,
     open_invite_menu as run_open_invite_menu,
@@ -141,7 +142,8 @@ class Menu(commands.Cog):
 
     async def open_support_menu(self, interaction: discord.Interaction) -> None:
         from core.newcomer_routes import show_route
-        await show_route(interaction, "help", return_to=self.open_main_menu)
+        await show_route(interaction, "help", return_to=self.open_main_menu,
+                         replace=is_private_component(interaction))
 
     async def open_help_from_button(self, interaction: discord.Interaction) -> None:
         await run_open_help_menu(self, interaction)

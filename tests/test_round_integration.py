@@ -98,3 +98,14 @@ class RoundIntegrationTests(unittest.IsolatedAsyncioTestCase):
             sender = inter.response.send_message if shared else inter.response.edit_message
             view = sender.call_args.kwargs['view']
             self.assertEqual(next(c.label for c in view.children if c.item.id == 'support'), '聯絡 Helper')
+
+    async def test_back_from_deferred_private_help_replaces_existing_panel(self):
+        inter = interaction()
+        inter.type = discord.InteractionType.component
+        inter.message.flags.ephemeral = True
+        inter.response.is_done.return_value = True
+        inter.response.type = discord.InteractionResponseType.deferred_message_update
+        with patch('features.menu_actions.record_usage', new=AsyncMock()):
+            await open_quick_bar_menu(MagicMock(), inter, ephemeral=True)
+        inter.edit_original_response.assert_awaited_once()
+        inter.followup.send.assert_not_awaited()

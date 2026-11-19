@@ -28,14 +28,21 @@ from features.social_tools import (
 log = logging.getLogger("con9sole-bartender.menu.actions")
 
 
+def is_private_component(interaction: discord.Interaction) -> bool:
+    message = getattr(interaction, "message", None)
+    return (getattr(interaction, "type", None) == discord.InteractionType.component
+            and message is not None and message.flags.ephemeral)
+
+
 async def show_private_menu(interaction: discord.Interaction, *, embed=None, view=None, content=None) -> None:
     """Navigate in place only on private panels. Shared cards always open a private reply."""
-    message = getattr(interaction, "message", None)
-    if (getattr(interaction, "type", None) == discord.InteractionType.component
-            and message is not None and message.flags.ephemeral
-            and not interaction.response.is_done()):
-        await interaction.response.edit_message(content=content, embed=embed, view=view, attachments=[])
-        return
+    if is_private_component(interaction):
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(content=content, embed=embed, view=view, attachments=[])
+            return
+        if interaction.response.type == discord.InteractionResponseType.deferred_message_update:
+            await interaction.edit_original_response(content=content, embed=embed, view=view, attachments=[])
+            return
     await send_or_followup(interaction, content=content, embed=embed, view=view, ephemeral=True)
 
 
