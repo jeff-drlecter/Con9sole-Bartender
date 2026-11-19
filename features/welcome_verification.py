@@ -17,7 +17,7 @@ RULES = '請先完成 Discord 入群守則確認，再按「我是活人」。'
 # Treat future/unknown bits as unsafe by default, including channel overwrites.
 MEMBER_PERMISSIONS = discord.Permissions(
     view_channel=True, read_message_history=True, send_messages=True,
-    add_reactions=True, embed_links=True, attach_files=True, external_emojis=True,
+    add_reactions=True, embed_links=True, attach_files=True, external_emojis=True, send_tts_messages=True,
     external_stickers=True, send_messages_in_threads=True, create_public_threads=True,
     create_private_threads=True, use_application_commands=True, use_embedded_activities=True,
     connect=True, speak=True, stream=True, use_voice_activation=True, request_to_speak=True,

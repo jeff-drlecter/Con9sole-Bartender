@@ -130,7 +130,7 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
             authorized = False
             return i.user, channels[i.channel_id], None
 
-        async def destination_check(_):
+        async def destination_check(_, member):
             events.append('destination')
             return target if authorized else None
 
@@ -146,13 +146,22 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
         source.mention=f'<#{source.id}>'
         channels[source.id]=source
         self.assertEqual(source.id,1364215234717548594)
-        for roles in ([], [N(id=config.VERIFIED_ROLE_ID)]):
+        greeting=copy.copy(demo)
+        greeting.id=config.WELCOME_CHANNEL_ID
+        greeting.mention=f'<#{greeting.id}>'
+        channels[greeting.id]=greeting
+        for roles, expected, other in (([], greeting, source), ([N(id=config.VERIFIED_ROLE_ID)], source, greeting)):
             m.roles=roles
             await show_route(i,'help')
             result=i.followup.send.call_args.kwargs
-            self.assertIn(source.mention,result['content'])
+            self.assertIn(expected.mention,result['content'])
+            self.assertNotIn(other.mention,result['content'])
             self.assertTrue(result['ephemeral'])
             self.assertEqual(result['allowed_mentions'].to_dict()['parse'],[])
+        stale_verified=N(roles=[N(id=config.VERIFIED_ROLE_ID)])
+        m.roles=[]
+        self.assertIsNone(await support_destination(i, stale_verified))
+        m.roles=stale_verified.roles
         # Reuse the displayed private panel after access to the destination was withdrawn.
         source.permissions_for.return_value.send_messages=False
         await result['view'].children[1].callback(i)
@@ -161,11 +170,11 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<id:customize>',revoked)
         source.permissions_for.return_value.send_messages=True
         m.pending=True
-        self.assertIsNone(await support_destination(i))
+        self.assertIsNone(await support_destination(i, m))
         m.pending=False
         for bit in ('view_channel','read_message_history','send_messages'):
             setattr(source.permissions_for.return_value,bit,False)
-            self.assertIsNone(await support_destination(i))
+            self.assertIsNone(await support_destination(i, m))
             setattr(source.permissions_for.return_value,bit,True)
         source.nsfw=True
         await show_route(i,'help')

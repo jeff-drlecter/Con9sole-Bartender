@@ -46,7 +46,7 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         self.members = {BOT: member(BOT, [BOT_ROLE], bot=True), NEW: member(NEW, [GAME]),
                         STAFF: member(STAFF, [HELPER])}
         self.roles = [role(GUILD, '@everyone', 0, view_channel=True, read_message_history=True),
-                      role(VERIFIED, '會員', 5, bypass_slowmode=True), role(HELPER, 'helpers', 3),
+                      role(VERIFIED, '會員', 5, bypass_slowmode=True, send_tts_messages=True), role(HELPER, 'helpers', 3),
                       role(GAME, 'Game', 1), role(HIGH, 'Rank', 6),
                       role(BOT_ROLE, 'Bot', 10, manage_roles=True)]
         self.guild_data = dict(id=str(GUILD), owner_id='99', name='Guild', roles=self.roles,

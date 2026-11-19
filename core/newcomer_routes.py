@@ -11,16 +11,24 @@ def words(member, neutral, hk):
     return hk if language(member)=='hk' else neutral
 
 
-async def support_destination(interaction):
+def help_channel_id(member):
+    if any(role.id == config.VERIFIED_ROLE_ID for role in member.roles):
+        return config.SUPPORT_CHANNEL_ID
+    return config.WELCOME_CHANNEL_ID
+
+
+async def support_destination(interaction, source_member):
     guild = interaction.guild
     if guild is None or interaction.guild_id != config.GUILD_ID or guild.id != config.GUILD_ID:
         return None
+    channel_id = help_channel_id(source_member)
     try:
-        member, channel = await fresh_access(guild, interaction.user.id, config.SUPPORT_CHANNEL_ID)
+        member, channel = await fresh_access(guild, interaction.user.id, channel_id)
     except (SourceUnavailable, discord.HTTPException, OSError):
         return None
     if (not isinstance(channel, (discord.TextChannel, discord.ForumChannel))
-            or channel.id != config.SUPPORT_CHANNEL_ID or channel.guild.id != config.GUILD_ID
+            or channel.id != channel_id or help_channel_id(member) != channel_id
+            or channel.guild.id != config.GUILD_ID
             or channel.nsfw or getattr(member, 'pending', False)):
         return None
     permissions = channel.permissions_for(member)
@@ -57,7 +65,7 @@ async def show_route(i,action,*,source=None,return_to=None,replace=False):
         elif action == 'help':
             # Resolve the source first. Do not await another lookup between the
             # destination authorization and sending its private link.
-            target = await support_destination(i)
+            target = await support_destination(i, member)
             if target:
                 content = words(member,
                     f'請到 {target.mention} 留言給 Helper，說明你遇到的問題。',
