@@ -2,10 +2,26 @@
 
 同一 Discord 伺服器內的長期公會目錄。指令只註冊在 `config.GUILD_ID`；所有回覆皆 ephemeral、禁止 mentions 通知。沒有公開發帖或會員名冊。
 
-- `/community list [page]`：每頁 10 個，列出固定公會代碼、遊戲、招募狀態及可點擊且不 ping 的 PIC（在服狀態請開公會卡確認）。
-- `/community show key`：一張公會卡，包含名稱、遊戲、公開簡介、招募狀態及可點開的 Discord 聯絡 PIC。
-- 管理員或 Helper `/community create key name game pic [notes] [status]` 建立；`edit key` 更新有效公會的名稱、遊戲、PIC、公開簡介或招募狀態。省略欄位即保留；`clear_notes:true` 清空簡介，不可同時填 notes。
-- 管理員 `/community archive key` 封存，從會員目錄移除；`list archived:true` 查看封存資料；`restore key` 使用原代碼還原。還原前確認 PIC 仍在服且非 Bot，否則先 `edit` 交接。
+## 私人選單
+
+從主選單選「公會卡」，或輸入 `/公會 列表`。每頁列出最多 10 個公會，包括代碼、遊戲、招募狀態及 PIC。用下拉選單開卡查看簡介及 PIC 的在服狀態，按「上一頁」或「下一頁」翻頁。已知固定代碼可直接用 `/公會 查看`。
+
+Helper 及管理員可在目錄按「建立公會卡」，填寫固定代碼、名稱、遊戲及公開簡介，並搜尋在服成員擔任 PIC。新卡預設為「招募中」。在卡上按「編輯公會／交接 PIC」可改招募狀態及其他資料。PIC 留空即沿用原有聯絡人，清空簡介即移除簡介。若其他人已更新同一張卡，重新開啟表單即可取得最新資料。
+
+管理員可在卡上按「封存公會」，並從目錄的「已封存公會」選卡編輯或還原。按「還原公會」前須先確認 PIC 仍在服且非 Bot，必要時可先交接。選單及表單只限開啟者使用，閒置 10 分鐘或 Bot 重啟後，由主選單或 `/公會 列表` 重新進入。已儲存的公會卡沿用原有代碼。
+
+## 斜線指令
+
+| 中文指令 | 過渡期舊指令 | 用途 |
+| --- | --- | --- |
+| `/公會 列表` | `/community list` | 可選頁數；管理員可選已封存公會 |
+| `/公會 查看` | `/community show` | 按固定代碼開卡 |
+| `/公會 建立` | `/community create` | Helper 或管理員建立公會卡，可指定初始招募狀態 |
+| `/公會 編輯` | `/community edit` | 只改已指定的欄位；「清空簡介」不可與新簡介同時使用 |
+| `/公會 封存` | `/community archive` | 管理員從會員目錄移除公會 |
+| `/公會 還原` | `/community restore` | 管理員以原有代碼還原公會 |
+
+以上兩組指令共用權限檢查及資料，中文指令顯示中文欄位，舊指令沿用原有英文欄位。
 
 已驗證會員、Helper 及 Server Admin 可查閱有效公會，Helper 毋須另有 Verified。Helper 沿用現有角色 ID／名稱判定，可建立公會及修改有效公會全部資料，包括交接 PIC；只有現有 Server Admin（administrator 或 manage_guild）可封存、還原、查閱或修改封存公會。Verified、Tester 或 PIC 標示本身不賦予管理權。沒有永久刪除功能，封存是可逆的移出目錄操作。每次操作重新透過 REST 查伺服器角色及操作人身份；公開資料不是私人／個人備註，勿填私人資訊。一個 PIC 可聯絡多個公會。PIC 只要求目前在服的非 Bot 成員；查閱時已離服或 Discord 查詢失敗會明確標示，保留公會資料，管理員或 Helper 可交接有效公會；封存公會由管理員處理。
 
@@ -13,4 +29,4 @@
 
 儲存於既有 `DATA_DIR/community_directory.json`，使用既有原子 JSON 寫入；單一 Bot 程序內寫入不跨 await。缺檔可建立空目錄；損壞、不完整、重複鍵或不符伺服器／版本的檔案原位保留並拒絕讀寫，須維護人員先備份再處理，不自動重置。沒有資料遷移或啟動時寫入。Helper 修改在 PIC 查詢後重新核對角色及公會封存狀態；讀卡／還原在外部等待後比對原資料，避免併發封存或 PIC 交接發出舊卡／還原未驗證聯絡人。
 
-離線驗證：`tests/test_community_directory.py` 使用合成資料測試真實權限函式及 command callbacks、Helper 建立／修改與封存邊界、角色撤回及並行封存、不同公會同 PIC、交接重啟、封存還原、失敗保留、無 ping、輸入限制與翻頁；`tests/test_quick_bar_lifecycle.py` 實際載入／重載 extension 並核對 guild group 六個子命令。無登入 Discord、正式資料或真人 UI 驗證。
+離線驗證：`tests/test_community_directory.py` 使用合成資料測試真實權限函式及 command callbacks、Helper 建立／修改與封存邊界、角色撤回及並行封存、不同公會同 PIC、交接重啟、封存還原、失敗保留、無 ping、輸入限制與翻頁。測試亦核對兩組指令載入／重載、私人選單的選卡及翻頁、表單送出時的權限、PIC 查核、並行修改保護及封存和還原操作。無登入 Discord、正式資料或真人 UI 驗證。

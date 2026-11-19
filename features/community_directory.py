@@ -96,7 +96,7 @@ class Directory:
     def get(self, key: str) -> dict:
         card = self._load()['cards'].get(stable_key(key))
         if card is None:
-            raise DirectoryError('找不到此公會代碼，請先用 /community list 查看。')
+            raise DirectoryError('找不到此公會代碼，請先用 /公會 列表 查看。')
         return card
 
     def save(self, key: str, *, create: bool = False, **changes) -> dict:
@@ -111,7 +111,7 @@ class Directory:
             card = dict(key=key, archived=False, **changes)
         else:
             if key not in cards:
-                raise DirectoryError('找不到此公會代碼，請先用 /community list 查看。')
+                raise DirectoryError('找不到此公會代碼，請先用 /公會 列表 查看。')
             card = dict(cards[key], **changes)
         validate_card(card)
         if any(c['key'] != key and c['name'].casefold() == card['name'].casefold() for c in cards.values()):
