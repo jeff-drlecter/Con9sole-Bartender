@@ -45,8 +45,8 @@ class Tip:
 ALL_CONTEXTS = ('drink', 'cheers', 'menu', 'more')
 TIPS = (
     Tip('mention_open', 'mention', ALL_CONTEXTS, ('Menu',),
-        '單獨提及 {bot}，再按「開啟功能」。',
-        '單獨 tag {bot}，再撳「開啟功能」。'),
+        '單獨提及 {bot}，再按「開主選單」。',
+        '單獨 tag {bot}，再撳「開主選單」。'),
     Tip('mention_find', 'mention', ALL_CONTEXTS, ('Menu',),
         '找不到功能？單獨提及 {bot} 開啟選單。',
         '搵唔到功能？單獨 tag {bot} 開選單。'),
@@ -66,8 +66,8 @@ TIPS = (
         '「下次預埋」只提醒下一次；持續關注可選「長期跟局」。',
         '「下次預埋」只提醒下一次；想長期收通知可揀「長期跟局」。'),
     Tip('notifications', 'feature', ('cheers', 'menu', 'more'), ('SquadCards',),
-        '想調整組隊提醒？到「我的組隊通知」管理。',
-        '想改組隊提醒？去「我的組隊通知」管理。'),
+        '想調整組隊提醒？到「偏好與設定 → 我的組隊通知」管理。',
+        '想改組隊提醒？去「偏好同設定 → 我的組隊通知」管理。'),
     Tip('member_card', 'feature', ALL_CONTEXTS, ('CommunityLevels',),
         '「我的會員卡」可以查看等級、經驗值與稱號。',
         '「我的會員卡」可以睇等級、經驗值同稱號。'),

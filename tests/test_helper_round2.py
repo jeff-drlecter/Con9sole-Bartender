@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as N
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 import config
 from cogs.helper_sandbox import HelperSandbox, HelperPanel, ROOM_ID
@@ -116,17 +116,70 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('1 人／1 則',str(card.to_dict()))
         self.assertEqual(attention,[])
 
+    async def test_route_checks_destination_last_if_access_changes_during_source_lookup(self):
+        _, i, _, target, _, channels = setup()
+        target.id = config.SUPPORT_CHANNEL_ID
+        target.mention = f'<#{target.id}>'
+        channels[target.id] = target
+        authorized = True
+        events = []
+
+        async def source_check(_):
+            nonlocal authorized
+            events.append('source')
+            authorized = False
+            return i.user, channels[i.channel_id], None
+
+        async def destination_check(_, member):
+            events.append('destination')
+            return target if authorized else None
+
+        source = N(resolve=source_check)
+        with patch('core.newcomer_routes.support_destination', side_effect=destination_check):
+            await show_route(i, 'help', source=source)
+        self.assertEqual(events[-1], 'destination')
+        self.assertNotIn(target.mention, i.followup.send.call_args.kwargs['content'])
+
     async def test_existing_support_requires_fresh_read_write_and_non_age_gated_channel(self):
         cog,i,m,source,demo,channels=setup()
-        channels[config.SUPPORT_CHANNEL_ID]=source
-        self.assertEqual((await support_destination(i)).id,source.id)
+        source.id=config.SUPPORT_CHANNEL_ID
+        source.mention=f'<#{source.id}>'
+        channels[source.id]=source
+        self.assertEqual(source.id,1364215234717548594)
+        greeting=copy.copy(demo)
+        greeting.id=config.WELCOME_CHANNEL_ID
+        greeting.mention=f'<#{greeting.id}>'
+        channels[greeting.id]=greeting
+        for roles, expected, other in (([], greeting, source), ([N(id=config.VERIFIED_ROLE_ID)], source, greeting)):
+            m.roles=roles
+            await show_route(i,'help')
+            result=i.followup.send.call_args.kwargs
+            self.assertIn(expected.mention,result['content'])
+            self.assertNotIn(other.mention,result['content'])
+            self.assertTrue(result['ephemeral'])
+            self.assertEqual(result['allowed_mentions'].to_dict()['parse'],[])
+        stale_verified=N(roles=[N(id=config.VERIFIED_ROLE_ID)])
+        m.roles=[]
+        self.assertIsNone(await support_destination(i, stale_verified))
+        m.roles=stale_verified.roles
+        # Reuse the displayed private panel after access to the destination was withdrawn.
+        source.permissions_for.return_value.send_messages=False
+        await result['view'].children[1].callback(i)
+        revoked=i.edit_original_response.call_args.kwargs['content']
+        self.assertNotIn(source.mention,revoked)
+        self.assertIn('<id:customize>',revoked)
+        source.permissions_for.return_value.send_messages=True
+        m.pending=True
+        self.assertIsNone(await support_destination(i, m))
+        m.pending=False
         for bit in ('view_channel','read_message_history','send_messages'):
             setattr(source.permissions_for.return_value,bit,False)
-            self.assertIsNone(await support_destination(i))
+            self.assertIsNone(await support_destination(i, m))
             setattr(source.permissions_for.return_value,bit,True)
         source.nsfw=True
         await show_route(i,'help')
         self.assertNotIn(source.mention,i.followup.send.call_args.kwargs['content'])
+        self.assertIn('<id:customize>',i.followup.send.call_args.kwargs['content'])
         self.assertTrue(i.followup.send.call_args.kwargs['ephemeral'])
         source.edit.assert_not_called();source.send.assert_not_called()
         source.nsfw=False

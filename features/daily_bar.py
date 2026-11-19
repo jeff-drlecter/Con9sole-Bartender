@@ -56,7 +56,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🎉",
         title="打一次氣",
         description="喺吧枱送出一句打氣說話。",
-        method="喺「更多玩法 → 社群互動」撳「打氣」，或者用打氣功能。",
+        method="喺「社群互動」撳「打氣」，或者用打氣功能。",
         note="每日一句，輕輕鬆鬆暖下場。",
     ),
     DailyBarTask(
@@ -64,7 +64,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🙌",
         title="幫一位成員打氣",
         description="揀一位成員，送一句打氣畀對方。",
-        method="喺「更多玩法 → 社群互動」撳「幫人打氣」，再揀一位成員。",
+        method="喺「社群互動」撳「幫人打氣」，再揀一位成員。",
         note="見到邊個需要加油，就順手撐一撐佢。",
     ),
     DailyBarTask(
@@ -72,7 +72,7 @@ DAILY_BAR_TASKS: tuple[DailyBarTask, ...] = (
         emoji="🍾",
         title="打開酒單收藏",
         description="睇下你最近解鎖咗咩酒款。",
-        method="用 `/drink_collection`，或者喺「更多玩法 → 我的紀錄」撳「我的收藏」。",
+        method="用 `/drink_collection`，或者喺「我的會員卡」撳「我的收藏」。",
         note="收藏榜同酒保紀錄會隨住叫酒慢慢豐富。",
     ),
 )

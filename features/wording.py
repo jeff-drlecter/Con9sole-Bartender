@@ -4,7 +4,11 @@ import discord
 
 # Exact authored literals, including static f-string pieces. Dynamic values are
 # interpolated only AFTER lookup at the call site; names and content stay intact.
-TW = {'\n以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。': '\n'
+TW = {
+ '搵隊友／約局': '找隊友／約局',
+ '搵 Helper': '聯絡 Helper',
+ '偏好同設定': '偏好與設定',
+ '\n以上只係遊戲候選，未核對歷史文字CD，唔係應補XP。冇改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。': '\n'
                                                               '以上僅為遊戲候選，未核對歷史文字CD，不是應補XP。沒有改現有積分／週榜／角色；改名、離開、重用卡片會留待核對。',
  '\n只反映保留中嘅歷史；已刪訊息及歷史Booster倍數未知。未補分。': '\n只反映保留中的歷史；已刪訊息及歷史Booster倍數未知。未補分。',
  '\n只讀檢查，冇加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。': '\n只讀檢查，沒有加分；附件已替換已識別玩家及 mention；用作公開 fixture 前仍需核對。',

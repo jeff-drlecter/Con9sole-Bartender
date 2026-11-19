@@ -26,7 +26,8 @@ BOARD='1570639281225994301'
 DEMO='1570093470666854411'
 GUIDE=str(config.GUIDE_CHANNEL_ID)
 WELCOME=str(config.WELCOME_CHANNEL_ID)
-SUPPORT=str(config.SUPPORT_CHANNEL_ID)
+# The November 15 approval covered this specific channel overwrite.
+SUPPORT='1362781427287986407'
 NEWS={'1364201334798290994':'PlayStation','1379699174668505098':'Xbox','1364210080043630612':'PC'}
 VIEW_HISTORY=1024|65536
 SUPPORT_BITS=VIEW_HISTORY|2048
@@ -97,11 +98,13 @@ def build_plan(snapshot, bot_id, messages, panel_ids):
     # Only a unique owned functional card. Welcome requires pinned/non-personal copy.
     for cid in (GUIDE,WELCOME):
         candidates=[m for m in messages.get(cid,[]) if str(m['author']['id'])==str(bot_id)
-                    and 'entry:menu:v1' in controls(m) and not m.get('mentions')
+                    and controls(m).intersection({'entry:menu:v1', 'entry:menu:v2'}) and not m.get('mentions')
                     and (cid!=WELCOME or m.get('pinned'))]
         if len(candidates)!=1:
             plan['blocked'].append('entry:'+cid+': no unique non-personal fixed card');continue
         m=candidates[0]
+        if 'entry:menu:v2' in controls(m):
+            continue  # Newer entry cards are outside this historical migration.
         if m.get('content')!=NEW_ENTRY or controls(m)!={f'entry:{k}:v1' for k in ('games','menu','plan','language','help','observe')}:
             add('entry',cid,dict(content=NEW_ENTRY,components=entry_components(),allowed_mentions=NONE),message=m)
     candidates=[m for m in messages.get(DEMO,[]) if str(m['author']['id'])==str(bot_id)

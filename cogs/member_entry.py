@@ -1,4 +1,5 @@
 """Persistent public entry; every functional reply is private and member-localized."""
+import asyncio
 from datetime import datetime, timezone
 import discord
 from discord import app_commands
@@ -10,11 +11,16 @@ from core.permissions import is_server_admin
 from core.ui import SafeView
 from core.json_storage import atomic_write_json
 from core.storage_paths import DATA_DIR
+from features.welcome_verification import APPROVED_ROLE_ID, VERIFY_BUTTON, WelcomeVerification, remember
 
 ENTRY_COPY = (
-    '🎮 **找隊友，約一局**\n'
-    '選擇遊戲後約一局；找不到合適遊戲可按「求助／建議」，或先觀望。\n'
-    '下方操作只向自己顯示；提交約局後才會在所選頻道公開。'
+    f'🎮 **歡迎加入社群**\n請先閱讀 <#{config.RULES_CHANNEL_ID}>，再選擇想玩的遊戲。\n'
+    '想找隊友或調整設定，可開主選單。有問題可按「搵 Helper」查看求助方式。'
+)
+ENTRY_BUTTONS = (('games', '選擇遊戲'), ('menu', '開主選單'), ('help', '搵 Helper'))
+LEGACY_BUTTONS = (
+    ('games', '🎮 選擇遊戲'), ('menu', '🍸 開啟功能'), ('plan', '📅 約一局'),
+    ('language', '🌐 語言設定'), ('help', '求助／建議'), ('observe', '先觀望'),
 )
 GUIDE_NAMES = {'bartender使用指南', '組隊與語音指南', '如何加入不同遊戲分區'}
 
@@ -35,16 +41,31 @@ def game_entry_moves(guild):
 
 
 class MemberEntryView(SafeView):
-    def __init__(self):
+    def __init__(self, *, legacy=False, welcome=False):
         super().__init__(timeout=None)
-        for action, label in [('games', '🎮 選擇遊戲'), ('menu', '🍸 開啟功能'),
-                              ('plan', '📅 約一局'), ('language', '🌐 語言設定'),
-                              ('help', '求助／建議'), ('observe', '先觀望')]:
-            button = discord.ui.Button(label=label, custom_id=f'entry:{action}:v1', row=0 if action in {'games', 'menu'} else 2 if action in {'help', 'observe'} else 1)
+        buttons = LEGACY_BUTTONS if legacy else ENTRY_BUTTONS
+        version = 'v1' if legacy else 'v2'
+        for index, (action, label) in enumerate(buttons):
+            emoji = None if legacy else {'games': '🎮', 'menu': '🍸', 'help': '🛟'}[action]
+            button = discord.ui.Button(label=label, emoji=emoji, custom_id=f'entry:{action}:{version}',
+                                       row=index // 2 if legacy else 0)
             async def callback(interaction, action=action):
                 await self.open(interaction, action)
             button.callback = callback
             self.add_item(button)
+
+        if welcome:
+            button = discord.ui.Button(label='我是活人', style=discord.ButtonStyle.success,
+                                       custom_id=VERIFY_BUTTON, row=0)
+            button.callback = self.verify
+            self.add_item(button)
+
+    async def verify(self, interaction):
+        cog = interaction.client.get_cog('MemberEntry')
+        if cog is None:
+            await interaction.response.send_message('驗證暫時未能使用，請搵 Helper。', ephemeral=True)
+            return
+        await cog.verification.respond(interaction)
 
     async def open(self, interaction, action):
         if (interaction.guild_id != config.GUILD_ID or interaction.channel is None
@@ -69,9 +90,36 @@ class MemberEntryView(SafeView):
 class MemberEntry(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.verification = WelcomeVerification()
 
     async def cog_load(self):
-        self.bot.add_view(MemberEntryView())
+        self.bot.add_view(MemberEntryView(welcome=True))
+        self.bot.add_view(MemberEntryView(legacy=True))
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if after.guild.id == config.GUILD_ID and not after.bot:
+            held = any(r.id == APPROVED_ROLE_ID for r in before.roles)
+            holds = any(r.id == APPROVED_ROLE_ID for r in after.roles)
+            if held != holds:
+                await asyncio.to_thread(remember, after.id)
+
+    @commands.Cog.listener()
+    async def on_audit_log_entry_create(self, entry: discord.AuditLogEntry):
+        # Some member updates have no cached 'before'. The role-update audit
+        # event, when available, also identifies exactly which role was changed.
+        if entry.guild.id != config.GUILD_ID or entry.action != discord.AuditLogAction.member_role_update:
+            return
+        for change in (entry.before, entry.after):
+            if any(r.id == APPROVED_ROLE_ID for r in getattr(change, 'roles', ())):
+                if entry.target is not None:
+                    await asyncio.to_thread(remember, entry.target.id)
+                return
+
+    @app_commands.command(name='撤回會員驗證', description='Helper 或管理員：撤回一位成員嘅會員驗證，並停用自行驗證')
+    @app_commands.guilds(discord.Object(id=config.GUILD_ID))
+    async def revoke_verification(self, interaction: discord.Interaction, member: discord.Member):
+        await self.verification.respond(interaction, target_id=member.id)
 
     @app_commands.command(name='遊戲入口排序', description='管理員：將各遊戲組隊文字頻道移到分類最前；不改權限')
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
@@ -122,7 +170,7 @@ class MemberEntry(commands.Cog):
         # Update only our functional entry; never alter another author's guide.
         async for message in channel.history(limit=50):
             ids = {getattr(item, 'custom_id', None) for row in message.components for item in row.children}
-            if message.author.id == self.bot.user.id and 'entry:menu:v1' in ids:
+            if message.author.id == self.bot.user.id and ids.intersection({'entry:menu:v1', 'entry:menu:v2'}):
                 await message.edit(content=ENTRY_COPY, view=MemberEntryView(), allowed_mentions=discord.AllowedMentions.none())
                 break
         else:

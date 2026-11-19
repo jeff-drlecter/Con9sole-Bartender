@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import discord
+from discord.app_commands.namespace import ResolveKey
 import config
 from cogs.community_directory import CommunityDirectory
 from features.community_directory import Directory, DirectoryError, DirectoryUnavailable
@@ -39,14 +40,15 @@ class DirectoryCommandTests(unittest.IsolatedAsyncioTestCase):
         self.cog.directory = Directory(self.path, config.GUILD_ID)
 
     def interaction(self, *, guild_id=None):
-        response = SimpleNamespace(is_done=Mock(return_value=False), send_message=AsyncMock())
+        response = SimpleNamespace(is_done=Mock(return_value=False), send_message=AsyncMock(), send_modal=AsyncMock())
         async def defer(**kwargs):
-            self.assertTrue(kwargs['ephemeral'])
+            if kwargs:
+                self.assertTrue(kwargs['ephemeral'])
             response.is_done.return_value = True
         response.defer = AsyncMock(side_effect=defer)
         return SimpleNamespace(guild_id=config.GUILD_ID if guild_id is None else guild_id,
                                guild=SimpleNamespace(fetch_member=AsyncMock(return_value=self.contact)),
-                               user=member(admin=True), response=response,
+                               user=member(admin=True), response=response, edit_original_response=AsyncMock(),
                                followup=SimpleNamespace(send=AsyncMock()))
 
     async def call(self, command, interaction=None, **kwargs):
@@ -295,3 +297,244 @@ class DirectoryCommandTests(unittest.IsolatedAsyncioTestCase):
             await self.call('edit', key='team-a', name='Unsaved')
         self.assertEqual(self.path.read_bytes(), valid)
         self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
+
+    async def click(self, view, label, interaction=None):
+        inter = interaction or self.interaction()
+        button = next(item for item in view.children if getattr(item, 'label', None) == label)
+        if await view.interaction_check(inter):
+            try:
+                await button.callback(inter)
+            except (DirectoryError, DirectoryUnavailable) as exc:
+                await view.on_error(inter, exc, button)
+        return inter
+
+    async def submit(self, form, **fields):
+        inter = self.interaction()
+        resolved = {}
+        payload = []
+        for field, value in fields.items():
+            item = getattr(form, field)
+            data = {'custom_id': item.custom_id, 'type': item.type.value}
+            if isinstance(item, discord.ui.UserSelect):
+                data['values'] = [str(value.id)] if value is not None else []
+                if value is not None:
+                    resolved[ResolveKey(id=str(value.id), type=6)] = value
+            elif isinstance(item, discord.ui.Select):
+                data['values'] = [value]
+            else:
+                data['value'] = value
+            payload.append({'type': 18, 'component': data})
+        self.assertTrue(await form.interaction_check(inter))
+        form._refresh(inter, payload, resolved)
+        try:
+            await form.on_submit(inter)
+        except (DirectoryError, DirectoryUnavailable) as exc:
+            await form.on_error(inter, exc)
+        response = inter.followup.send.call_args or inter.response.send_message.call_args
+        self.assertTrue(response.kwargs['ephemeral'])
+        self.assertEqual(response.kwargs['allowed_mentions'].to_dict(), {'parse': []})
+        return inter
+
+    async def test_both_slash_groups_bind_same_callbacks_and_keep_old_parameters(self):
+        from discord.ext import commands
+        guild = discord.Object(config.GUILD_ID)
+        async with commands.Bot(command_prefix='!', intents=discord.Intents.none()) as bot:
+            await bot.load_extension('cogs.community_directory')
+            for phase in ['load', 'reload']:
+                if phase == 'reload':
+                    await bot.reload_extension('cogs.community_directory')
+                en = bot.tree.get_command('community', guild=guild)
+                zh = bot.tree.get_command('公會', guild=guild)
+                self.assertIsNone(bot.tree.get_command('公會'))
+                for chinese, english in [('列表', 'list'), ('查看', 'show'), ('建立', 'create'),
+                                         ('編輯', 'edit'), ('封存', 'archive'), ('還原', 'restore')]:
+                    self.assertIs(zh.get_command(chinese).callback, en.get_command(english).callback)
+                    self.assertIs(zh.get_command(chinese).binding, bot.get_cog('CommunityDirectory'))
+                    self.assertTrue(all(p.display_name == p.name for p in en.get_command(english).parameters))
+                    self.assertTrue(all(p.display_name != p.name for p in zh.get_command(chinese).parameters))
+
+    async def test_owner_private_selection_pagination_and_role_revocation(self):
+        for index in range(12):
+            await self.create(f'guild-{index:02}', f'Guild {index:02}')
+        self.actor = member(verified=True)
+        first = self.interaction()
+        await self.cog.menu_entry(first)
+        view = first.followup.send.call_args.kwargs['view']
+        select = view.children[0]
+        self.assertEqual(len(select.options), 10)
+        self.assertFalse(any(getattr(item, 'label', '') == '建立公會卡' for item in view.children))
+        stranger = self.interaction()
+        stranger.user = member(999, verified=True)
+        self.assertFalse(await view.interaction_check(stranger))
+        self.assertTrue(stranger.response.send_message.call_args.kwargs['ephemeral'])
+        page = await self.click(view, '下一頁')
+        second = page.followup.send.call_args.kwargs['view']
+        select = second.children[0]
+        self.assertEqual([o.value for o in select.options], ['guild-10', 'guild-11'])
+        select._values = ['guild-11']
+        inter = self.interaction()
+        await select.callback(inter)
+        self.assertEqual(inter.followup.send.call_args.kwargs['embed'].title, 'Guild 11')
+        self.actor = member()
+        inter = self.interaction()
+        await select.callback(inter)
+        self.assertNotIn('embed', inter.followup.send.call_args.kwargs)
+        denied = await self.click(second, '上一頁')
+        self.assertNotIn('embed', denied.followup.send.call_args.kwargs)
+
+    async def test_helper_forms_then_admin_archive_restore_after_restart(self):
+        self.actor = member(helper=True)
+        entry = self.interaction()
+        await self.cog.menu_entry(entry)
+        directory = entry.followup.send.call_args.kwargs['view']
+        launch = await self.click(directory, '建立公會卡')
+        launch.response.defer.assert_not_awaited()
+        form = launch.response.send_modal.call_args.args[0]
+        self.assertEqual(len(form.to_dict()['components']), 5)
+        self.assertTrue(form.pic.required)
+        stranger = self.interaction()
+        stranger.user = member(321, helper=True)
+        self.assertFalse(await form.interaction_check(stranger))
+        fields = dict(key='old-key', name='Adventure', game='Game', pic=self.contact, notes='Original')
+        self.actor = member(verified=True)
+        await self.submit(form, **fields)
+        self.assertFalse(self.path.exists())
+        self.actor = member(helper=True)
+        created = await self.submit(form, **fields)
+        card = await self.click(created.followup.send.call_args.kwargs['view'], '查看公會卡')
+        view = card.followup.send.call_args.kwargs['view']
+        self.assertEqual([item.label for item in view.children], ['返回目錄', '編輯公會／交接 PIC'])
+        launch = await self.click(view, '編輯公會／交接 PIC')
+        edit = launch.response.send_modal.call_args.args[0]
+        self.assertEqual(len(edit.to_dict()['components']), 5)
+        self.assertEqual(edit.name.default, 'Adventure')
+        self.assertFalse(edit.pic.required)
+        self.contact = member(301, bot=True)
+        fields = dict(name='Renamed', game='New game', notes='', pic=self.contact, status='closed')
+        await self.submit(edit, **fields)
+        self.assertEqual(self.cog.directory.get('old-key')['name'], 'Adventure')
+        self.contact = member(301)
+        fields['pic'] = self.contact
+        await self.submit(edit, **fields)
+        self.cog = CommunityDirectory(self.bot)
+        self.cog.directory = Directory(self.path, config.GUILD_ID)
+        self.assertEqual(self.cog.directory.get('old-key'), dict(key='old-key', name='Renamed',
+                         game='New game', notes='', pic_id=301, status='closed', archived=False))
+        self.actor = member(admin=True)
+        card = await self.call('show_zh', key='old-key')
+        view = card.followup.send.call_args.kwargs['view']
+        self.actor = member(helper=True)
+        await self.click(view, '封存公會')
+        self.assertFalse(self.cog.directory.get('old-key')['archived'])
+        self.actor = member(admin=True)
+        await self.click(view, '封存公會')
+        self.assertTrue(self.cog.directory.get('old-key')['archived'])
+        entry = await self.call('list_zh')
+        archived = await self.click(entry.followup.send.call_args.kwargs['view'], '已封存公會')
+        select = archived.followup.send.call_args.kwargs['view'].children[0]
+        self.assertEqual([o.value for o in select.options], ['old-key'])
+        select._values = ['old-key']
+        card = self.interaction()
+        await select.callback(card)
+        view = card.followup.send.call_args.kwargs['view']
+        self.contact = member(301, bot=True)
+        await self.click(view, '還原公會')
+        self.assertTrue(self.cog.directory.get('old-key')['archived'])
+        self.contact = member(301)
+        await self.click(view, '還原公會')
+        self.assertFalse(self.cog.directory.get('old-key')['archived'])
+
+    async def test_stale_form_never_overwrites_new_card_or_discloses_archived_fields(self):
+        await self.create(notes='Before')
+        card = await self.call('show', key='team-a')
+        view = card.followup.send.call_args.kwargs['view']
+        launch = await self.click(view, '編輯公會／交接 PIC')
+        form = launch.response.send_modal.call_args.args[0]
+        self.cog.directory.save('team-a', notes='Newer')
+        await self.submit(form, name='Old', game='Example', notes='Before', pic=None, status='open')
+        self.assertEqual(self.cog.directory.get('team-a')['notes'], 'Newer')
+        self.cog.directory.save('team-a', archived=True)
+        self.actor = member(helper=True)
+        # Opening a modal never waits for REST or reads fields added after the viewer saw it.
+        click = self.interaction()
+        click.user = self.actor
+        with patch.object(self.cog.directory, 'get', side_effect=AssertionError('must only use snapshot')):
+            with patch.object(self.bot, 'fetch_guild', side_effect=AssertionError('modal must acknowledge first')):
+                await self.click(view, '編輯公會／交接 PIC', click)
+        old = click.response.send_modal.call_args.args[0]
+        self.assertEqual(old.notes.default, 'Before')
+        click.response.defer.assert_not_awaited()
+        await self.submit(old, name='Old', game='Example', notes='Before', pic=None, status='open')
+        self.assertEqual(self.cog.directory.get('team-a')['notes'], 'Newer')
+
+        self.actor = member(admin=True)
+        archived = await self.call('show', key='team-a')
+        archived_view = archived.followup.send.call_args.kwargs['view']
+        for actor in [member(helper=True), member(verified=True), member(admin=True, bot=True)]:
+            click = self.interaction()
+            click.user = actor
+            await self.click(archived_view, '編輯公會／交接 PIC', click)
+            click.response.send_modal.assert_not_awaited()
+            self.assertTrue(click.response.send_message.call_args.kwargs['ephemeral'])
+        for click in [self.interaction(guild_id=1), self.interaction()]:
+            if click.guild_id == config.GUILD_ID:
+                click.user = member(verified=True)
+            await self.click(view, '編輯公會／交接 PIC', click)
+            click.response.send_modal.assert_not_awaited()
+            self.assertTrue(click.response.send_message.call_args.kwargs['ephemeral'])
+
+    async def test_directory_navigation_replaces_only_own_ephemeral_component_source(self):
+        for index in range(11):
+            await self.create(f'guild-{index:02}', f'Guild {index:02}')
+        self.actor = member(verified=True)
+        first = await self.call('list_cards')
+        view = first.followup.send.call_args.kwargs['view']
+
+        def component(*, ephemeral=True, owner=100):
+            inter = self.interaction()
+            inter.type = discord.InteractionType.component
+            inter.message = SimpleNamespace(flags=SimpleNamespace(ephemeral=ephemeral),
+                                            interaction_metadata=SimpleNamespace(user=member(owner)))
+            return inter
+
+        page = await self.click(view, '下一頁', component())
+        page.response.defer.assert_awaited_once_with()
+        page.followup.send.assert_not_awaited()
+        edit = page.edit_original_response.call_args.kwargs
+        self.assertIsNone(edit['content'])
+        self.assertEqual(edit['allowed_mentions'].to_dict(), {'parse': []})
+        select = edit['view'].children[0]
+        self.assertEqual([o.value for o in select.options], ['guild-10'])
+        select._values = ['guild-10']
+        card = component()
+        await select.callback(card)
+        edit = card.edit_original_response.call_args.kwargs
+        self.assertEqual(edit['embed'].title, 'Guild 10')
+        back = await self.click(edit['view'], '返回目錄', component())
+        self.assertEqual(back.edit_original_response.call_args.kwargs['embed'].title, '公會目錄')
+
+        wrong_type = component()
+        wrong_type.type = discord.InteractionType.application_command
+        for inter in [component(ephemeral=False), component(ephemeral=None), component(owner=999),
+                      self.interaction(), wrong_type]:
+            await self.click(view, '下一頁', inter)
+            inter.edit_original_response.assert_not_awaited()
+            inter.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+            self.assertTrue(inter.followup.send.call_args.kwargs['ephemeral'])
+
+        # A slash or registry invocation never claims a GUI source to edit.
+        slash = component()
+        await self.call('list_zh', slash)
+        slash.edit_original_response.assert_not_awaited()
+        self.assertTrue(slash.followup.send.call_args.kwargs['ephemeral'])
+        self.actor = member()
+        denied = await self.click(view, '下一頁', component())
+        denied.edit_original_response.assert_not_awaited()
+        self.assertNotIn('embed', denied.followup.send.call_args.kwargs)
+        self.assertTrue(denied.followup.send.call_args.kwargs['ephemeral'])
+
+        menu = SimpleNamespace(open_main_menu=AsyncMock())
+        self.bot.get_cog = Mock(return_value=menu)
+        home = await self.click(view, '返回主選單', component())
+        self.bot.get_cog.assert_called_once_with('Menu')
+        menu.open_main_menu.assert_awaited_once_with(home)

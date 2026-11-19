@@ -43,6 +43,19 @@ class MaintenanceTests(unittest.TestCase):
         a=next(a for a in plan['actions'] if a['kind']=='support')
         self.assertEqual(a['overwrite'],str(config.VERIFIED_ROLE_ID))
         self.assertEqual(a['body'],dict(type=0,allow=str(8192|SUPPORT_BITS),deny='16384'))
+    def test_historical_maintenance_skips_new_endpoint_and_new_entry_card(self):
+        snap,msgs,panels=fixture()
+        old=next(c for c in snap['channels'] if c['id']==SUPPORT)
+        new=deepcopy(old)
+        new.update(id=str(config.SUPPORT_CHANNEL_ID),name='搵 Helper',nsfw=False)
+        snap['channels'].append(new)
+        for cid in (GUIDE,WELCOME):
+            msgs[cid]=[dict(id='888',channel_id=cid,author=dict(id='999'),pinned=True,
+                            components=[dict(components=[dict(custom_id='entry:menu:v2')])])]
+        plan=build_plan(snap,'999',msgs,panels)
+        self.assertNotEqual(new['id'],SUPPORT)
+        self.assertFalse(any(a['channel']==new['id'] or a['kind']=='entry' for a in plan['actions']))
+
     def test_ambiguous_age_and_unowned_card_are_blocked(self):
         snap,msgs,panels=fixture();other=deepcopy(next(c for c in snap['channels'] if c['id']==SUPPORT));other['id']='777';snap['channels'].append(other)
         cid=next(iter(NEWS));msgs[cid][0]['author']['id']='outsider'

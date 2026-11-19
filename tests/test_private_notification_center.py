@@ -152,7 +152,7 @@ class PrivateCenterTests(unittest.IsolatedAsyncioTestCase):
         self.permissions[10].send_messages=False
         i=self.i();back=AsyncMock();await show_next_steps(i,return_to=back)
         view=i.followup.send.call_args.kwargs['view']
-        self.assertEqual([b.label for b in view.children],['選擇遊戲','求助／建議','先觀望','返回'])
+        self.assertEqual([b.label for b in view.children],['選擇遊戲','找 Helper','先觀望','返回'])
         await view.children[1].callback(i)
         self.assertNotIn('<#',i.edit_original_response.call_args.kwargs['content'])
         await view.back(i);back.assert_awaited_once()
@@ -262,4 +262,4 @@ class PrivateCenterTests(unittest.IsolatedAsyncioTestCase):
             await FeatureButton(label='entry',emoji='🎮',cog=name,method='menu_entry',row=0).callback(i)
             result=i.followup.send.call_args.kwargs
             self.assertIn('暫時',result['content'])
-            self.assertEqual([b.label for b in result['view'].children],['選擇遊戲','求助／建議','先觀望','返回'])
+            self.assertEqual([b.label for b in result['view'].children],['選擇遊戲','找 Helper','先觀望','返回'])

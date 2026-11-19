@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 import config
-from cogs.member_entry import MemberEntryView
+from cogs.member_entry import ENTRY_COPY, MemberEntry, MemberEntryView
 from cogs.member_entry import game_entry_moves
 from cogs.squad_plans import SquadPlans, PlanView, card
 from cogs.welcome_log import welcome_message
@@ -33,6 +33,18 @@ def interaction(source):
 
 
 class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mention_fallback_uses_shared_welcome_controls(self):
+        from bot import Bot
+        user = N(id=99)
+        for menu in (None, N(send_mention_menu=AsyncMock(side_effect=ValueError('test')))):
+            message = N(author=N(bot=False), guild=N(), mentions=[user], content='<@99>', reply=AsyncMock())
+            bot = N(user=user, get_cog=lambda _: menu, process_commands=AsyncMock())
+            await Bot.on_message(bot, message)
+            kwargs = message.reply.await_args.kwargs
+            self.assertFalse(kwargs['mention_author'])
+            self.assertEqual([b.custom_id for b in kwargs['view'].children],
+                             ['entry:games:v2', 'entry:menu:v2', 'entry:help:v2'])
+
     async def test_read_only_guide_routes_only_to_accessible_writable_destinations(self):
         source = channel(1, '組隊與語音指南', writable=False)
         target = channel(2, 'fc-吹水組隊')
@@ -59,7 +71,7 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
             await SquadPlans.choose_destination(N(), i)
         result=i.followup.send.await_args.kwargs
         self.assertTrue(result['ephemeral'])
-        self.assertEqual([b.label for b in result['view'].children],['選擇遊戲','求助／建議','先觀望','返回'])
+        self.assertEqual([b.label for b in result['view'].children],['選擇遊戲','找 Helper','先觀望','返回'])
         await result['view'].children[0].callback(i)
         self.assertIn('<id:customize>',i.edit_original_response.await_args.kwargs['content'])
 
@@ -107,11 +119,21 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_entry_is_persistent_and_opens_private_personal_menu(self):
         view = MemberEntryView()
         self.assertTrue(view.is_persistent())
-        self.assertEqual(len({b.custom_id for b in view.children}), 6)
+        self.assertEqual([b.label for b in view.children], ['選擇遊戲', '開主選單', '搵 Helper'])
+        self.assertIn(f'<#{config.RULES_CHANNEL_ID}>', ENTRY_COPY)
+        bot = N(add_view=MagicMock())
+        await MemberEntry(bot).cog_load()
+        registered = [call.args[0] for call in bot.add_view.call_args_list]
+        self.assertTrue(all(v.is_persistent() for v in registered))
+        self.assertCountEqual([b.custom_id for v in registered for b in v.children],
+                              [f'entry:{action}:v2' for action in ('games', 'menu', 'help')]
+                              + ['entry:verify:v1']
+                              + [f'entry:{action}:v1' for action in
+                                 ('games', 'menu', 'plan', 'language', 'help', 'observe')])
         i = interaction(channel(2, 'bartender使用指南', writable=False))
         menu = N(open_main_menu=AsyncMock())
         i.client = N(get_cog=lambda name: menu if name == 'Menu' else None)
-        await view.open(i, 'menu')
+        await view.children[1].callback(i)
         menu.open_main_menu.assert_awaited_once_with(i)
         i.user.bot=False
         i.response.is_done=lambda:False
@@ -119,6 +141,21 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         i.channel.guild=i.guild
         await view.open(i, 'games')
         self.assertTrue(i.followup.send.await_args.kwargs['ephemeral'])
+
+    async def test_legacy_entry_buttons_still_dispatch_to_their_original_actions(self):
+        view = MemberEntryView(legacy=True)
+        i = interaction(channel(2, '指南', writable=False))
+        menu, plans, language_cog = N(open_main_menu=AsyncMock()), N(menu_entry=AsyncMock()), N(menu_entry=AsyncMock())
+        cogs = {'Menu': menu, 'SquadPlans': plans, 'LanguagePreferences': language_cog}
+        i.client = N(get_cog=cogs.get)
+        with patch('core.newcomer_routes.show_route', new_callable=AsyncMock) as route:
+            for button in view.children:
+                await button.callback(i)
+        self.assertEqual([call.args for call in route.await_args_list],
+                         [(i, 'games'), (i, 'help'), (i, 'observe')])
+        menu.open_main_menu.assert_awaited_once_with(i)
+        plans.menu_entry.assert_awaited_once_with(i)
+        language_cog.menu_entry.assert_awaited_once_with(i)
 
     async def test_public_card_is_compact_and_unknown_language_is_neutral(self):
         p = dict(game='FC', mode='PS5／Clubs', start=200, party=1, members=[4], capacity=4, owner=3, status='open')
@@ -133,6 +170,8 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
         neutral = welcome_message(member, '<#1>', '<@99>')
         member.roles = [N(name=ROLE_NAMES['hk'], managed=False, permissions=discord.Permissions.none())]
         self.assertEqual(welcome_message(member, '<#1>', '<@99>'), neutral)
+        self.assertIn('<#1>', neutral)
+        self.assertIn('搵 Helper', neutral)
 
 
 class CredentialTests(unittest.TestCase):

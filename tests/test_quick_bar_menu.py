@@ -15,14 +15,10 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(b.label, b.row) for b in view.children],
             [
-                ("約一局", 0),
-                ("小隊語音", 0),
-                ("我的會員卡", 1),
-                ("我的組隊通知", 1),
-                ("飲一杯", 2),
-                ("請人飲", 2),
-                ("更多", 3),
-                ("語言設定", 3),
+                ("搵隊友／約局", 0), ("開房／房控", 0), ("公會卡", 0),
+                ("我的會員卡", 1), ("排行榜", 1), ("今日小任務", 1),
+                ("飲一杯", 2), ("請人飲", 2), ("社群互動", 2),
+                ("遊戲情報", 3), ("偏好同設定", 3), ("搵 Helper", 3),
             ],
         )
         self.assertTrue(view.is_persistent())

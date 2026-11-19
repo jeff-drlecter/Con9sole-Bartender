@@ -1,6 +1,6 @@
 # Notification review and member navigation — 2026-11-08
 
-Admin entry: More → Admin Tools → System Status → Review Notifications.
+Admin entry: /menu → Admin Tools → System Status → Review Notifications.
 The panel is private, scoped to the guild and original operator, and permissions are
 checked again when a modal is submitted and immediately before writing a resolution.
 Weekly actions additionally require Manage Server or Administrator permission.
@@ -30,6 +30,21 @@ Legacy claims without sufficient original message context cannot be automaticall
 verified as sent; administrators can cancel an obsolete recruitment notification.
 
 ## Navigation
+
+The welcome card opens game selection, the private main menu, or the Helper contact
+channel. The main menu has four rows for everyone, plus a staff-only tools row:
+
+| | | |
+| --- | --- | --- |
+| 搵隊友／約局 | 開房／房控 | 公會卡 |
+| 我的會員卡 | 排行榜 | 今日小任務 |
+| 飲一杯 | 請人飲 | 社群互動 |
+| 遊戲情報 | 偏好同設定 | 搵 Helper |
+
+Both the welcome card and the private menu resolve the member’s access before
+linking to the feedback/help channel. Members submit their question there.
+Notification management, language, channel visibility and news preferences are
+under 偏好同設定. Existing buttons on older messages keep their routes.
 
 | Surface | Added or aligned navigation |
 | --- | --- |
