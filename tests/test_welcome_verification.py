@@ -194,13 +194,19 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(config, 'VERIFIED_ROLE_ID', GAME):
             self.assertEqual(await self.verify(), v.UNAVAILABLE)
         unsafe = deepcopy(self.source_data)
-        unsafe.update(id='7', permission_overwrites=[dict(id=str(VERIFIED), type=0, deny='0',
+        unsafe.update(id='7', type=20, permission_overwrites=[dict(id=str(VERIFIED), type=0, deny='0',
                       allow=str(discord.Permissions(manage_messages=True).value))])
         self.channel_list.side_effect = lambda *_: [self.source_data, unsafe]
         self.assertEqual(await self.verify(), v.UNAVAILABLE)
         unsafe['permission_overwrites'][0]['allow'] = str(1 << 60)
         self.assertEqual(await self.verify(), v.UNAVAILABLE)
         self.add.assert_not_awaited()
+
+    async def test_unrecognized_channel_type_does_not_block_safe_role(self):
+        directory = dict(id='10111', type=20, permission_overwrites=[])
+        self.channel_list.side_effect = lambda *_: [self.source_data, directory]
+        self.assertIn('已完成', await self.verify())
+        self.add.assert_awaited_once()
 
     async def test_bot_hierarchy_unknown_member_roles_and_timeout(self):
         with patch.dict(self.roles[-1], permissions='0'):

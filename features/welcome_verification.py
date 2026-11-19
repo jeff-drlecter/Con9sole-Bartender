@@ -123,15 +123,18 @@ class WelcomeVerification:
                     or VERIFY_BUTTON not in ids
                     or not message.content.startswith(f'🎉 歡迎 <@{interaction.user.id}> 加入 **')):
                 raise CheckFailed('請喺自己今次入群嘅歡迎訊息使用呢個按鈕。')
-            channels = await guild.fetch_channels()
-            if not any(c.id == channel.id for c in channels):
+            # Discord can return new channel types this library cannot construct.
+            # Inspect their raw role overwrites too, retaining unknown permission bits.
+            channels = await guild._state.http.get_all_guild_channels(guild.id)
+            if not any(int(row['id']) == channel.id for row in channels):
                 raise CheckFailed(UNAVAILABLE)
-            # PermissionOverwrite.from_pair drops bits unknown to discord.py.
-            # Inspect the REST bitfield so new moderation powers fail closed.
-            if any(c.guild.id != guild.id or any(
-                    ow.is_role() and ow.id == role.id and ow.allow & ~MEMBER_PERMISSIONS.value
-                    for ow in c._overwrites) for c in channels):
-                raise CheckFailed(UNAVAILABLE)
+            for row in channels:
+                if int(row.get('guild_id', guild.id)) != guild.id:
+                    raise CheckFailed(UNAVAILABLE)
+                for overwrite in row.get('permission_overwrites', []):
+                    if (int(overwrite['id']) == role.id and
+                            (overwrite['type'] != 0 or int(overwrite['allow']) & ~MEMBER_PERMISSIONS.value)):
+                        raise CheckFailed(UNAVAILABLE)
 
         bot = await guild.fetch_member(interaction.client.user.id)
         require_resolved_roles(bot)
