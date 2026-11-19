@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from cogs.menu import Menu
-from data.menu_registry import PREVIOUS_HOME_MENU_ITEMS, SECTION_MENU_ITEMS
+from data.menu_registry import PREVIOUS_HOME_MENU_ITEMS, RETIRED_SECTION_ITEMS, SECTION_MENU_ITEMS
 from features.menu_views import HomeMenuView, LegacyMenuView, QuickBarView, SectionMenuView
 from quick_bar_fakes import interaction
 
@@ -24,6 +24,31 @@ class UnifiedMenuTests(unittest.IsolatedAsyncioTestCase):
                 self.assertLessEqual(sum(b.row == row for b in view.children), 3)
             view.stop()
         home.stop(); legacy.stop()
+
+    async def test_moved_controls_keep_old_ids_and_settings_share_one_page(self):
+        cog = MagicMock()
+        for section, retired in RETIRED_SECTION_ITEMS.items():
+            view = LegacyMenuView(cog, section)
+            self.assertEqual({b.custom_id for b in view.children},
+                             {f'bartender:{section}:{item.id}' for item in retired})
+            self.assertTrue(view.is_persistent())
+        settings = SectionMenuView(cog, 'info')
+        self.assertEqual({b.item.id for b in settings.children}, {
+            'language', 'customize', 'squad_subscriptions', 'news_channels',
+            'intelligence_settings', 'quick_bar',
+        })
+
+    async def test_staff_shortcut_on_private_home_and_denied_after_role_loss(self):
+        cog = MagicMock()
+        view = QuickBarView(cog, include_admin=True)
+        admin = next(b for b in view.children if b.item.id == 'admin_tool')
+        self.assertEqual(admin.row, 4)
+        self.assertFalse(any(b.item.admin_only for b in QuickBarView(cog).children))
+        inter = interaction()
+        cog.open_admin_tool_from_button = AsyncMock()
+        await view.handle_item(inter, admin.item)
+        cog.open_admin_tool_from_button.assert_not_awaited()
+        self.assertTrue(inter.response.send_message.call_args.kwargs['ephemeral'])
 
     async def test_category_and_back_routes_bypass_activity_cooldown(self):
         menu = MagicMock()

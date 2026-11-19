@@ -44,7 +44,8 @@ class MemberEntryView(SafeView):
         buttons = LEGACY_BUTTONS if legacy else ENTRY_BUTTONS
         version = 'v1' if legacy else 'v2'
         for index, (action, label) in enumerate(buttons):
-            button = discord.ui.Button(label=label, custom_id=f'entry:{action}:{version}',
+            emoji = None if legacy else {'games': '🎮', 'menu': '🍸', 'help': '🛟'}[action]
+            button = discord.ui.Button(label=label, emoji=emoji, custom_id=f'entry:{action}:{version}',
                                        row=index // 2 if legacy else 0)
             async def callback(interaction, action=action):
                 await self.open(interaction, action)
