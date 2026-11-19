@@ -16,7 +16,7 @@ from discord.ext import commands, tasks
 
 import config
 from core.rss_delivery import enabled_sources
-from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, excerpt, display_link
+from core.rss_digest import DigestConfig, DigestStore, OFFER_LABELS, HK, NEWS_DATE_FORMAT, excerpt, display_link
 from datetime import datetime
 from core.rss_simulation import scenarios
 from core.rss_wording import rss_text
@@ -300,7 +300,7 @@ class RSSDelivery(commands.Cog):
         reminder = batch['kind'] == 'reminder'
         title = ('⏰ 今日到期提醒' if reminder else '🎮 今日遊戲情報')
         title = (label + '｜' if label else '') + title
-        title += '｜' + datetime.fromtimestamp(now, HK).strftime('%m/%d')
+        title += '｜' + datetime.fromtimestamp(now, HK).strftime(NEWS_DATE_FORMAT)
         embed = discord.Embed(title=title)
         for article in batch['articles']:
             source = {'ps':'🔵 PlayStation Blog', 'xbox':'🟢 Xbox Wire', '4gamers':'💻 4Gamers','steam':'Steam','epic':'Epic'}[article['source']]
@@ -308,7 +308,7 @@ class RSSDelivery(commands.Cog):
             description = discord.utils.escape_markdown(excerpt(article['summary'], 150))
             published = article.get('published')
             if published:
-                description = datetime.fromtimestamp(published, HK).strftime('%Y-%m-%d') + ' · ' + description
+                description = datetime.fromtimestamp(published, HK).strftime(NEWS_DATE_FORMAT) + ' · ' + description
             offer = article.get('offer')
             if offer:
                 description = (f"{OFFER_LABELS[offer['kind']]}｜{discord.utils.escape_markdown(offer['region'])}"

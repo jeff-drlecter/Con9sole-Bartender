@@ -5,6 +5,32 @@ import unittest
 
 
 class DeliveryCogTests(unittest.TestCase):
+    def test_news_dates_use_hong_kong_day_month(self):
+        result = subprocess.run([sys.executable, '-c', r'''
+from datetime import datetime, timezone
+from cogs.rss_delivery import RSSDelivery
+from core.rss_featured_ui import render_featured
+
+now = datetime(2026, 11, 18, 16, 5, tzinfo=timezone.utc).timestamp()
+published = datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp()
+article = dict(source='ps', title='News', summary='Update', link='https://example.com/news',
+               published=published, reason='更新')
+for kind in ('digest', 'reminder'):
+    card = RSSDelivery.render(dict(kind=kind, articles=[article]), now)
+    assert card.title.endswith('｜19/11')
+    assert card.fields[0].value.startswith('02/11 · ')
+
+snapshot = dict(asof=published, fetched=now)
+for kind in ('today', 'month', 'hot'):
+    card = render_featured(kind, [] if kind == 'hot' else [article], now, snapshot)
+    assert card.title.endswith('｜19/11 00:05')
+    if kind == 'month':
+        assert ' · 02/11' in card.description
+    if kind == 'hot':
+        assert '榜單日期 02/11 · ' in card.description
+'''], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_disabled_and_delivery_outcomes(self):
         result = subprocess.run([sys.executable, '-c', r'''
 import asyncio, tempfile

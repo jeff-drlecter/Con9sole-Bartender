@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from core.rss_delivery import DeliveryStore, SOURCE_IDS, safe_link
 
 HK = ZoneInfo('Asia/Hong_Kong')
+NEWS_DATE_FORMAT = '%d/%m'
 OFFER_LABELS = {'keep': '永久領取', 'trial': '限時試玩', 'member': '會員福利', 'f2p': '本身免費'}
 
 
