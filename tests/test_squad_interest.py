@@ -267,6 +267,42 @@ class InterestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(storage.preferences(self.topic['id']), {})
         view.stop()
 
+    async def test_startup_refresh_adds_menu_only_to_tracked_ended_footprints(self):
+        from cogs.squad_cards import CardView, SessionNoticeView
+
+        i, footprint = self.roster_interaction()
+        channel = i.channel
+        channel.send = AsyncMock()
+        messages = {footprint.id: footprint}
+        for mid in (600, 601):
+            messages[mid] = types.SimpleNamespace(id=mid, author=footprint.author,
+                embeds=[discord.Embed(title='開緊團')], edit=AsyncMock())
+        channel.fetch_message = AsyncMock(side_effect=messages.__getitem__)
+        cog = object.__new__(SquadCards)
+        cog.lock = asyncio.Lock()
+        cog.save = MagicMock()
+        cog.bot = MagicMock()
+        cog.bot.user.id = footprint.author.id
+        cog.bot.wait_until_ready = AsyncMock()
+        cog.bot.get_channel.return_value = channel
+        cog.bot.get_guild.return_value = i.guild
+        cog.state = {'sessions': {'20': dict(id='live', message=600, interest_topic=self.topic)}}
+        for mid in messages:
+            storage.track_card(self.topic['id'], channel.id, mid, '' if mid == footprint.id else 'live')
+
+        await cog.before_tick()
+        footprint_view = footprint.edit.call_args.kwargs['view']
+        self.assertEqual([b.label for b in footprint_view.children].count('開主選單'), 1)
+        self.assertTrue(footprint_view.is_persistent())
+        for mid, view_type in ((600, CardView), (601, SessionNoticeView)):
+            view = messages[mid].edit.call_args.kwargs['view']
+            self.assertIsInstance(view, view_type)
+            self.assertFalse(any(b.label == '開主選單' for b in view.children))
+        self.assertEqual(set(call.args[0] for call in channel.fetch_message.await_args_list), set(messages))
+        self.assertEqual(footprint.edit.call_args.kwargs['allowed_mentions'].to_dict(), {'parse': []})
+        channel.send.assert_not_awaited()
+        self.assertEqual(storage.preferences(self.topic['id']), {})
+
     async def test_roster_permissions_long_lists_and_pagination(self):
         people = {uid: types.SimpleNamespace(id=uid, bot=uid == 2, display_name='@everyone *name*') for uid in range(100)}
         guild = types.SimpleNamespace(get_member=people.get)
