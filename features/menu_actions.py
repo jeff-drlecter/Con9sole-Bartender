@@ -6,7 +6,7 @@ import discord
 
 from features.language_preferences import localize_menu
 from features.member_hints import add_member_hint
-from core.safe_send import safe_message_kwargs, send_or_followup
+from core.safe_send import send_or_followup
 from features.invite_tools import (
     create_invite_link_from_button as run_create_invite_link_from_button,
 )
@@ -85,6 +85,12 @@ async def open_threads_menu(interaction: discord.Interaction) -> None:
     await run_open_threads_from_button(interaction)
 
 
+async def send_public_entry(message: discord.Message) -> None:
+    from cogs.member_entry import MemberEntryView
+    await message.reply("🍸 按「開主選單」查看個人選單。", view=MemberEntryView(),
+                        mention_author=False, allowed_mentions=discord.AllowedMentions.none())
+
+
 async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
     if message.author.bot:
         return
@@ -98,13 +104,6 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
     await record_usage("mention_menu", message.author.id, message.guild.id if message.guild else None)
 
     try:
-        from cogs.member_entry import MemberEntryView
-        # Public messages are shared. Regional menus are opened privately by button.
-        kwargs = safe_message_kwargs(
-            content='🍸 按「開主選單」查看個人選單。',
-            view=MemberEntryView(),
-        )
-        kwargs["mention_author"] = False
-        await message.reply(**kwargs)
+        await send_public_entry(message)
     except discord.HTTPException:
         log.exception("Failed to send mention quick-bar menu: message=%s", message.id)

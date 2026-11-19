@@ -33,6 +33,18 @@ def interaction(source):
 
 
 class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mention_fallback_uses_shared_welcome_controls(self):
+        from bot import Bot
+        user = N(id=99)
+        for menu in (None, N(send_mention_menu=AsyncMock(side_effect=ValueError('test')))):
+            message = N(author=N(bot=False), guild=N(), mentions=[user], content='<@99>', reply=AsyncMock())
+            bot = N(user=user, get_cog=lambda _: menu, process_commands=AsyncMock())
+            await Bot.on_message(bot, message)
+            kwargs = message.reply.await_args.kwargs
+            self.assertFalse(kwargs['mention_author'])
+            self.assertEqual([b.custom_id for b in kwargs['view'].children],
+                             ['entry:games:v2', 'entry:menu:v2', 'entry:help:v2'])
+
     async def test_read_only_guide_routes_only_to_accessible_writable_destinations(self):
         source = channel(1, '組隊與語音指南', writable=False)
         target = channel(2, 'fc-吹水組隊')

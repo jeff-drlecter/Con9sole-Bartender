@@ -55,6 +55,8 @@ async def show_route(i,action,*,source=None,return_to=None,replace=False):
                 '可以先看看。到 <id:customize> 自選聊天、新聞或直播內容；日後也可在這裡選擇遊戲，再到主選單找隊友。',
                 '可以先睇吓。去 <id:customize> 自選聊天、新聞或直播內容；之後想玩就喺同一度揀遊戲，再去主選單搵隊友。')
         elif action == 'help':
+            # Resolve the source first. Do not await another lookup between the
+            # destination authorization and sending its private link.
             target = await support_destination(i)
             if target:
                 content = words(member,
@@ -68,7 +70,6 @@ async def show_route(i,action,*,source=None,return_to=None,replace=False):
             content = words(member,
                 '🎮 到 <id:customize> 選擇遊戲，再到主選單找隊友。找不到想玩的遊戲，可按「找 Helper」或「先觀望」。',
                 '🎮 去 <id:customize> 揀遊戲，再去主選單搵隊友。搵唔到啱玩嘅遊戲，可以按「搵 Helper」或者「先觀望」。')
-        await source.resolve(i)
         kwargs=dict(content=content,embed=None,view=NextSteps(source,member,return_to),allowed_mentions=discord.AllowedMentions.none())
     except SourceUnavailable:
         kwargs=dict(content=text(i.user,'denied'),embed=None,view=None,allowed_mentions=discord.AllowedMentions.none())

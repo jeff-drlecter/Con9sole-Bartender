@@ -147,17 +147,8 @@ class Bot(commands.Bot):
                         log.exception("Failed to send mention menu via Menu.send_mention_menu")
 
                 try:
-                    from features.menu_embeds import build_quick_bar_embed
-                    from features.menu_views import QuickBarView
-
-                    kwargs: dict[str, object] = {
-                        "embed": build_quick_bar_embed(message.author),
-                        "mention_author": False,
-                    }
-                    if menu_cog is not None:
-                        kwargs["view"] = QuickBarView(menu_cog)
-
-                    await message.reply(**kwargs)
+                    from features.menu_actions import send_public_entry
+                    await send_public_entry(message)
                     return
                 except Exception:
                     log.exception("Failed to send mention menu fallback")

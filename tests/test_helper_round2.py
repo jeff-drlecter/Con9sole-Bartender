@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as N
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 import config
 from cogs.helper_sandbox import HelperSandbox, HelperPanel, ROOM_ID
@@ -115,6 +115,30 @@ class Round2AccessTests(unittest.IsolatedAsyncioTestCase):
         card,attention=await cog.private_activity(i)
         self.assertNotIn('1 人／1 則',str(card.to_dict()))
         self.assertEqual(attention,[])
+
+    async def test_route_checks_destination_last_if_access_changes_during_source_lookup(self):
+        _, i, _, target, _, channels = setup()
+        target.id = config.SUPPORT_CHANNEL_ID
+        target.mention = f'<#{target.id}>'
+        channels[target.id] = target
+        authorized = True
+        events = []
+
+        async def source_check(_):
+            nonlocal authorized
+            events.append('source')
+            authorized = False
+            return i.user, channels[i.channel_id], None
+
+        async def destination_check(_):
+            events.append('destination')
+            return target if authorized else None
+
+        source = N(resolve=source_check)
+        with patch('core.newcomer_routes.support_destination', side_effect=destination_check):
+            await show_route(i, 'help', source=source)
+        self.assertEqual(events[-1], 'destination')
+        self.assertNotIn(target.mention, i.followup.send.call_args.kwargs['content'])
 
     async def test_existing_support_requires_fresh_read_write_and_non_age_gated_channel(self):
         cog,i,m,source,demo,channels=setup()
