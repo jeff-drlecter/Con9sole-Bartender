@@ -18,7 +18,7 @@ class EntryTests(unittest.IsolatedAsyncioTestCase):
             inter = interaction()
             target = MagicMock(**{method: AsyncMock()})
             inter.client.get_cog.return_value = target
-            view = LegacyMenuView(menu, 'quick') if key == 'tempvc_control' else QuickBarView(menu)
+            view = LegacyMenuView(menu, 'quick') if key == 'tempvc_control' else SectionMenuView(menu, 'info')
             await view.handle_item(inter, next(b.item for b in view.children if b.item.id == key))
             inter.client.get_cog.assert_called_with(cog)
             getattr(target, method).assert_awaited_once_with(inter)
@@ -34,9 +34,9 @@ class EntryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([b.custom_id for b in localized.children], ids)
             self.assertEqual(len(ids), len(set(ids)))
             for row in range(5):
-                self.assertLessEqual(sum(b.row == row for b in localized.children), 3 if row in (1, 3) else 2)
-            self.assertIn('我的組隊通知', {b.label for b in localized.children})
-            self.assertIn('小隊語音', {b.label for b in localized.children})
+                self.assertLessEqual(sum(b.row == row for b in localized.children), 3)
+            self.assertIn('我的組隊通知', {b.label for b in SectionMenuView(MagicMock(), 'info').children})
+            self.assertIn('開房／房控', {b.label for b in localized.children})
             self.assertNotIn('tempvc_control', {b.item.id for b in localized.children})
             self.assertIn('我的組隊通知', build_help_embed(language_member(code)).description)
             view.stop()

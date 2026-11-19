@@ -2,7 +2,6 @@ from __future__ import annotations
 from features.wording import text as wording_text, view_copy as wording_view
 
 import inspect
-import logging
 from typing import Awaitable, Callable
 
 import discord
@@ -13,17 +12,14 @@ from core.ui import SafeView, report_ui_error
 from data.menu_registry import (
     LEGACY_HOME_MENU_ITEMS,
     LEGACY_QUICK_MENU_ITEMS,
+    RETIRED_SECTION_ITEMS,
     MenuItem,
     get_menu_items,
 )
-from features.menu_embeds import build_home_menu_embed
 from features.menu_helpers import can_use_admin
 from core.permissions import can_use_staff_tool
 
-log = logging.getLogger("con9sole-bartender.menu.views")
-
 RULES_URL = getattr(config, "RULES_URL", None)
-HELP_URL = getattr(config, "HELP_URL", None)
 
 PUBLIC_DISCUSSION_ROLE_IDS = set(getattr(config, "PUBLIC_DISCUSSION_ROLE_IDS", []) or [])
 PUBLIC_DISCUSSION_ROLE_NAMES = {
@@ -93,6 +89,7 @@ NO_COOLDOWN_ITEM_IDS = {
     "community_rank",
     "community_leaderboard",
     "community_weekly",
+    "guild_cards", "support",
     "team",
     "tempvc",
     "tempvc_control",
@@ -129,13 +126,6 @@ def _get_method(target: object, item: MenuItem) -> Callable[..., Awaitable[None]
 
 async def _call_method_safely(method: Callable[..., Awaitable[None]], interaction: discord.Interaction) -> None:
     await method(interaction)
-
-
-def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
-    status = getattr(exc, "status", None)
-    code = getattr(exc, "code", None)
-    text = getattr(exc, "text", None)
-    log.warning("%s: Discord HTTP error status=%s code=%s text=%r", context, status, code, text)
 
 
 def _has_public_discussion_role(member: discord.Member) -> bool:
@@ -314,47 +304,9 @@ class RegistryMenuView(BaseMenuView):
         for item in get_menu_items(layer):
             self.add_item(RegistryButton(item))
 
-    async def _send_home_menu_direct(self, interaction: discord.Interaction) -> None:
-        await self._record(interaction, "home_menu")
-        embed = build_home_menu_embed(interaction.user, include_thumbnail=False)
-        from features.language_preferences import localize_menu
-        embed, view = localize_menu(interaction.user, embed, HomeMenuView(self.cog, include_admin=can_use_admin(interaction.user)))
-        from features.member_hints import add_member_hint
-        await add_member_hint(self.cog.bot, interaction, embed, context='more', private=True)
-
-        try:
-            await send_or_followup(
-                interaction,
-                embed=embed,
-                view=wording_view(interaction.user, view),
-                ephemeral=True,
-            )
-            return
-        except discord.HTTPException as exc:
-            _log_http_exception("home_menu full view", exc)
-
-        await send_or_followup(
-            interaction,
-            embed=embed,
-            view=wording_view(interaction.user, HomeMenuView(self.cog, include_external_links=False, include_admin=can_use_admin(interaction.user))),
-            ephemeral=True,
-        )
-
     async def handle_item(self, interaction: discord.Interaction, item: MenuItem) -> None:
         if item.id == "home_menu":
-            try:
-                await self._send_home_menu_direct(interaction)
-            except discord.InteractionResponded:
-                pass
-            except Exception as exc:
-                if interaction.response.is_done():
-                    await report_ui_error(interaction, exc)
-                    return
-                await send_or_followup(
-                    interaction,
-                    content=f"❌ 執行 `{item.id}` 時出錯：`{type(exc).__name__}`。",
-                    ephemeral=True,
-                )
+            await self.cog.open_main_menu(interaction)
             return
 
         if item.id not in TARGET_MANAGED_COOLDOWN_ITEM_IDS and item.id not in NO_COOLDOWN_ITEM_IDS:
@@ -381,7 +333,7 @@ class RegistryMenuView(BaseMenuView):
             await send_or_followup(
                 interaction,
                 content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),
-                view=wording_view(interaction.user, QuickBarView(self.cog)),
+                view=wording_view(interaction.user, QuickBarView(self.cog, include_admin=can_use_admin(interaction.user))),
                 ephemeral=True,
             )
             return
@@ -395,7 +347,7 @@ class RegistryMenuView(BaseMenuView):
             await send_or_followup(
                 interaction,
                 content=wording_text(interaction.user, "呢個功能暫時未準備好，請稍後再試。"),
-                view=wording_view(interaction.user, QuickBarView(self.cog)),
+                view=wording_view(interaction.user, QuickBarView(self.cog, include_admin=can_use_admin(interaction.user))),
                 ephemeral=True,
             )
             return
@@ -417,8 +369,12 @@ class RegistryMenuView(BaseMenuView):
 
 
 class QuickBarView(RegistryMenuView):
-    def __init__(self, cog: object) -> None:
+    def __init__(self, cog: object, *, include_admin: bool = False) -> None:
         super().__init__(cog, "quick")
+        if not include_admin:
+            for button in list(self.children):
+                if button.item.admin_only:
+                    self.remove_item(button)
 
 
 class HomeMenuView(RegistryMenuView):
@@ -441,10 +397,8 @@ class SectionMenuView(RegistryMenuView):
         super().__init__(cog, section)
         if section == "social":
             self.add_item(PublicExploreButton())
-        if section == "info":
-            for label, emoji, url in (("伺服器規則", "📜", RULES_URL), ("支援頻道", "❓", HELP_URL)):
-                if url:
-                    self.add_item(discord.ui.Button(label=label, emoji=emoji, url=url, row=3))
+            if RULES_URL:
+                self.add_item(discord.ui.Button(label="伺服器規則", emoji="📜", url=RULES_URL, row=3))
 
 
 class LegacyMenuView(RegistryMenuView):
@@ -453,7 +407,10 @@ class LegacyMenuView(RegistryMenuView):
         super().__init__(cog, layer)
         self.clear_items()
         current_ids = {item.id for item in get_menu_items(layer)}
-        old_items = LEGACY_QUICK_MENU_ITEMS if layer == "quick" else LEGACY_HOME_MENU_ITEMS
+        old_items = (
+            LEGACY_QUICK_MENU_ITEMS if layer == "quick" else
+            LEGACY_HOME_MENU_ITEMS if layer == "home" else RETIRED_SECTION_ITEMS[layer]
+        )
         if layer == "home":
             public = PublicExploreButton()
             public.row = 4

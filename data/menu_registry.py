@@ -324,15 +324,19 @@ PREVIOUS_QUICK_MENU_ITEMS: list[MenuItem] = [
 LEGACY_QUICK_MENU_ITEMS += PREVIOUS_QUICK_MENU_ITEMS
 
 QUICK_MENU_ITEMS: list[MenuItem] = [
-    MenuItem("squad_plans", "約一局", "📅", "primary", "quick", 0, "SquadPlans"),
-    MenuItem("tempvc", "小隊語音", "🎧", "primary", "quick", 0, "TempVC"),
+    MenuItem("squad_plans", "搵隊友／約局", "🎮", "primary", "quick", 0, "SquadPlans"),
+    MenuItem("tempvc", "開房／房控", "🎧", "primary", "quick", 0, "TempVC"),
+    MenuItem("guild_cards", "公會卡", "🪪", "secondary", "quick", 0, "CommunityDirectory"),
     MenuItem("community_rank", "我的會員卡", "🎖️", "secondary", "quick", 1, "CommunityLevels"),
-    # This panel manages game subscriptions. Per-plan consent remains on its card.
-    MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "quick", 1, "SquadCards"),
+    MenuItem("rankings", "排行榜", "🏆", "secondary", "quick", 1, "Menu", "open_rankings_menu"),
+    MenuItem("daily_bar", "今日小任務", "📅", "secondary", "quick", 1, "DailyBar"),
     MenuItem("drink", "飲一杯", "🍹", "success", "quick", 2, "Drink"),
     MenuItem("drink_gift", "請人飲", "🥂", "primary", "quick", 2, "Drink", "gift_drink_entry"),
-    MenuItem("home_menu", "更多", "🍸", "secondary", "quick", 3, "Menu", "open_home_menu_from_button"),
-    MenuItem("language", "語言設定", "🌐", "secondary", "quick", 3, "LanguagePreferences", "menu_entry"),
+    MenuItem("social", "社群互動", "🙌", "secondary", "quick", 2, "Menu", "open_social_menu"),
+    MenuItem("news", "遊戲情報", "📰", "secondary", "quick", 3, "RSSDelivery"),
+    MenuItem("info", "偏好同設定", "⚙️", "secondary", "quick", 3, "Menu", "open_info_menu"),
+    MenuItem("support", "搵 Helper", "🛟", "secondary", "quick", 3, "Menu", "open_support_menu"),
+    MenuItem("admin_tool", "管理工具", "🛠️", "secondary", "quick", 4, "Menu", "open_admin_tool_from_button", admin_only=True),
 ]
 
 PREVIOUS_HOME_MENU_ITEMS: list[MenuItem] = [
@@ -373,7 +377,6 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("titles", "我的稱號", "🏅", "secondary", "records", 1, "TitleRoles"),
     ],
     "rankings": [
-        MenuItem("invite", "邀請朋友", "🔗", "primary", "rankings", 0, "Invites"),
         MenuItem("invite_leaderboard", "邀請排行榜", "🤝", "secondary", "rankings", 1, "Invites", "leaderboard_entry"),
         MenuItem("invite_mine", "我的邀請成果", "🔗", "secondary", "rankings", 1, "Invites", "mine_entry"),
         MenuItem("community_leaderboard", "等級總榜", "🏆", "secondary", "rankings", 0, "CommunityLevels", "leaderboard_entry"),
@@ -381,29 +384,47 @@ SECTION_MENU_ITEMS: dict[str, list[MenuItem]] = {
         MenuItem("drink_leaderboard", "酒吧排行榜", "🍸", "secondary", "rankings", 1, "Drink", "leaderboard_entry"),
     ],
     "social": [
-        MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "social", 1, "SquadCards"),
+        MenuItem("invite", "邀請朋友", "🔗", "primary", "social", 0, "Invites"),
+        MenuItem("instagram", "IG", "📸", "secondary", "social", 2, "Menu", "open_instagram_from_button"),
+        MenuItem("threads", "Threads", "🧵", "secondary", "social", 2, "Menu", "open_threads_from_button"),
+        MenuItem("help", "使用說明", "ℹ️", "secondary", "social", 3, "Menu", "open_help_from_button"),
         MenuItem("cheers", "打氣", "🎉", "success", "social", 0, "Cheers"),
         MenuItem("cheers_target", "幫人打氣", "🙌", "primary", "social", 0, "Cheers", "cheer_for_member_entry"),
         MenuItem("confession", "無名告白", "🕯️", "secondary", "social", 1, "Confession"),
     ],
     "info": [
+        MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "info", 1, "SquadCards"),
         MenuItem("news_channels", "顯示新聞頻道", "📰", "secondary", "info", 2, "RSSDelivery", "channel_preferences_entry"),
-        MenuItem("news", "我的情報", "📰", "primary", "info", 2, "RSSDelivery", "menu_entry"),
         MenuItem("intelligence_settings", "情報設定", "⚙️", "secondary", "info", 2, "RSSDelivery", "settings_entry"),
         MenuItem("language", "語言設定", "🌐", "secondary", "info", 0, "LanguagePreferences", "menu_entry"),
         MenuItem("customize", "自選頻道與身份", "⚙️", "secondary", "info", 0, "Menu", "open_customize_menu"),
+    ],
+}
+for section, items in SECTION_MENU_ITEMS.items():
+    items.append(MenuItem("quick_bar", "返回主選單", "🍸", "secondary", section, 4, "Menu", "open_main_menu"))
+
+
+
+# Dispatch IDs on previously sent subsection panels after moving their actions.
+RETIRED_SECTION_ITEMS: dict[str, list[MenuItem]] = {
+    "rankings": [
+        MenuItem("invite", "邀請朋友", "🔗", "primary", "rankings", 0, "Invites"),
+    ],
+    "social": [
+        MenuItem("squad_subscriptions", "我的組隊通知", "🔔", "secondary", "social", 1, "SquadCards"),
+    ],
+    "info": [
+        MenuItem("news", "我的情報", "📰", "primary", "info", 2, "RSSDelivery", "menu_entry"),
         MenuItem("invite", "邀請朋友", "🔗", "secondary", "info", 0, "Menu", "create_invite_link_from_button"),
         MenuItem("instagram", "IG", "📸", "secondary", "info", 1, "Menu", "open_instagram_from_button"),
         MenuItem("threads", "Threads", "🧵", "secondary", "info", 1, "Menu", "open_threads_from_button"),
         MenuItem("help", "使用說明", "ℹ️", "secondary", "info", 3, "Menu", "open_help_from_button"),
     ],
+    "records": [
+    ],
 }
-for section, items in SECTION_MENU_ITEMS.items():
-    items.extend([
-        MenuItem("home_menu", "返回上一頁", "⬅️", "secondary", section, 4, "Menu", "open_home_menu_from_button"),
-        MenuItem("quick_bar", "返回吧枱", "🍸", "secondary", section, 4, "Menu", "open_main_menu"),
-    ])
-
+for section, items in RETIRED_SECTION_ITEMS.items():
+    items.append(MenuItem("home_menu", "返回主選單", "🍸", "secondary", section, 4, "Menu", "open_main_menu"))
 
 
 ADMIN_MENU_ITEMS: list[MenuItem] = [
@@ -417,7 +438,7 @@ ADMIN_MENU_ITEMS: list[MenuItem] = [
     MenuItem("community_levels_admin", "等級管理", "🎖️", "secondary", "admin", 2, "CommunityLevels", "admin_entry", admin_only=True),
     MenuItem(
         id="home_menu",
-        label="返回上一頁",
+        label="返回主選單",
         emoji="⬅️",
         style="secondary",
         layer="admin",

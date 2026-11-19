@@ -19,7 +19,7 @@ from features.admin_actions import (
 from features.menu_actions import (
     open_admin_tool_menu as run_open_admin_tool_menu,
     open_help_menu as run_open_help_menu,
-    open_home_menu as run_open_home_menu,
+    show_private_menu,
     open_instagram_menu as run_open_instagram_menu,
     open_invite_menu as run_open_invite_menu,
     open_quick_bar_menu as run_open_quick_bar_menu,
@@ -112,14 +112,14 @@ class Menu(commands.Cog):
         await run_open_quick_bar_menu(self, interaction, ephemeral=True)
 
     async def open_home_menu_from_button(self, interaction: discord.Interaction) -> None:
-        await run_open_home_menu(self, interaction)
+        await self.open_main_menu(interaction)
 
     async def _open_section(self, interaction: discord.Interaction, section: str) -> None:
         from features.menu_embeds import build_section_embed
         await self.record_usage(f"menu_{section}", interaction.user.id, interaction.guild_id)
         from features.language_preferences import localize_menu
         embed, view = localize_menu(interaction.user, build_section_embed(section), SectionMenuView(self, section))
-        await send_or_followup(interaction, embed=embed, view=view, ephemeral=True)
+        await show_private_menu(interaction, embed=embed, view=view)
 
     async def open_records_menu(self, interaction: discord.Interaction) -> None:
         await self._open_section(interaction, "records")
@@ -137,9 +137,11 @@ class Menu(commands.Cog):
         from features.language_preferences import language, localize_menu
         _, view = localize_menu(interaction.user, view=SectionMenuView(self, "info"))
         content = "⚙️ 前往 <id:customize>，自行選擇遊戲版本、公海、新聞及直播區內容，可隨時更改。" if language(interaction.user) != "hk" else "⚙️ 前往 <id:customize>，自行揀選遊戲版本、公海、新聞及直播區內容。可隨時再更改。"
-        await send_or_followup(interaction,
-            content=content,
-            view=view, ephemeral=True)
+        await show_private_menu(interaction, content=content, view=view)
+
+    async def open_support_menu(self, interaction: discord.Interaction) -> None:
+        from core.newcomer_routes import show_route
+        await show_route(interaction, "help", return_to=self.open_main_menu)
 
     async def open_help_from_button(self, interaction: discord.Interaction) -> None:
         await run_open_help_menu(self, interaction)
@@ -187,9 +189,10 @@ class Menu(commands.Cog):
     async def cog_load(self) -> None:
         if self._views_registered:
             return
-        self.bot.add_view(QuickBarView(self))
+        self.bot.add_view(QuickBarView(self, include_admin=True))
         for section in ("records", "rankings", "social", "info"):
             self.bot.add_view(SectionMenuView(self, section))
+            self.bot.add_view(LegacyMenuView(self, section))
         self.bot.add_view(HomeMenuView(self, include_admin=True))
         self.bot.add_view(LegacyMenuView(self, "quick"))
         self.bot.add_view(LegacyMenuView(self, "home"))
@@ -221,7 +224,7 @@ class Menu(commands.Cog):
     @app_commands.command(name="community_hub", description="顯示 Con9sole Bartender 主頁")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))
     async def community_hub(self, interaction: discord.Interaction) -> None:
-        await run_open_home_menu(self, interaction)
+        await self.open_main_menu(interaction)
 
     @app_commands.command(name="admin_stats", description="查看 Community Bot 使用數據")
     @app_commands.guilds(discord.Object(id=config.GUILD_ID))

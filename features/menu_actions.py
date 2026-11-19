@@ -13,12 +13,11 @@ from features.invite_tools import (
 from features.menu_embeds import (
     build_admin_tool_embed,
     build_help_embed,
-    build_home_menu_embed,
     build_quick_bar_embed,
 )
 from features.menu_helpers import can_use_admin, get_retry_after, touch_cooldown
 from features.menu_stats import record_usage
-from features.menu_views import AdminToolView, HelpMenuView, HomeMenuView, QuickBarView
+from features.menu_views import AdminToolView, HelpMenuView, QuickBarView
 from features.social_tools import (
     open_instagram_from_button as run_open_instagram_from_button,
 )
@@ -29,11 +28,15 @@ from features.social_tools import (
 log = logging.getLogger("con9sole-bartender.menu.actions")
 
 
-def _log_http_exception(context: str, exc: discord.HTTPException) -> None:
-    status = getattr(exc, "status", None)
-    code = getattr(exc, "code", None)
-    text = getattr(exc, "text", None)
-    log.warning("%s: Discord HTTP error status=%s code=%s text=%r", context, status, code, text)
+async def show_private_menu(interaction: discord.Interaction, *, embed=None, view=None, content=None) -> None:
+    """Navigate in place only on private panels. Shared cards always open a private reply."""
+    message = getattr(interaction, "message", None)
+    if (getattr(interaction, "type", None) == discord.InteractionType.component
+            and message is not None and message.flags.ephemeral
+            and not interaction.response.is_done()):
+        await interaction.response.edit_message(content=content, embed=embed, view=view, attachments=[])
+        return
+    await send_or_followup(interaction, content=content, embed=embed, view=view, ephemeral=True)
 
 
 async def open_quick_bar_menu(
@@ -43,63 +46,24 @@ async def open_quick_bar_menu(
     ephemeral: bool,
 ) -> None:
     await record_usage("menu", interaction.user.id, interaction.guild_id)
-    embed, view = localize_menu(interaction.user, build_quick_bar_embed(interaction.user), QuickBarView(cog))
+    embed, view = localize_menu(interaction.user, build_quick_bar_embed(interaction.user), QuickBarView(cog, include_admin=ephemeral and can_use_admin(interaction.user)))
     if ephemeral:
         await add_member_hint(cog.bot, interaction, embed, context='menu', private=True)
-    await send_or_followup(
-        interaction,
-        embed=embed,
-        view=view,
-        ephemeral=ephemeral,
-    )
-
-
-async def open_home_menu(cog: object, interaction: discord.Interaction) -> None:
-    await record_usage("home_menu", interaction.user.id, interaction.guild_id)
-    embed, view = localize_menu(interaction.user, build_home_menu_embed(interaction.user), HomeMenuView(cog, include_admin=can_use_admin(interaction.user)))
-    await add_member_hint(cog.bot, interaction, embed, context='more', private=True)
-    try:
-        await send_or_followup(
-            interaction,
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
-        return
-    except discord.HTTPException as exc:
-        _log_http_exception("slash home_menu full view", exc)
-
-    embed, view = localize_menu(interaction.user,
-        build_home_menu_embed(interaction.user, include_thumbnail=False),
-        HomeMenuView(cog, include_external_links=False, include_admin=can_use_admin(interaction.user)))
-    await send_or_followup(
-        interaction,
-        embed=embed,
-        view=view,
-        ephemeral=True,
-    )
+        await show_private_menu(interaction, embed=embed, view=view)
+    else:
+        await send_or_followup(interaction, embed=embed, view=view)
 
 
 async def open_help_menu(cog: object, interaction: discord.Interaction) -> None:
     await record_usage("help", interaction.user.id, interaction.guild_id)
-    embed, view = localize_menu(interaction.user, build_help_embed(interaction.user), HelpMenuView(cog))
-    await send_or_followup(
-        interaction,
-        embed=embed,
-        view=view,
-        ephemeral=True,
-    )
+    embed, view = localize_menu(interaction.user, build_help_embed(interaction.user), HelpMenuView(cog, include_admin=can_use_admin(interaction.user)))
+    await show_private_menu(interaction, embed=embed, view=view)
 
 
 async def open_admin_tool_menu(cog: object, interaction: discord.Interaction) -> None:
     await record_usage("admin_tool", interaction.user.id, interaction.guild_id)
     embed, view = localize_menu(interaction.user, build_admin_tool_embed(interaction.user), AdminToolView(cog, member=interaction.user))
-    await send_or_followup(
-        interaction,
-        embed=embed,
-        view=view,
-        ephemeral=True,
-    )
+    await show_private_menu(interaction, embed=embed, view=view)
 
 
 async def open_invite_menu(interaction: discord.Interaction) -> None:
@@ -130,7 +94,7 @@ async def send_mention_quick_bar(cog: object, message: discord.Message) -> None:
         from cogs.member_entry import MemberEntryView
         # Public messages are shared. Regional menus are opened privately by button.
         kwargs = safe_message_kwargs(
-            content='🍸 按「開啟功能」查看個人選單。',
+            content='🍸 按「開主選單」查看個人選單。',
             view=MemberEntryView(),
         )
         kwargs["mention_author"] = False

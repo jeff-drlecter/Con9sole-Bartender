@@ -45,6 +45,8 @@ TW = {
 }
 
 HK = {
+    "找隊友、開語音房或查看公會卡。組隊通知、語言及頻道偏好可在「偏好與設定」調整。":
+        "搵隊友、開房或者睇公會卡。組隊通知、語言同頻道偏好都喺「偏好同設定」。",
     "約一局、查看會員卡，或輕鬆喝一杯。\n本局提醒及遊戲訂閱可在「我的組隊通知」管理。":
         "約一局、睇會員卡，或者飲杯嘢。\n呢局提醒同遊戲訂閱都可以喺「我的組隊通知」管理。",
     "查看紀錄、參與互動，或調整個人設定。\n今日小任務亦可從會員卡進入，自由參加。":
@@ -145,7 +147,8 @@ class LanguageView(discord.ui.View):
                     raise ValueError("未能確認設定，請重新開啟語境選單再試。")
                 from features.menu_embeds import build_quick_bar_embed
                 from features.menu_views import QuickBarView
-                embed, view = localize_menu(fresh, build_quick_bar_embed(fresh), QuickBarView(interaction.client.get_cog("Menu")))
+                from features.menu_helpers import can_use_admin
+                embed, view = localize_menu(fresh, build_quick_bar_embed(fresh), QuickBarView(interaction.client.get_cog("Menu"), include_admin=can_use_admin(fresh)))
                 await interaction.followup.send("已切換香港語境。" if code == "hk" else "已切換為台灣用語。", embed=embed, view=view, ephemeral=True)
             except (ValueError, discord.HTTPException) as exc:
                 await interaction.followup.send(f"設定未完成：{exc}", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())

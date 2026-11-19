@@ -49,6 +49,7 @@ async def run():
         await bot.reload_extension("cogs.community_directory")
         directory = bot.tree.get_command("community", guild=discord.Object(config.GUILD_ID))
         print(json.dumps({"extensions": len(bot.extensions), "missing": missing,\n            "community_commands": sorted(c.name for c in directory.commands),
+            "chinese_directory": bot.tree.get_command("公會", guild=discord.Object(config.GUILD_ID)) is not None,
             "community_reloaded": directory is not directory_before,
             "community_global": bot.tree.get_command("community") is not None,
             "plans_loaded": bot.get_cog("SquadPlans") is not None,
@@ -99,8 +100,9 @@ asyncio.run(run())
         self.assertTrue(report["plans_loaded"])
         self.assertTrue(report["sweeper_restarted"])
         self.assertTrue(report["maintenance_restarted"])
-        self.assertEqual(report["command_count"], 66)
+        self.assertEqual(report["command_count"], 67)
 
         self.assertEqual(report["community_commands"], ["archive", "create", "edit", "list", "restore", "show"])
         self.assertTrue(report["community_reloaded"])
+        self.assertTrue(report["chinese_directory"])
         self.assertFalse(report["community_global"])

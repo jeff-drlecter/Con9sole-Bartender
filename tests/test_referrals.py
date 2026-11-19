@@ -83,7 +83,7 @@ class ReferralUI(unittest.IsolatedAsyncioTestCase):
     async def test_menu_layout_and_persistent_ids(self):
         from features.menu_views import LegacyMenuView,HomeMenuView,SectionMenuView,AdminToolView
         from cogs.invites import InviteView
-        for view in [LegacyMenuView(MagicMock(),'quick'),HomeMenuView(MagicMock()),SectionMenuView(MagicMock(),'rankings')]:
+        for view in [LegacyMenuView(MagicMock(),'quick'),HomeMenuView(MagicMock()),SectionMenuView(MagicMock(),'social')]:
             invite=next(b for b in view.children if b.item.id=='invite')
             if not isinstance(view,LegacyMenuView):
                 self.assertEqual(invite.row,0)

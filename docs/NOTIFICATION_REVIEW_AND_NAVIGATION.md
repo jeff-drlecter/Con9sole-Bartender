@@ -1,6 +1,6 @@
 # Notification review and member navigation — 2026-11-08
 
-Admin entry: More → Admin Tools → System Status → Review Notifications.
+Admin entry: /menu → Admin Tools → System Status → Review Notifications.
 The panel is private, scoped to the guild and original operator, and permissions are
 checked again when a modal is submitted and immediately before writing a resolution.
 Weekly actions additionally require Manage Server or Administrator permission.

@@ -19,7 +19,7 @@ class UnifiedMenuTests(unittest.IsolatedAsyncioTestCase):
         for section in SECTION_MENU_ITEMS:
             view = SectionMenuView(cog, section)
             self.assertTrue(view.is_persistent())
-            self.assertTrue({'返回上一頁', '返回吧枱'} <= {b.label for b in view.children})
+            self.assertIn('返回主選單', {b.label for b in view.children})
             for row in range(5):
                 self.assertLessEqual(sum(b.row == row for b in view.children), 3)
             view.stop()
@@ -44,7 +44,7 @@ class UnifiedMenuTests(unittest.IsolatedAsyncioTestCase):
         cog = MagicMock()
         cog.record_usage = AsyncMock()
         inter = interaction()
-        with patch('cogs.menu.send_or_followup', new=AsyncMock()) as send:
+        with patch('features.menu_actions.send_or_followup', new=AsyncMock()) as send:
             await Menu._open_section(cog, inter, 'records')
             self.assertTrue(send.call_args.kwargs['ephemeral'])
             self.assertIsInstance(send.call_args.kwargs['view'], SectionMenuView)

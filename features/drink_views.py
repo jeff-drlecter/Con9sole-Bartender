@@ -370,6 +370,7 @@ class MemberNavigationView(SafeView):
 class MemberCardView(MemberNavigationView):
     def __init__(self):
         super().__init__(current='card')
+        self.add_item(FeatureButton(label='酒吧紀錄',emoji='📊',cog='Drink',method='stats_entry',row=0))
         self.add_item(FeatureButton(label='管理稱號',emoji='🏅',cog='TitleRoles',method='menu_entry',row=0))
 
 

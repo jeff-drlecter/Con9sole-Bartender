@@ -9,7 +9,7 @@ from core.rss_preferences import DEFAULT
 from data.menu_registry import PREVIOUS_QUICK_MENU_ITEMS
 from features.drink_views import MemberCardView
 from features.language_preferences import localize_menu
-from features.menu_actions import open_home_menu
+from features.menu_actions import open_quick_bar_menu
 from features.menu_embeds import build_quick_bar_embed
 from features.menu_views import HomeMenuView, LegacyMenuView, QuickBarView
 from quick_bar_fakes import interaction, member
@@ -46,21 +46,21 @@ class RoundIntegrationTests(unittest.IsolatedAsyncioTestCase):
             inter = interaction()
             feature = S(**{method: AsyncMock()})
             inter.client.get_cog.return_value = feature
-            item = next(c.item for c in legacy.children if c.item.id == key)
+            item = next(c.item for v in (current, legacy) for c in v.children if c.item.id == key)
             await legacy.handle_item(inter, item)
             inter.client.get_cog.assert_called_with(target)
             getattr(feature, method).assert_awaited_once_with(inter)
 
-    async def test_new_menu_private_language_and_two_buttons_per_row(self):
+    async def test_new_menu_private_language_and_three_buttons_per_row(self):
         for code in ('hk', 'tw', 'neutral'):
             user = member()
             user.roles = [] if code == 'neutral' else [S(name='語境偏好｜' + ('香港' if code == 'hk' else '台灣'),
                                                         managed=False, permissions=S(value=0))]
             embed, view = localize_menu(user, build_quick_bar_embed(user), QuickBarView(S()))
-            self.assertEqual(len(view.children), 8)
-            self.assertTrue(all(sum(c.row == row for c in view.children) == 2 for row in range(4)))
-            self.assertIn('本局提醒' if code != 'hk' else '呢局提醒', embed.description)
-            self.assertEqual(view.children[4].label, '飲一杯' if code == 'hk' else '喝一杯')
+            self.assertEqual(len(view.children), 12)
+            self.assertTrue(all(sum(c.row == row for c in view.children) == 3 for row in range(4)))
+            self.assertIn('偏好與設定' if code != 'hk' else '偏好同設定', embed.description)
+            self.assertEqual(view.children[6].label, '飲一杯' if code == 'hk' else '喝一杯')
             self.assertTrue(view.is_persistent())
 
     async def test_rss_settings_are_access_checked_and_legacy_card_can_return(self):
@@ -82,12 +82,19 @@ class RoundIntegrationTests(unittest.IsolatedAsyncioTestCase):
         for row in prefs.to_components():
             self.assertLessEqual(len(row['components']), 5)
 
-    async def test_fallback_home_remains_localized(self):
-        inter = interaction()
-        failure = discord.HTTPException(S(status=400, reason='bad request'), 'retry')
-        with patch('features.menu_actions.send_or_followup', new=AsyncMock(side_effect=[failure, None])) as send, \
-             patch('features.menu_actions.record_usage', new=AsyncMock()):
-            await open_home_menu(MagicMock(), inter)
-        self.assertEqual(send.await_count, 2)
-        self.assertTrue(send.call_args.kwargs['ephemeral'])
-        self.assertEqual(next(c for c in send.call_args.kwargs['view'].children if c.item.id == 'quick_bar').label, '返回吧台')
+    async def test_private_navigation_replaces_only_private_component_messages(self):
+        for shared in (True, False):
+            inter = interaction()
+            inter.type = discord.InteractionType.component
+            inter.message.flags.ephemeral = not shared
+            with patch('features.menu_actions.record_usage', new=AsyncMock()):
+                await open_quick_bar_menu(MagicMock(), inter, ephemeral=True)
+            if shared:
+                self.assertTrue(inter.response.send_message.call_args.kwargs['ephemeral'])
+                inter.response.edit_message.assert_not_awaited()
+            else:
+                inter.response.edit_message.assert_awaited_once()
+                inter.response.send_message.assert_not_awaited()
+            sender = inter.response.send_message if shared else inter.response.edit_message
+            view = sender.call_args.kwargs['view']
+            self.assertEqual(next(c.label for c in view.children if c.item.id == 'support'), '聯絡 Helper')

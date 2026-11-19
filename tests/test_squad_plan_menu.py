@@ -99,7 +99,7 @@ async def main():
         feature.menu_entry.assert_awaited_once_with(routed)
         menu.enforce_menu_button_cooldown.assert_not_awaited()
         assert view.is_persistent()
-        assert sum(b.row == 0 for b in view.children) == 2
+        assert sum(b.row == 0 for b in view.children) == 3
 asyncio.run(main())
 '''], capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)

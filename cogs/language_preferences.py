@@ -88,7 +88,7 @@ class LanguagePreferences(commands.Cog):
                 added = [p for p in after if p["title"] == PROMPT_TITLE]
                 if len(added) != 1 or [o.get("role_ids") for o in added[0]["options"]] != [o["role_ids"] for o in expected]:
                     raise ValueError("未能確認新題目；請檢查，未自動重試。")
-                await interaction.followup.send("✅ Onboarding 中性繁體中文及語境選項已讀回確認；原有問題及選項 ID 已保留；新聞區顯示選項移到入服後「頻道與身份組」（原先四條入服前問題已滿）。兩個偏好角色均為零權限。日常可用 /menu → 更多玩法 → 資訊與設定 → 語境設定，或 /language 切換。", ephemeral=True)
+                await interaction.followup.send("✅ Onboarding 中性繁體中文及語境選項已讀回確認；原有問題及選項 ID 已保留；新聞區顯示選項移到入服後「頻道與身份組」（原先四條入服前問題已滿）。兩個偏好角色均為零權限。日常可用 /menu → 偏好與設定 → 語言設定，或 /language 切換。", ephemeral=True)
             except (ValueError, discord.HTTPException) as exc:
                 await interaction.followup.send(f"設定未完成：{exc}", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
