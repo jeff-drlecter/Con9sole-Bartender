@@ -9,9 +9,17 @@ def safe(value,limit=900):
     return text[:limit]+('…' if len(text)>limit else '')
 
 
+def user_identity(user_id, display_name=None, username=None):
+    name = display_name or username or '名稱未取得'
+    label = safe(name, 80)
+    if username and username != name:
+        label += f'（{safe(username, 80)}）'
+    return f'{label}\n用戶 ID：`{int(user_id)}`'
+
+
 def who(user):
-    name=getattr(user,'display_name',None) or getattr(user,'global_name',None) or getattr(user,'name',None)
-    return (f'**{safe(name,80)}** · ' if name else '')+f'<@{int(user.id)}>'
+    display_name = getattr(user, 'display_name', None) or getattr(user, 'global_name', None)
+    return user_identity(user.id, display_name, getattr(user, 'name', None))
 
 
 def role_label(role,*,deleted=False):

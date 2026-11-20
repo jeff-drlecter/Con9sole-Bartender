@@ -15,14 +15,15 @@ class ReadableTests(unittest.IsolatedAsyncioTestCase):
     def member(self):
         return NS(id=574555428403281940,name='jeff_drlecter',display_name='家用夠のAdmin',display_avatar='https://cdn.discordapp.com/embed/avatars/0.png')
 
-    def test_identity_keeps_snapshot_clickable_reference_and_small_footer(self):
+    def test_identity_keeps_readable_snapshot_and_role_reference(self):
         user=self.member(); role=NS(id=1417493340819292360,name='Con9sole-Bartender')
         label=who(user)+'\n'+role_label(role)
-        self.assertIn('**家用夠のAdmin**',label)
-        self.assertIn('<@574555428403281940>',label)
+        self.assertIn(f'家用夠のAdmin（{safe(user.name)}）\n用戶 ID：`{user.id}`',label)
+        self.assertNotIn(f'<@{user.id}>',label)
         self.assertIn('**Con9sole-Bartender**',label)
         self.assertIn('<@&1417493340819292360>',label)
-        self.assertIn('成員 574555428403281940',identity_footer(label))
+        # Queued descriptions created by older releases still retain their ID footer.
+        self.assertIn(f'成員 {user.id}',identity_footer(f'<@{user.id}>'))
         self.assertIn('身份組 1417493340819292360',identity_footer(label))
         self.assertNotIn('<@&',role_label(role,deleted=True))
         self.assertIn('Con9sole-Bartender',role_label(role,deleted=True))
@@ -41,10 +42,10 @@ class ReadableTests(unittest.IsolatedAsyncioTestCase):
 
     def test_snapshot_names_cannot_inject_mentions(self):
         text=who(NS(id=7,display_name='@everyone <@&888> **Admin**'))
-        self.assertIn('<@7>',text)
+        self.assertIn('用戶 ID：`7`',text)
         self.assertNotIn('@everyone',text)
         self.assertNotIn('<@&888>',text)
-        self.assertEqual(identity_footer(text),'成員 7')
+        self.assertEqual(identity_footer(text),'')
         self.assertNotIn('<@999>',safe('copied <@999>'))
 
     async def test_avatar_persists_and_rendering_stays_silent(self):
@@ -60,7 +61,8 @@ class ReadableTests(unittest.IsolatedAsyncioTestCase):
             card=kwargs['embeds'][0].to_dict()
             self.assertEqual(card['author']['name'],'家用夠のAdmin')
             self.assertIn('icon_url',card['author'])
-            self.assertIn(str(user.id),card['footer']['text'])
+            self.assertIn(f'用戶 ID：`{user.id}`',card['description'])
+            self.assertNotIn('url',card['author'])
             self.assertEqual(kwargs['allowed_mentions'].to_dict()['parse'],[])
             self.assertTrue(kwargs['silent'])
 
@@ -78,6 +80,32 @@ class ReadableTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Helpers',args[2]); self.assertIn('<@&123>',args[2])
         self.assertIn('允許：查看審核紀錄',args[2])
         self.assertEqual(cog.emit.await_args.kwargs['key'],'audit:99')
+
+    async def test_audit_actor_and_target_with_ids_only(self):
+        guild=NS(id=config.GUILD_ID,get_member=lambda _:None)
+        cog=CommunityAudit(NS()); cog.emit=AsyncMock()
+        entry=NS(id=99,guild=guild,user=None,user_id=7,target=discord.Object(id=8),
+                 action=discord.AuditLogAction.kick,reason=None,extra=None,before=NS(),after=NS())
+        await cog.on_audit_log_entry_create(entry)
+        description=cog.emit.await_args.args[2]
+        for uid in (7, 8):
+            self.assertIn(f'名稱未取得\n用戶 ID：`{uid}`',description)
+
+    async def test_uncached_edit_snapshots_names_or_records_known_id(self):
+        member=NS(id=7,name='player7',display_name='隊長')
+        guild=NS(get_channel_or_thread=lambda _:None,get_member=lambda uid:member if uid==7 else None)
+        cog=CommunityAudit(NS(get_guild=lambda _:guild)); cog.emit=AsyncMock()
+        for raw, label in [
+            ({'id':'7'}, '隊長（player7）'),
+            ({'id':'8','global_name':'玩家','username':'player8'}, '玩家（player8）'),
+            ({'id':'9','username':'player9'}, 'player9'),
+            ({'id':'10'}, '名稱未取得'),
+        ]:
+            with self.subTest(raw=raw):
+                event=NS(guild_id=config.GUILD_ID,channel_id=9,message_id=42,cached_message=None,
+                         data={'author':raw,'content':'updated'})
+                await cog.on_raw_message_edit(event)
+                self.assertIn(f"作者：{label}\n用戶 ID：`{raw['id']}`",cog.emit.await_args.args[2])
 
     async def test_deleted_role_audit_keeps_last_name_when_cache_is_missing(self):
         cog=CommunityAudit(NS()); cog.emit=AsyncMock()
