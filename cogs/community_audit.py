@@ -355,7 +355,10 @@ class CommunityAudit(commands.Cog):
         target=getattr(target_obj,'id',None)
         kind=entry.action.target_type
         target_label=f'ID `{target}`' if target else '未提供'
-        if target and kind=='role':
+        # discord.py 2.7 classifies soundboard actions as user targets.
+        if target and entry.action.name.startswith('soundboard_sound_'):
+            target_label = f'音效 ID `{target}`'
+        elif target and kind=='role':
             obj=entry.guild.get_role(target) or target_obj
             if not getattr(obj,'name',None):
                 from types import SimpleNamespace
