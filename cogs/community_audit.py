@@ -19,7 +19,8 @@ from core.storage_paths import DATA_DIR
 from core.audit_monitor import WriteFailures
 from core.audit_privacy import require_private_audit_channel
 from core.secret_redaction import redact_credentials
-from features.audit_format import safe, who, where, changes, role_label, identity_footer, ACTIONS
+from features.audit_format import safe, who, user_identity, where, changes, role_label, identity_footer, ACTIONS
+from features.member_names import account_label
 
 log = logging.getLogger(__name__)
 ROUTES = {
@@ -71,8 +72,7 @@ class CommunityAudit(commands.Cog):
         try:
             payload={'title':title[:200],'description':description[:3500]}
             if subject is not None:
-                payload['author']={'name':str(getattr(subject,'display_name',None) or getattr(subject,'name',None) or '成員')[:100],
-                                   'url':f'https://discord.com/users/{int(subject.id)}'}
+                payload['author']={'name':str(getattr(subject,'display_name',None) or getattr(subject,'name',None) or '名稱未取得')[:100]}
                 avatar=getattr(subject,'display_avatar',None)
                 if avatar: payload['author']['icon_url']=str(avatar)
             key = await asyncio.to_thread(self.store.append,category,
@@ -251,17 +251,25 @@ class CommunityAudit(commands.Cog):
         if old and old.content==content:
             return
         raw_author=payload.data.get('author',{})
-        author=who(old.author) if old else (f"<@{int(raw_author['id'])}>" if raw_author.get('id') else '作者未快取，無法確認。')
         guild=self.bot.get_guild(config.GUILD_ID)
+        subject = old.author if old else None
+        if subject is None and guild and raw_author.get('id'):
+            subject = guild.get_member(int(raw_author['id']))
+        if subject is not None:
+            author = who(subject)
+        elif raw_author.get('id'):
+            author = user_identity(raw_author['id'], account_label(raw_author.get('global_name'), raw_author.get('username')))
+        else:
+            author = '名稱未取得（未提供用戶 ID）'
         channel=guild.get_channel_or_thread(payload.channel_id) if guild else None
         restricted=channel and channel.is_nsfw()
         previous=preview(old) if old else '未快取原文，無法還原。'
         current='年齡限制頻道：只記錄事件資料。' if restricted else preview(old,content)
         stamp=payload.data.get('edited_timestamp','')
         key='edit:'+str(payload.message_id)+':'+hashlib.sha256((stamp+content).encode()).hexdigest()[:24]
-        await self.emit('message','訊息編輯',f'{author}\n頻道：<#{payload.channel_id}>｜訊息 ID：{payload.message_id}\n'
+        await self.emit('message','訊息編輯',f'作者：{author}\n頻道：<#{payload.channel_id}>｜訊息 ID：{payload.message_id}\n'
                         f'**修改前**\n{previous}\n**修改後**\n{current}\n'
-                        f'https://discord.com/channels/{config.GUILD_ID}/{payload.channel_id}/{payload.message_id}',key=key,subject=old.author if old else None)
+                        f'https://discord.com/channels/{config.GUILD_ID}/{payload.channel_id}/{payload.message_id}',key=key,subject=subject)
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self,payload):
@@ -270,10 +278,10 @@ class CommunityAudit(commands.Cog):
         message=payload.cached_message
         if message and (message.author.bot or getattr(message,'webhook_id',None)):
             return
-        author=who(message.author) if message else '作者未快取，無法確認。'
+        author=who(message.author) if message else '名稱未取得（未提供用戶 ID）'
         body=preview(message) if message else '未快取原文，無法還原。'
         attachments=len(message.attachments) if message else '未知'
-        await self.emit('message','訊息刪除',f'{author}\n頻道：<#{payload.channel_id}>｜訊息 ID：{payload.message_id}\n'
+        await self.emit('message','訊息刪除',f'作者：{author}\n頻道：<#{payload.channel_id}>｜訊息 ID：{payload.message_id}\n'
                         f'{body}\n附件數：{attachments}（不下載）\n刪除操作者未確認。',key=f'delete:{payload.message_id}',subject=message.author if message else None)
 
     @commands.Cog.listener()
@@ -331,8 +339,10 @@ class CommunityAudit(commands.Cog):
         if entry.guild.id!=config.GUILD_ID:
             return
         actor_user=entry.user
-        if actor_user is not None: actor_user=entry.guild.get_member(actor_user.id) or actor_user
-        actor=who(actor_user) if actor_user else (f'<@{entry.user_id}>' if entry.user_id else '未知')
+        actor_id = actor_user.id if actor_user is not None else entry.user_id
+        if actor_id:
+            actor_user = entry.guild.get_member(actor_id) or actor_user
+        actor = who(actor_user) if actor_user is not None else (user_identity(actor_id) if actor_id else '未知')
         try:
             target_obj=entry.target
         except TypeError:
@@ -345,13 +355,17 @@ class CommunityAudit(commands.Cog):
         target=getattr(target_obj,'id',None)
         kind=entry.action.target_type
         target_label=f'ID `{target}`' if target else '未提供'
-        if target and kind=='role':
+        # discord.py 2.7 classifies soundboard actions as user targets.
+        if target and entry.action.name.startswith('soundboard_sound_'):
+            target_label = f'音效 ID `{target}`'
+        elif target and kind=='role':
             obj=entry.guild.get_role(target) or target_obj
             if not getattr(obj,'name',None):
                 from types import SimpleNamespace
                 obj=SimpleNamespace(id=target,name=getattr(entry.before,'name',None) or getattr(entry.after,'name',None) or '未快取名稱')
             target_label=role_label(obj,deleted=entry.action.name=='role_delete')
-        elif target and (kind=='user' or isinstance(target_obj,(discord.Member,discord.User))):
+        elif target and (kind == 'user' or isinstance(target_obj, (discord.Member, discord.User))
+                         or (isinstance(target_obj, discord.Object) and target_obj.type in (discord.Member, discord.User))):
             target_label=who(entry.guild.get_member(target) or target_obj)
         elif target and kind in {'channel','thread'}:
             target_label=f'**{safe(getattr(target_obj,"name","未快取名稱"),100)}** · <#{target}>'

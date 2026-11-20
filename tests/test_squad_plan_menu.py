@@ -38,7 +38,8 @@ async def main():
     source = channel(1, '新成員')
     target = channel(2, 'fc-吹水組隊')
     hidden = channel(4, 'gta-吹水組隊', False)
-    guild = N(id=config.GUILD_ID, fetch_member=AsyncMock(return_value=N(id=3,bot=False)), fetch_roles=AsyncMock(return_value=[]), fetch_channel=AsyncMock(side_effect=lambda ident:{1:source,2:target,4:hidden}[ident]), text_channels=[source, target, hidden], me=N(id=9),
+    host = N(id=3, bot=False, display_name='姐夫', name='jefframe')
+    guild = N(id=config.GUILD_ID, fetch_member=AsyncMock(return_value=host), fetch_roles=AsyncMock(return_value=[]), fetch_channel=AsyncMock(side_effect=lambda ident:{1:source,2:target,4:hidden}[ident]), text_channels=[source, target, hidden], me=N(id=9),
               get_channel=lambda ident: {1:source, 2:target, 4:hidden}.get(ident))
     for ch in (source,target,hidden):ch.guild=guild
     with tempfile.TemporaryDirectory() as directory, \
@@ -72,7 +73,34 @@ async def main():
             await draft.publish.callback(i)
         target.send.assert_awaited_once()
         source.send.assert_not_awaited()
-        assert cog.book.all()[0]['channel'] == target.id
+        posted = target.send.await_args.kwargs
+        assert posted['allowed_mentions'].to_dict() == {'parse': []}
+        assert posted['embed'].fields[1].value == '姐夫（jefframe）'
+        stored = PlanBook(cog.book.path).all()[0]
+        assert stored['channel'] == target.id and stored['owner'] == host.id
+        assert stored['owner_label'] == '姐夫（jefframe）'
+
+        original = N(author=N(id=9), content='', edit=AsyncMock())
+        target.fetch_message = AsyncMock(return_value=original)
+        cog.bot = N(user=original.author, get_channel=lambda _: target)
+        cached = N(name='jefframe', display_name='Jefframe')
+        guild.get_member = lambda uid: cached if uid == host.id else None
+        async def refreshed_owner(plan):
+            assert await SquadPlans.refresh(cog, plan)
+            edited = original.edit.await_args.kwargs
+            assert edited['allowed_mentions'].to_dict() == {'parse': []}
+            return edited['embed'].fields[1].value
+        assert await refreshed_owner(stored) == '姐夫（jefframe）'
+        legacy = stored.copy()
+        del legacy['owner_label']
+        assert await refreshed_owner(legacy) == 'Jefframe'
+        guild.get_member = lambda _: None
+        assert await refreshed_owner(legacy) == '用戶 ID 3'
+        disguised = dict(stored, owner_label='**<@123456789012345678>**\n@everyone <#33>')
+        text = await refreshed_owner(disguised)
+        assert not any(token in text for token in ('<@', '<#', '@everyone', '\n', '**'))
+        assert '123456789012345678' in text and 'everyone' in text
+        target.send.assert_awaited_once()
 
         target.send.reset_mock()
         target.permissions_for.return_value.send_messages = False

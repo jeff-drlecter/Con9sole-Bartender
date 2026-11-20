@@ -8,6 +8,7 @@ import discord
 import config
 from core.permissions import is_server_admin
 from core.ui import SafeView
+from features.audit_format import who
 
 NONE=discord.AllowedMentions.none()
 
@@ -79,7 +80,7 @@ class MonitorConfirmation(AuditView):
         else:
             changed=await self.cog.acknowledge_write_failures(self.count,inter.user.id)
         if changed:
-            await self.cog.emit('server','日誌監察人工處理',f'操作人 ID：{inter.user.id}\n處理：{self.action}\n失敗累計：{self.count}\n此操作不代表遺失事件已補回。')
+            await self.cog.emit('server','日誌監察人工處理',f'操作人：{who(inter.user)}\n處理：{self.action}\n失敗累計：{self.count}\n此操作不代表遺失事件已補回。')
         await inter.followup.send('已記錄處理，監察將於下一輪重新核對。' if changed else '狀態已變更或已處理，請重新開啟面板。',ephemeral=True,allowed_mentions=NONE)
 
     @discord.ui.button(label='取消')
@@ -155,6 +156,6 @@ async def apply_review(cog,inter,key,action):
     await inter.response.defer(ephemeral=True)
     changed=await asyncio.to_thread(cog.store.resolve,key,action,inter.user.id)
     if changed:
-        await cog.emit('server','日誌待查事件處理',f'操作人 ID：{inter.user.id}\n事件：{key}\n處理：{action}\n人工確認不等於系統派送回條；重試可能產生重複。')
+        await cog.emit('server','日誌待查事件處理',f'操作人：{who(inter.user)}\n事件：{key}\n處理：{action}\n人工確認不等於系統派送回條；重試可能產生重複。')
     text=('已排入重試佇列。' if action=='retry' else '已記錄你的人工確認，不再自動重發。') if changed else '此事件已處理或不存在，沒有重複操作。'
     await inter.followup.send(text,view=AuditHomeView(cog,inter.user.id),ephemeral=True,allowed_mentions=NONE)

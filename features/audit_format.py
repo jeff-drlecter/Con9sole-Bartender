@@ -1,6 +1,7 @@
 """Readable identities and change summaries; mentions are rendered but never pinged."""
 import re
 import discord
+from features.member_names import member_label, plain_name
 
 
 def safe(value,limit=900):
@@ -9,9 +10,12 @@ def safe(value,limit=900):
     return text[:limit]+('…' if len(text)>limit else '')
 
 
+def user_identity(user_id, label=''):
+    return f'{plain_name(label) or "名稱未取得"}\n用戶 ID：`{int(user_id)}`'
+
+
 def who(user):
-    name=getattr(user,'display_name',None) or getattr(user,'global_name',None) or getattr(user,'name',None)
-    return (f'**{safe(name,80)}** · ' if name else '')+f'<@{int(user.id)}>'
+    return user_identity(user.id, member_label(user))
 
 
 def role_label(role,*,deleted=False):

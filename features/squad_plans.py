@@ -131,7 +131,8 @@ class PlanBook:
         with self.lock:
             return copy.deepcopy(list(self.state['plans'].values()))
 
-    def create(self, *, guild, channel, owner, game, mode, start, party, capacity, instant=False, analytics_test=False, delivery_options=None):
+    def create(self, *, guild, channel, owner, game, mode, start, party, capacity, instant=False,
+               analytics_test=False, delivery_options=None, owner_label=None):
         with self.lock:
             if instant:
                 start = int(self.clock())
@@ -148,6 +149,8 @@ class PlanBook:
                         game=game, mode=mode, start=start, party=party,
                         capacity=capacity, members=[], status='posting', message=None, dirty=False,
                         instant=instant, late=[], unconfirmed=[], reminders=[], withdrawn=[], revision=0)
+            if owner_label:
+                plan['owner_label'] = owner_label
             state = copy.deepcopy(self.state)
             state['plans'][key] = plan
             plan.update(created_at=self.clock(), analytics_test=bool(analytics_test), origin='instant' if instant else 'scheduled')

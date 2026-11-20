@@ -29,7 +29,8 @@ async def main():
         plans=N(book=book,refresh=AsyncMock())
         original=N(id=99,author=N(id=9),content='',edit=AsyncMock())
         old=N(id=88,author=N(id=9),content='',edit=AsyncMock())
-        destination=N(id=20,fetch_message=AsyncMock(side_effect=lambda ident:{99:original,88:old}[ident]),send=AsyncMock())
+        guild=N(get_member=lambda uid: N(display_name='隊長', name='captain') if uid == 3 else None)
+        destination=N(id=20,guild=guild,fetch_message=AsyncMock(side_effect=lambda ident:{99:original,88:old}[ident]),send=AsyncMock())
         voice=N(id=50,category=N(name='EA SPORTS FC'),members=[N(id=3,display_name='host',bot=False)])
         bot=N(user=N(id=9),get_channel=lambda ident:{20:destination,50:voice}.get(ident),get_cog=lambda name:plans if name=='SquadPlans' else None,is_ready=lambda:True)
         cog=N(bot=bot,save=lambda:None,notify_interested=AsyncMock())
@@ -43,6 +44,7 @@ async def main():
             assert book.get(key)['status']=='live'
             assert book.get(key)['members']==[4,5,6,7]
             assert isinstance(original.edit.await_args.kwargs['view'],PlanView)
+            assert original.edit.await_args.kwargs['embed'].fields[1].value == '隊長（captain）'
             session['ended']=10100
             await SquadCards.render(cog,voice,session,ended=True)
             assert book.get(key)['status']=='ended' and book.get(key)['footprint']==900
