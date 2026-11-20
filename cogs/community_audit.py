@@ -20,6 +20,7 @@ from core.audit_monitor import WriteFailures
 from core.audit_privacy import require_private_audit_channel
 from core.secret_redaction import redact_credentials
 from features.audit_format import safe, who, user_identity, where, changes, role_label, identity_footer, ACTIONS
+from features.member_names import account_label
 
 log = logging.getLogger(__name__)
 ROUTES = {
@@ -257,7 +258,7 @@ class CommunityAudit(commands.Cog):
         if subject is not None:
             author = who(subject)
         elif raw_author.get('id'):
-            author = user_identity(raw_author['id'], raw_author.get('global_name'), raw_author.get('username'))
+            author = user_identity(raw_author['id'], account_label(raw_author.get('global_name'), raw_author.get('username')))
         else:
             author = '名稱未取得（未提供用戶 ID）'
         channel=guild.get_channel_or_thread(payload.channel_id) if guild else None

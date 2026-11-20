@@ -16,6 +16,7 @@ from core.permissions import is_server_admin, is_verified_member
 from core.storage_paths import DATA_DIR
 from core.ui import SafeModal, SafeView
 from features.community_outcomes import test_channel
+from features.member_names import member_label, plain_name
 from features.squad_plans import ACTIVE, HK, PlanBook, confirmed, counts, deadline, parse_start
 
 log = logging.getLogger(__name__)
@@ -103,14 +104,6 @@ class PlanChannelView(SafeView):
             self.add_item(select)
 
 
-def member_label(member):
-    display = (getattr(member, 'display_name', '') or '').strip()
-    username = (getattr(member, 'name', '') or '').strip()
-    if display and username and display.casefold() != username.casefold():
-        return f'{display}（{username}）'
-    return display or username
-
-
 def owner_text(plan, guild):
     label = plan.get('owner_label')
     if not isinstance(label, str) or not label.strip():
@@ -118,10 +111,7 @@ def owner_text(plan, guild):
         label = member_label(lookup(plan['owner'])) if lookup else ''
     if not label:
         return f"用戶 ID {plan['owner']}"
-    # Discord parses angle-bracket entities, including channel mentions, in embeds.
-    label = ' '.join(label.split()).replace('<', '＜').replace('>', '＞')
-    label = label.replace('://', ':\u200b//')
-    return discord.utils.escape_mentions(discord.utils.escape_markdown(label, ignore_links=False))
+    return plain_name(label)
 
 
 def card(plan, guild=None):
