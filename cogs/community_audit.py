@@ -361,7 +361,8 @@ class CommunityAudit(commands.Cog):
                 from types import SimpleNamespace
                 obj=SimpleNamespace(id=target,name=getattr(entry.before,'name',None) or getattr(entry.after,'name',None) or '未快取名稱')
             target_label=role_label(obj,deleted=entry.action.name=='role_delete')
-        elif target and (kind=='user' or isinstance(target_obj,(discord.Member,discord.User))):
+        elif target and (kind == 'user' or isinstance(target_obj, (discord.Member, discord.User))
+                         or (isinstance(target_obj, discord.Object) and target_obj.type in (discord.Member, discord.User))):
             target_label=who(entry.guild.get_member(target) or target_obj)
         elif target and kind in {'channel','thread'}:
             target_label=f'**{safe(getattr(target_obj,"name","未快取名稱"),100)}** · <#{target}>'

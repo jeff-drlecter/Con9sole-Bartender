@@ -107,6 +107,16 @@ class ReadableTests(unittest.IsolatedAsyncioTestCase):
                 await cog.on_raw_message_edit(event)
                 self.assertIn(f"作者：{label}\n用戶 ID：`{raw['id']}`",cog.emit.await_args.args[2])
 
+    async def test_uncached_message_delete_audit_identifies_target_as_user(self):
+        guild=NS(id=config.GUILD_ID,_state=NS(),get_member=lambda _:None)
+        entry=discord.AuditLogEntry(
+            guild=guild,users={},integrations={},app_commands={},automod_rules={},webhooks={},
+            data={'id':'99','action_type':discord.AuditLogAction.message_delete.value,
+                  'user_id':None,'target_id':'8'})
+        cog=CommunityAudit(NS()); cog.emit=AsyncMock()
+        await cog.on_audit_log_entry_create(entry)
+        self.assertIn('**對象**\n名稱未取得\n用戶 ID：`8`',cog.emit.await_args.args[2])
+
     async def test_deleted_role_audit_keeps_last_name_when_cache_is_missing(self):
         cog=CommunityAudit(NS()); cog.emit=AsyncMock()
         guild=NS(id=config.GUILD_ID,get_member=lambda _:None,get_role=lambda _:None)
