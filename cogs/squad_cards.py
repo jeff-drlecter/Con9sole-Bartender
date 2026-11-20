@@ -729,7 +729,7 @@ class SquadCards(commands.Cog):
         view = FootprintView(self, value) if ended else CardView(self, str(channel.id), session)
         if plan and not ended:
             from cogs.squad_plans import PlanView, card
-            embed, view = card(plan), PlanView(plans, plan)
+            embed, view = card(plan, destination.guild), PlanView(plans, plan)
         kwargs = dict(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         if session.get("message"):
             try:

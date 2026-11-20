@@ -103,7 +103,28 @@ class PlanChannelView(SafeView):
             self.add_item(select)
 
 
-def card(plan):
+def member_label(member):
+    display = (getattr(member, 'display_name', '') or '').strip()
+    username = (getattr(member, 'name', '') or '').strip()
+    if display and username and display.casefold() != username.casefold():
+        return f'{display}（{username}）'
+    return display or username
+
+
+def owner_text(plan, guild):
+    label = plan.get('owner_label')
+    if not isinstance(label, str) or not label.strip():
+        lookup = getattr(guild, 'get_member', None)
+        label = member_label(lookup(plan['owner'])) if lookup else ''
+    if not label:
+        return f"用戶 ID {plan['owner']}"
+    # Discord parses angle-bracket entities, including channel mentions, in embeds.
+    label = ' '.join(label.split()).replace('<', '＜').replace('>', '＞')
+    label = label.replace('://', ':\u200b//')
+    return discord.utils.escape_mentions(discord.utils.escape_markdown(label, ignore_links=False))
+
+
+def card(plan, guild=None):
     accepted = confirmed(plan)
     total = plan['party'] + len(accepted)
     state = {'open': '預約中', 'due': '招募中' if plan.get('instant') else '待開局',
@@ -122,7 +143,7 @@ def card(plan):
                     value=f"發起人原有 {plan['party']} 人（包括自己）\n按卡確認 {len(accepted)} 人 · 稍後到 {len(set(accepted) & set(plan.get('late', [])))} 人"
                     + (f"\n待重新確認 {len(plan.get('unconfirmed', []))} 人" if plan.get('unconfirmed') else ''), inline=False)
     # Keep the participant roster behind the private list button.
-    embed.add_field(name='發起人', value=f"<@{plan['owner']}>", inline=True)
+    embed.add_field(name='發起人', value=owner_text(plan, guild), inline=True)
     if plan.get('voice') and plan['status'] in {'gathering', 'live'}:
         embed.add_field(name='本局語音', value=f"<#{plan['voice']}>", inline=False)
     if plan.get('footprint'):
@@ -206,11 +227,13 @@ class PlanForm(SafeModal):
                     if self.instant and teams and any(s.leader_id == interaction.user.id and not s.cancelled
                             and not teams.is_state_expired(s) for s in teams.states.values()):
                         raise ValueError('你仍有舊版即時招募，請先完成該局；原有卡片仍可使用。')
-                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id, owner=interaction.user.id, instant=self.instant, analytics_test=test_channel(channel), delivery_options=self.delivery_options, **changes)
+                    p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id,
+                        owner=interaction.user.id, owner_label=member_label(member), instant=self.instant,
+                        analytics_test=test_channel(channel), delivery_options=self.delivery_options, **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='due' if self.instant else 'open')
                     view = PlanView(self.cog, posted)
-                    message = await channel.send(embed=card(posted), view=view, allowed_mentions=NONE)
+                    message = await channel.send(embed=card(posted, interaction.guild), view=view, allowed_mentions=NONE)
                     self.cog.book.publish(p['id'], message.id)
                     refreshed = True
             except ValueError as exc:
@@ -592,7 +615,7 @@ class SquadPlans(commands.Cog):
             if p['status'] not in {'gathering', 'live'}:
                 from features.voice_invites import content
                 kwargs['content'] = content(getattr(message, 'content', ''), {}, ended=True)
-            await message.edit(embed=card(p), view=PlanView(self, p), allowed_mentions=NONE, **kwargs)
+            await message.edit(embed=card(p, channel.guild), view=PlanView(self, p), allowed_mentions=NONE, **kwargs)
             self.book.availability(p['id'],'available')
             self.book.clean(p['id'], p.get('revision', 0))
             return True
