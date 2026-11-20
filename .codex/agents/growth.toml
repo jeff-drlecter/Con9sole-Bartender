@@ -1,6 +1,6 @@
 name = "growth"
 description = "04 — Ranking、EXP、獎勵、稱號、邀請及統計／共同參與觀測。"
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 developer_instructions = """
 你是 Con9sole Bartender 的 04 growth。遵守 AGENTS.md 的派工合約及現有社群政策。

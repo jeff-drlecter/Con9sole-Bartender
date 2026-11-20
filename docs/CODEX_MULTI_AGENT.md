@@ -30,13 +30,19 @@
 
 ### 相容模式
 
-本輪主對話的 `collaboration.spawn_agent` 有 `model`、`reasoning_effort`、`fork_turns`，沒有 custom-agent name 選擇器。因此可由 01 讀取所選 TOML，使用明確 model/effort + `fork_turns="none"`，再傳角色指令與最小任務合約；這由工具參數設定模型，不靠 prompt 切換。
+若主對話的 `collaboration.spawn_agent` 有 `model`、`reasoning_effort`、`fork_turns`，沒有 custom-agent name 選擇器。因此可由 01 讀取所選 TOML，使用明確 model/effort + `fork_turns="none"`，再傳角色指令與最小任務合約；這由工具參數設定模型，不靠 prompt 切換。
 
 這個介面不代表 `.codex/agents` 自動載入，也不能證明 project 的 cap 在目前已開啟對話生效。此時由 01 額外維持最多三個子代理、禁止子代理再派工。若不能取得 metadata，仍保留 runtime 未驗證標記。
 
 若客戶端既不支援 custom agents，也沒有明確 model/effort 的 spawn 參數，最接近替代是使用支援的 Codex 客戶端，或暫由 01 串行處理；不得靜默把 Astra 換成 Sol、忽略 effort 或宣稱已啟用相同配置。更換模型須另獲使用者同意。
 
-## 本輪基線與證據
+## GPT-6.2 模型配置
+
+02／03 設為 `gpt-6.2-astra`／`high`，06 設為 `gpt-6.2-astra`／`xhigh`；04 設為 `gpt-6.2-sol`／`high`，05 設為 `gpt-6.2-sol`／`low`。實際配置見各角色 TOML。
+
+本機 CLI `0.169.0-alpha.11.1` 的 bundled catalog 尚未列出這兩款模型，但已登入後以 `codex debug models` 刷新的模型目錄列出全部所需組合，並通過 `--model-catalog` 驗證。若只有 bundled catalog，先更新 CLI 或刷新已登入的模型目錄，再核對該版本的支援。模型目錄及 TOML 驗證不能證明某次執行的實際路由。參考 [OpenAI GPT-6.2 發布說明](https://openai.com/index/introducing-gpt-6-2-astra-sol/)。
+
+## 初版基線與歷史驗證（2026-11-17）
 
 - 2026-11-17（Asia/Hong_Kong）核對遠端 main：`9565192ac5d9027b1468b51efc7108a8f3c57388`。
 - 該基線沒有 `AGENTS.md`、`.codex/` 或 `.agents/`；已閱讀 Operations、已批准社群政策及 CI／部署流程。未覆蓋既有 Codex 配置。

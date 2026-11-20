@@ -14,11 +14,11 @@
 
 | Agent name | 選用情況 | 模型／推理 |
 | --- | --- | --- |
-| `member_experience`（02） | 會員入口、身份組、權限、通知 | `gpt-6-astra` / `high` |
-| `matchmaking`（03） | 約局、預約、招募卡、語音房 | `gpt-6-astra` / `high` |
-| `growth`（04） | Ranking、EXP、獎勵、統計 | `gpt-6.1-sol` / `high` |
-| `content`（05） | 文案、公告草稿、新聞及營運內容 | `gpt-6.1-sol` / `low` |
-| `verification`（06） | 實作完成後的 PR／整合／安全／部署風險驗收 | `gpt-6-astra` / `xhigh` |
+| `member_experience`（02） | 會員入口、身份組、權限、通知 | `gpt-6.2-astra` / `high` |
+| `matchmaking`（03） | 約局、預約、招募卡、語音房 | `gpt-6.2-astra` / `high` |
+| `growth`（04） | Ranking、EXP、獎勵、統計 | `gpt-6.2-sol` / `high` |
+| `content`（05） | 文案、公告草稿、新聞及營運內容 | `gpt-6.2-sol` / `low` |
+| `verification`（06） | 實作完成後的 PR／整合／安全／部署風險驗收 | `gpt-6.2-astra` / `xhigh` |
 
 1. 先核對遠端最新 `main` SHA、工作樹狀態及適用規則；不覆蓋使用者未提交改動。先用檔名／符號搜尋定位，不把全庫或歷史聊天灌入上下文。
 2. 判斷工作範圍、依賴、驗收條件及每個檔案唯一負責人。只啟動真正需要的角色；簡單問答／單字修正可由 01 完成。不為湊數啟動所有角色。配置變更由 01 實作、06 驗收。

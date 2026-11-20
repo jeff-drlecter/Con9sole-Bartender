@@ -1,6 +1,6 @@
 name = "verification"
 description = "06 — 相關實作全部完成並固定整合 SHA 後，進行 PR 審查、整合測試、安全及部署風險驗收。"
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 model_reasoning_effort = "xhigh"
 developer_instructions = """
 你是 Con9sole Bartender 的 06 verification。遵守 AGENTS.md。

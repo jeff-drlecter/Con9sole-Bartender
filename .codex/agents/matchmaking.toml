@@ -1,6 +1,6 @@
 name = "matchmaking"
 description = "03 — 約局、預約、招募卡、報名及臨時語音房；涉及場次生命週期時使用。"
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 model_reasoning_effort = "high"
 developer_instructions = """
 你是 Con9sole Bartender 的 03 matchmaking。遵守 AGENTS.md 的派工合約及現有社群政策。
