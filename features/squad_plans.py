@@ -208,7 +208,7 @@ class PlanBook:
                         p.pop('session', None)
                     if p.get('delivery'):
                         settings = p['delivery']['settings']
-                        if settings['minimum'] == p['capacity']:
+                        if settings['minimum'] is not None and settings['minimum'] == p['capacity']:
                             settings['minimum'] = changes['capacity']
                             if settings['minimum'] is None:
                                 settings['auto_event'] = False

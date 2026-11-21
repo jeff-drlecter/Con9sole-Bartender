@@ -131,8 +131,6 @@ class Numbers(SafeModal):
             settings = options(v.data['party'], capacity, instant=v.data.get('instant', False),
                 minimum=minimum, auto=bool(minimum and v.settings['auto_event'] and not v.data.get('instant')),
                 notices=v.settings['host_notices'])
-            # None means explicitly disabled here, rather than an inferred capacity.
-            settings['minimum'] = minimum
         except ValueError as exc:
             await i.followup.send(str(exc), ephemeral=True); return
         v.data['capacity'], v.settings = capacity, settings
@@ -148,7 +146,7 @@ class Settings(SafeView):
         self.settings = dict(plan.get('delivery', {}).get('settings') or
                              options(plan['party'], plan['capacity'], instant=plan.get('instant', False), auto=False, notices=False))
         self.member = member
-        self.auto.disabled = bool(plan.get('instant'))
+        self.auto.disabled = bool(plan.get('instant') or self.settings['minimum'] is None)
     async def interaction_check(self, i):
         p = self.cog.book.get(self.key)
         if (i.user.id != self.owner or not p or p['owner'] != self.owner

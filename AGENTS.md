@@ -42,6 +42,6 @@
 
 1. 所有相關實作完成、提交並停止寫入後，01 固定整合 SHA。列出需求、base/head SHA、完整 diff、各工作結果及測試，標記 `ready-for-verification`，才啟動 06。
 2. 06 在該 SHA 做審查及離線驗證；不與仍在寫入相關成果的 agent 並行。審查期間新修改會使舊結論失效，須重新交接新 SHA。
-3. 跑變更所需的針對性測試；保留現有 Python 3.11 `validate`：`python -m compileall -q .`、`python -m unittest discover -s tests -v`、locked dependency audit 及 container security。不要用本機不同 Python 版本冒充 Python 3.11／容器驗證；可由既有 GitHub Actions 提供證據。
-4. Codex 配置另外跑 `python3 scripts/validate_codex_agents.py`；模型目錄及 TOML 靜態成功不等於模型已執行，依 `docs/CODEX_MULTI_AGENT.md` 驗證。
+3. 按 [功能地圖及驗證指令](docs/QUALITY.md) 選測試。用 Python 3.11 執行 `python scripts/verify.py all` 重現 CI 的 Python 檢查。相依套件審計及容器檢查以 CI 結果為準。
+4. 模型執行證據依 `docs/CODEX_MULTI_AGENT.md` 核對；靜態檢查不能證明模型已執行。
 5. 01 彙總 06 問題、修復及 CI 結果後交付 Draft PR。若有測試／模型／真人 UI 未驗證，明確列出。不得將驗收通過解讀為發布授權。

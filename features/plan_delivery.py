@@ -11,9 +11,13 @@ import discord
 
 from features.squad_plans import confirmed
 
+_DEFAULT_MINIMUM = object()
 
-def options(party, capacity, *, instant=False, minimum=None, auto=None, notices=True):
-    minimum = capacity if minimum is None else minimum
+
+def options(party, capacity, *, instant=False, minimum=_DEFAULT_MINIMUM, auto=None, notices=True):
+    # Only a new draft's omitted threshold inherits capacity. A cleared threshold stays empty.
+    if minimum is _DEFAULT_MINIMUM:
+        minimum = capacity
     if minimum is not None and (type(minimum) is not int or not 1 <= minimum <= 198
             or capacity is not None and minimum > capacity):
         raise ValueError('成局人數須為 1 至 198，並且不超過最高人數。')
@@ -36,8 +40,6 @@ def validate_delivery(p):
         s = d['settings']
         options(p['party'], p['capacity'], instant=p.get('instant', False),
                 minimum=s['minimum'], auto=s['auto_event'], notices=s['host_notices'])
-        if s['auto_event'] and s['minimum'] is None:
-            raise ValueError('Missing threshold')
         if not isinstance(d['event'], dict) or not isinstance(d['seen'], list) or not isinstance(d['notices'], list):
             raise ValueError('Invalid delivery shape')
         if any(type(u) is not int or u <= 0 for u in d['seen']):

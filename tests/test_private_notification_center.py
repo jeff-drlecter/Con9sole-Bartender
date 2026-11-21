@@ -112,6 +112,26 @@ class PrivateCenterTests(unittest.IsolatedAsyncioTestCase):
         i=self.i();await show_center(self.cog,i)
         self.assertIn('不代表',i.followup.send.call_args.kwargs['embed'].fields[0].value)
 
+    async def test_home_counts_own_subscriptions_without_looking_up_cards(self):
+        for index, label in enumerate(('Synthetic game A', 'Synthetic game B', 'Another member only')):
+            topic = interest.topic(self.guild.id, label)
+            interest.remember(topic)
+            interest.track_card(topic['id'], 200 + index, 600 + index)
+            interest.toggle(topic['id'], self.guild.id, 10 if index < 2 else 11)
+
+        interaction = self.i()
+        with patch.object(interest, 'cards', wraps=interest.cards) as cards:
+            await show_center(self.cog, interaction)
+
+        embed = interaction.followup.send.call_args.kwargs['embed']
+        self.assertEqual([field.value for field in embed.fields], ['0', '2'])
+        self.assertNotIn('Synthetic game', str(embed.to_dict()))
+        cards.assert_not_called()
+        self.assertEqual(
+            [call.args for call in self.guild.fetch_channel.await_args_list],
+            [(interaction.channel_id,), (interaction.channel_id,)],
+        )
+
     async def test_mutations_are_separate_and_stale_03_version_is_forwarded_unchanged(self):
         self.api.rows=[self.plan()];interest.toggle(self.topic['id'],self.guild.id,10,'always')
         i=self.i();await show_center(self.cog,i,section='detail',key='p')
