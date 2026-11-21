@@ -10,7 +10,7 @@
 | EXP、排行榜、回鍋、稱號角色 | `features/community_levels.py` 的 SQLite 帳本，`cogs/community_levels.py` 的升級公告，`features/title_roles.py` 及 `cogs/title_roles.py` 的稱號同步 | `growth` |
 | 香港／台灣語言及中性預設 | `features/language_preferences.py` 從 Discord 身份組讀取偏好，`features/notification_words.py` 管理通知文案 | `locale` |
 | 日誌私隱、備份、部署前檢查 | `core/audit_privacy.py`、`core/storage_paths.py`、`scripts/backup_runtime.py`、`scripts/inspect_round_readiness.py` | `runtime` |
-| 背景工作、外部 API 及啟動 | `bot.py` 的 `setup_hook` 啟用 intents、載入 cogs 及同步指令。RSS 的 429／退避分別見 `cogs/rss_delivery.py` 及 `core/rss_delivery.py`，直播通知另見 `cogs/stream_alerts.py` | `all`，可先搜尋對應 `tests/test_rss*` 或 `tests/test_stream*` |
+| 背景工作、外部 API 及啟動 | `bot.py` 建立 Bot 時傳入已設定嘅 intents，`setup_hook` 載入 cogs 及同步指令。RSS 的 429／退避分別見 `cogs/rss_delivery.py` 及 `core/rss_delivery.py`，直播通知另見 `cogs/stream_alerts.py` | `all`，可先搜尋對應 `tests/test_rss*` 或 `tests/test_stream*` |
 
 ## 本機與 CI
 
