@@ -42,10 +42,10 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             return e
         self.guild.create_scheduled_event.side_effect = create
 
-    def make(self, *, party=1, capacity=4, minimum=None, instant=False, legacy=False):
+    def make(self, *, party=1, capacity=4, instant=False, legacy=False, **delivery_options):
         p = self.book.create(guild=self.guild.id, channel=20, owner=1, game='Cross-game', mode='PC',
             start=11000, party=party, capacity=capacity, instant=instant,
-            delivery_options=None if legacy else options(party,capacity,minimum=minimum,instant=instant))
+            delivery_options=None if legacy else options(party, capacity, instant=instant, **delivery_options))
         self.book.publish(p['id'], 99)
         return p['id']
 
@@ -87,6 +87,57 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         for params in [dict(legacy=True),dict(instant=True),dict(capacity=None)]:
             k=self.make(**params);self.book.act(k,2,'join');await self.process(k)
         self.guild.create_scheduled_event.assert_not_awaited()
+
+    async def test_cleared_threshold_survives_publication_restart_and_notice_change(self):
+        from features.plan_delivery_ui import Draft, Numbers, Settings
+
+        settings = dict(minimum=None, auto_event=False, host_notices=True)
+        owner = N(id=1)
+        data = dict(game='Cross-game', mode='PC', start=11000, party=1, capacity=2)
+        draft = Draft(self.cog, self.channel, owner, data)
+        form = Numbers(draft, owner)
+        form.minimum._value = ''
+        with patch.object(draft, 'authorize_update', new=AsyncMock(return_value=True)):
+            await form.on_submit(N(edit_original_response=AsyncMock()))
+        self.assertEqual(draft.settings, settings)
+        p = self.book.create(guild=self.guild.id, channel=20, owner=1,
+                             delivery_options=draft.settings, **draft.data)
+        key = p['id']
+        self.book.publish(key, 99)
+        self.book.act(key, 2, 'join')
+        await self.process(key)
+        self.guild.create_scheduled_event.assert_not_awaited()
+
+        reopened = PlanBook(self.book.path, clock=lambda: self.now)
+        p = reopened.get(key)
+        self.assertEqual(p['delivery']['settings'], settings)
+        self.assertTrue(Settings(self.cog, p, N(id=1)).auto.disabled)
+        with self.assertRaises(ValueError):
+            reopened.delivery_settings(key, 1, dict(settings, auto_event=True),
+                                       expected_revision=p['revision'])
+        updated = reopened.delivery_settings(key, 1, dict(settings, host_notices=False),
+                                             expected_revision=p['revision'])
+        self.assertEqual(updated['delivery']['settings'], dict(settings, host_notices=False))
+
+    async def test_adding_capacity_preserves_absent_threshold(self):
+        key = self.make(capacity=None)
+        plan = self.book.get(key)
+        changes = {name: plan[name] for name in ('game', 'mode', 'start', 'party', 'capacity')}
+        changes['capacity'] = 4
+        self.book.act(key, 1, 'edit', changes=changes)
+        self.assertIsNone(PlanBook(self.book.path).get(key)['delivery']['settings']['minimum'])
+
+    async def test_default_threshold_zero_and_legacy_settings(self):
+        self.assertEqual(options(1, 4), dict(minimum=4, auto_event=True, host_notices=True))
+        with self.assertRaises(ValueError):
+            options(1, 4, minimum=0, auto=False)
+        key = self.make(legacy=True)
+        reopened = PlanBook(self.book.path, clock=lambda: self.now)
+        legacy = reopened.get(key)
+        self.assertNotIn('delivery', legacy)
+        chosen = dict(minimum=None, auto_event=False, host_notices=True)
+        saved = reopened.delivery_settings(key, 1, chosen, expected_revision=legacy['revision'])
+        self.assertEqual(saved['delivery']['settings'], chosen)
 
     async def test_published_already_meets_minimum_only_once(self):
         k=self.make(party=2,capacity=4,minimum=2)
