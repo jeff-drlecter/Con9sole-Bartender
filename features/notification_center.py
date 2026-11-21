@@ -11,8 +11,7 @@ from features import squad_interest
 NONE=discord.AllowedMentions.none()
 
 
-async def game_rows(cog,i,member):
-    rows=await run_stats(squad_interest.own_preferences,i.guild_id,member.id)
+async def game_rows(i, member, rows):
     result=[]
     for row in rows:
         # Own consent may always be withdrawn; redact inaccessible game labels.
@@ -33,7 +32,10 @@ class CenterView(SafeView):
         super().__init__(timeout=180)
         self.cog,self.source,self.member,self.section,self.page=cog,source,member,section,page
         self.unattributed=unattributed
-        self.rows=list(rows);self.plan_state=plan_state;self.selected=selected
+        self.row_count = len(rows)
+        # The summary only needs a count. Keep unredacted labels out of its callbacks.
+        self.rows = [] if section == 'home' else list(rows)
+        self.plan_state=plan_state;self.selected=selected
         if section=='home':
             for key in ('plans','games'):
                 self.button(text(member,key),lambda i,key=key:self.open(i,key),0)
@@ -120,7 +122,7 @@ class CenterView(SafeView):
         if self.section=='home':
             e.description=text(self.member,'independent')
             e.add_field(name=text(self.member,'plans'),value=self.plan_state,inline=False)
-            e.add_field(name=text(self.member,'games'),value=str(len(self.rows)),inline=False)
+            e.add_field(name=text(self.member,'games'),value=str(self.row_count),inline=False)
         elif self.section=='games':
             e.description='\n'.join(self.game_line(r) for r in self.rows[self.page*20:(self.page+1)*20]) or text(self.member,'unattributed' if self.unattributed else 'no_games')
             e.add_field(name=text(self.member,'games'),value=text(self.member,'delivery_note'),inline=False)
@@ -129,7 +131,7 @@ class CenterView(SafeView):
         else:e.description=self.line(self.selected) if self.selected else text(self.member,'changed')
         if self.unattributed:
             e.add_field(name=text(self.member,'unknown'),value=text(self.member,'unattributed'),inline=False)
-        e.set_footer(text=text(self.member,'page',page=self.page+1,total=max(1,(len(self.rows)+19)//20)))
+        e.set_footer(text=text(self.member,'page',page=self.page+1,total=max(1,(self.row_count+19)//20)))
         return e
 
     def game_line(self,r):
@@ -157,7 +159,11 @@ async def show_center(cog,i,*,replace=False,section='home',page=0,key=None,sourc
         if section in ('home','plans','detail'):
             try:plan_rows=await reminders.query(i.client,i.guild,member.id)
             except reminders.ReminderUnavailable:plan_state='unavailable'
-        rows=await game_rows(cog,i,member) if section in ('home','games') else plan_rows
+        rows = plan_rows
+        if section in ('home', 'games'):
+            rows = await run_stats(squad_interest.own_preferences, i.guild_id, member.id)
+            if section == 'games':
+                rows = await game_rows(i, member, rows)
         selected=next((r for r in plan_rows if r['id']==key),None) if section=='detail' else None
         if section=='detail' and selected is None:section='plans';note=text(member,'changed') if plan_state=='ready' else text(member,'plan_unavailable')
         if section=='home':plan_state=str(len(plan_rows)) if plan_state=='ready' else text(member,'plan_unavailable')
