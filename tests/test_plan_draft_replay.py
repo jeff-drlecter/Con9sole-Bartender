@@ -177,10 +177,11 @@ class PlanDraftReplayTests(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     case = PlanDraftReplayTests("test_scheduled_draft_replay")
     result = unittest.TextTestRunner(verbosity=2, failfast=True).run(case)
-    if not result.wasSuccessful():
-        raise SystemExit(1)
     # Discovery never writes evidence. Only the single-scenario runner reads this opt-in.
     if destination := os.environ.get("CON9SOLE_REPLAY_TRACE"):
         with Path(destination).open("x", encoding="utf-8") as stream:
-            json.dump(case.trace, stream, ensure_ascii=False, indent=2)
+            json.dump({"passed": result.wasSuccessful(), "steps": case.trace},
+                      stream, ensure_ascii=False, indent=2)
             stream.write("\n")
+    if not result.wasSuccessful():
+        raise SystemExit(1)

@@ -27,6 +27,18 @@ python scripts/verify.py all
 
 PR 工作流程另有鎖檔依賴審計、容器排除私密檔案探針、非 root 身份及掛載卷驗證。Fly 嘅 main 部署流程重用同一 Python 指令，保留機器、持久卷、閒置狀態及備份檢查。正式合併同部署繼續跟原有授權流程。
 
+### 重播四人約局草稿
+
+```sh
+python scripts/verify.py draft-replay
+```
+
+喺已裝鎖定依賴嘅 Python 3.11 環境執行，需要 Chrome 或 Chromium 產生 PNG。重播會開四人草稿、清空成局門檻、切換報名提醒、重新開啟人數表格，最後取消草稿。成功時應見最高人數仍為 4、門檻留空、自動活動按鈕停用，最後回覆「草稿已取消。」。若步驟斷言失敗，報告會標記「未通過」、保留已擷取嘅步驟，指令以非零狀態退出。
+
+終端會印出今次獨立輸出目錄。開 `replay.png` 可以一次過睇各步畫面，`replay.html` 可放大閱讀，`trace.json` 可比較兩次 SDK 回覆。如要保留喺指定位置，加 `--artifacts-dir <目錄>`，每次會另開子目錄。PR 嘅 **Python checks → Artifacts → plan-draft-replay** 保留證據 14 日。平時跑 `plans` 同 `all` 亦會執行同一組行為檢查，毋須瀏覽器。
+
+重播使用真正嘅 Bot 表格及按鈕 callback、合成會員同模擬 Discord interaction。PNG 由臨時瀏覽器設定檔繪製 SDK 回覆。驗收 Discord 手機／桌面排版、網絡送達或平台權限，需要另行喺已授權測試公會操作。
+
 ## 可執行嘅驗收條件
 
 | 操作／故障 | 可核對嘅結果 | 測試檔 |
