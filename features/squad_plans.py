@@ -387,6 +387,8 @@ class PlanBook:
             p.update(voice=voice, status='gathering', dirty=True, revision=p.get('revision', 0) + 1)
             if 'assembly' in p:
                 p['assembly']['opened'] = True
+                if self.clock() >= p['start']:
+                    p['assembly']['card_due'] = True
                 assembly_state.skip_nudge(p['assembly'])
             p.pop('voice_attempt', None)
             state = copy.deepcopy(self.state)
@@ -441,14 +443,21 @@ class PlanBook:
         with self.lock:
             state = copy.deepcopy(self.state)
             changed = False
+            now = self.clock()
             for p in state['plans'].values():
-                overdue = self.clock() > deadline(p)
+                overdue = now > deadline(p)
                 if overdue and 'assembly' in p and not p['assembly'].get('closed'):
                     assembly_state.close(p['assembly'])
                     changed = True
                 status = 'expired' if overdue else 'due'
-                if p['status'] in {'open', 'due'} and p['start'] <= self.clock() and p['status'] != status:
+                if p['status'] in {'open', 'due'} and p['start'] <= now and p['status'] != status:
                     p.update(status=status, dirty=True, revision=p.get('revision', 0) + 1)
+                    changed = True
+                elif ('assembly' in p and p['status'] in {'gathering', 'live'} and p.get('voice')
+                        and now >= p['start'] and not p['assembly'].get('card_due')):
+                    # The room keeps its status at the RSVP cutoff, but its original card changes controls.
+                    p['assembly']['card_due'] = True
+                    p.update(dirty=True, revision=p.get('revision', 0) + 1)
                     changed = True
             if changed:
                 self._write(state)

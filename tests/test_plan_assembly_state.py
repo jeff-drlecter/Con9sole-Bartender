@@ -177,6 +177,57 @@ class AssemblyBookTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.book.assembly_action(key, 4, action, 1)
 
+    def test_early_linked_room_original_card_refreshes_once_at_start(self):
+        for status in ('gathering', 'live'):
+            with self.subTest(status=status):
+                key = self.create()
+                start = self.book.get(key)['start']
+                self.book.link_voice(key, 3, 99)
+                if status == 'live':
+                    self.book.sync_session(key, 99, 100)
+                self.book.clean(key)
+                before = self.book.get(key)
+                self.book.expire()
+                self.assertEqual(self.book.get(key), before)
+                self.now = start if status == 'gathering' else start + 301
+                self.restart()
+                self.book.expire()
+                after = self.book.get(key)
+                self.assertTrue(after['dirty'])
+                self.assertEqual(after['status'], status)
+                self.assertEqual(after['revision'], before['revision'] + 1)
+                self.book.clean(key, before['revision'])
+                self.assertTrue(self.book.get(key)['dirty'])
+                self.book.clean(key, after['revision'])
+                self.restart()
+                self.book.expire()
+                self.assertEqual(self.book.get(key), after | {'dirty': False})
+                self.book.sync_session(key, 99, 100, ended=True)
+
+    def test_ambiguous_receipts_survive_reschedule_cancel_and_restart(self):
+        key = self.create()
+        self.book.act(key, 4, 'join')
+        expected = []
+        for generation, ambiguous in [(1, 'due'), (2, 'nudge')]:
+            self.now = self.book.get(key)['start'] + 300
+            self.book.act(key, 4, 'join_only', generation=generation)
+            self.book.assembly_action(key, 4, 'nudge', generation)
+            for kind, prior in [('due', None), ('nudge', 'requested')]:
+                self.assertTrue(self.book.assembly_receipt(key, generation, kind, prior, 'sending'))
+                if kind == ambiguous:
+                    self.assertTrue(self.book.assembly_receipt(key, generation, kind, 'sending', 'unknown'))
+                expected.append(dict(generation=generation, kind=kind, state='unknown'))
+            p = self.edit(key, start=self.now + 60)
+            self.assertEqual(p['assembly']['unresolved'], expected)
+            self.assertEqual(p['assembly']['due'], {})
+            self.assertEqual(p['assembly']['nudge'], {})
+            self.assertFalse(self.book.assembly_receipt(key, generation, 'due', 'sending', 'sent', message=777))
+        self.book.act(key, 3, 'cancel')
+        self.restart()
+        p = self.book.get(key)
+        self.assertEqual(p['status'], 'cancelled')
+        self.assertEqual(p['assembly']['unresolved'], expected)
+
     def test_concurrent_claims_material_edits_and_stale_interactions(self):
         key = self.create()
         self.book.act(key, 4, 'join_due')
@@ -256,6 +307,8 @@ class AssemblyBookTests(unittest.TestCase):
         initial = self.path.read_text()
         for field, bad in [('generation', True), ('host', 1), ('members', [4]), ('waiting', [3]),
                            ('retired', [42, 42]), ('retired', [10]), ('opened', 'yes'),
+                           ('card_due', 1), ('unresolved', {}), ('unresolved', [
+                               {'generation': 1, 'kind': 'due', 'state': 'unknown'}]),
                            ('due', {'state': 'sent'}), ('due', {'state': 'other'}),
                            ('nudge', {'state': 'requested', 'actor': 8})]:
             state = json.loads(initial)

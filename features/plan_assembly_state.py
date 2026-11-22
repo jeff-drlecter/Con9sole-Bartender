@@ -14,6 +14,12 @@ def next_occurrence(assembly):
     current = new_assembly(assembly['host'])
     current['generation'] = assembly['generation'] + 1
     current['retired'] = list(assembly['retired'])
+    unresolved = list(assembly.get('unresolved', []))
+    for kind in ('due', 'nudge'):
+        if assembly[kind].get('state') in {'sending', 'unknown'}:
+            unresolved.append(dict(generation=assembly['generation'], kind=kind, state='unknown'))
+    if unresolved:
+        current['unresolved'] = unresolved
     message = assembly['due'].get('message')
     if message and not assembly.get('closed') and message not in current['retired']:
         current['retired'].append(message)
@@ -54,10 +60,23 @@ def validate_assembly(plan):
     try:
         confirmed = set(plan['members']) - set(plan.get('unconfirmed', [])) - {plan['owner']}
         if (plan.get('instant') or not _positive_id(a['generation']) or type(a['host']) is not bool
-                or any(type(a.get(k, False)) is not bool for k in ('opened', 'closed')) or not _ids(a['retired'])
+                or any(type(a.get(k, False)) is not bool for k in ('opened', 'closed', 'card_due')) or not _ids(a['retired'])
                 or plan.get('message') in a['retired']
                 or any(not _ids(a[k]) or not confirmed.issuperset(a[k]) for k in ('members', 'waiting'))):
             raise ValueError('Invalid assembly')
+        unresolved = a.get('unresolved', [])
+        if not isinstance(unresolved, list):
+            raise ValueError('Invalid unresolved receipts')
+        seen = set()
+        for item in unresolved:
+            if (not isinstance(item, dict) or item.keys() != {'generation', 'kind', 'state'}
+                    or not _positive_id(item['generation']) or item['generation'] >= a['generation']
+                    or item['kind'] not in {'due', 'nudge'} or item['state'] != 'unknown'):
+                raise ValueError('Invalid unresolved receipt')
+            identity = (item['generation'], item['kind'])
+            if identity in seen:
+                raise ValueError('Duplicate unresolved receipt')
+            seen.add(identity)
         for kind in ('due', 'nudge'):
             r = a[kind]
             if not isinstance(r, dict):
