@@ -17,6 +17,8 @@ from core.storage_paths import DATA_DIR
 from core.ui import SafeModal, SafeView
 from features.community_outcomes import test_channel
 from features.member_names import member_label, plain_name
+from features.plan_assembly_ui import (AssemblyView, add_assembly_buttons, add_preference_button,
+                                      authorize_assembly, voice_link)
 from features.squad_plans import ACTIVE, HK, PlanBook, confirmed, counts, deadline, parse_start
 
 log = logging.getLogger(__name__)
@@ -143,16 +145,26 @@ def card(plan, guild=None):
     event = event_url(plan)
     if event:
         embed.add_field(name='約定活動', value=f'[查看活動]({event}) · 有興趣不等於報名', inline=False)
-    embed.set_footer(text='原有隊友無需重複報名 · 報名不等於到場 · 發起人從名單／選項開局')
+    if plan.get('assembly') and plan['status'] in ACTIVE:
+        if plan['status'] == 'due' and not plan['assembly'].get('opened'):
+            detail = f"等候開局 {len(plan['assembly']['waiting'])} 人。發起人可按「確認開局」。"
+            if plan['assembly']['host']:
+                detail += '預約時間五分鐘後，隊友可催開一次。'
+            embed.add_field(name='集合', value=detail, inline=False)
+        embed.set_footer(text='選擇到時提醒，Bot 會在本頻道 @ 你。只報名或登記等候均不計語音出席。')
+    else:
+        embed.set_footer(text='原有隊友無需重複報名 · 報名不等於到場 · 發起人從名單／選項開局')
     return embed
 
 
 class PlanForm(SafeModal):
-    def __init__(self, cog, channel, plan=None, *, instant=False, seed=None, confirmed=False, delivery_options=None):
+    def __init__(self, cog, channel, plan=None, *, instant=False, seed=None, confirmed=False,
+                 delivery_options=None, assembly_host=None):
         super().__init__(title='約一局' if plan is None else '修改約局')
         self.cog, self.channel_id, self.plan_id = cog, channel.id, plan and plan['id']
         self.instant = instant or bool(plan and plan.get('instant'))
         self.confirmed, self.delivery_options = confirmed, delivery_options
+        self.assembly_host = assembly_host
         self.game = discord.ui.TextInput(label='遊戲', default=plan['game'] if plan else (seed or {}).get('game', game_hint(channel)), max_length=80)
         self.start = discord.ui.TextInput(label='開始時間（24小時制）', placeholder='今晚22:00／明天22:00',
             default=datetime.fromtimestamp(plan['start'], HK).strftime('%Y-%m-%d %H:%M') if plan else (seed or {}).get('start'), max_length=30)
@@ -219,7 +231,8 @@ class PlanForm(SafeModal):
                         raise ValueError('你仍有舊版即時招募，請先完成該局；原有卡片仍可使用。')
                     p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id,
                         owner=interaction.user.id, owner_label=member_label(member), instant=self.instant,
-                        analytics_test=test_channel(channel), delivery_options=self.delivery_options, **changes)
+                        analytics_test=test_channel(channel), delivery_options=self.delivery_options,
+                        assembly_host=self.assembly_host, **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='due' if self.instant else 'open')
                     view = PlanView(self.cog, posted)
@@ -242,15 +255,25 @@ class PlanView(SafeView):
     def __init__(self, cog, plan):
         super().__init__(timeout=None)
         self.cog, self.key = cog, plan['id']
-        for action, label, style in [('join', '🙋 我參加', discord.ButtonStyle.success),
-                                     ('late', '稍後到', discord.ButtonStyle.secondary),
+        assembly = plan.get('assembly')
+        generation = assembly['generation'] if assembly else None
+        joins = [('join', '🙋 我參加', discord.ButtonStyle.success)]
+        before_start = bool(assembly and cog.book.clock() < plan['start'])
+        if assembly and plan['status'] in ACTIVE:
+            due_label = '⏰ 我參加，到時提醒我' if before_start else '到時提醒已截止'
+            joins = [('join_due', due_label, discord.ButtonStyle.success),
+                     ('join_only', '只報名' if before_start else '🙋 我參加', discord.ButtonStyle.secondary)]
+        for action, label, style in [*joins, ('late', '稍後到', discord.ButtonStyle.secondary),
                                      ('manage', '名單／管理', discord.ButtonStyle.secondary)]:
             if action == 'manage' and plan['status'] not in ACTIVE:
                 label = '查看名單'
-            button = discord.ui.Button(label=label, style=style, custom_id=f"plan:{self.key}:{action}",
-                                       disabled=action != 'manage' and plan['status'] not in ACTIVE)
-            async def callback(interaction, action=action):
-                await self.handle(interaction, action)
+            version = generation if action != 'manage' else None
+            suffix = f':{version}' if version is not None else ''
+            button = discord.ui.Button(label=label, style=style, custom_id=f"plan:{self.key}:{action}{suffix}",
+                                       disabled=(action != 'manage' and plan['status'] not in ACTIVE
+                                                 or action == 'join_due' and not before_start))
+            async def callback(interaction, action=action, version=version):
+                await self.handle(interaction, action, generation=version)
             button.callback = callback
             self.add_item(button)
         # Keep the previous public leave custom ID routable on old posted cards.
@@ -263,14 +286,15 @@ class PlanView(SafeView):
             reminder.callback = lambda interaction: self.handle(interaction, 'reminder')
             self.add_item(reminder)
         if plan.get('voice') and plan['status'] in {'gathering', 'live'}:
-            self.add_item(discord.ui.Button(label='🎧 加入語音', style=discord.ButtonStyle.link,
-                url=f"https://discord.com/channels/{plan['guild']}/{plan['voice']}", row=0))
+            self.add_item(voice_link(plan, row=0))
+        if assembly:
+            add_assembly_buttons(self, cog, plan, surface='card')
         if plan['status'] not in ACTIVE:
             again = discord.ui.Button(label='再約一局', custom_id=f'plan:{self.key}:again', row=1)
             again.callback = lambda interaction: self.handle(interaction, 'again')
             self.add_item(again)
 
-    async def handle(self, interaction, action):
+    async def handle(self, interaction, action, *, generation=None):
         p = self.cog.book.get(self.key)
         permitted = can_read(interaction) if action == 'manage' else allowed(interaction)
         if (not permitted or not p or p['guild'] != interaction.guild_id
@@ -305,7 +329,7 @@ class PlanView(SafeView):
                 from types import SimpleNamespace
                 if not allowed(SimpleNamespace(guild_id=interaction.guild_id,user=member,channel=channel)):
                     raise ValueError('原頻道權限已變更。')
-                p = self.cog.book.act(self.key, interaction.user.id, action)
+                p = self.cog.book.act(self.key, interaction.user.id, action, generation=generation)
             except AccessError:
                 await interaction.followup.send('原卡目前無法使用，未變更報名。',ephemeral=True)
                 return
@@ -313,9 +337,13 @@ class PlanView(SafeView):
                 await interaction.followup.send(str(exc), ephemeral=True)
                 return
             refreshed = await self.cog.refresh(p)
-        await interaction.followup.send(('已加入。原有隊友請勿重複報名。可在下方查看及設定本局開局提醒。' if action == 'join' else '已登記稍後到。可在下方查看及設定本局開局提醒。' if action == 'late' else '已退出，已撤回本局提醒。')
+        confirmations = {'join': '已加入。原有隊友請勿重複報名。可在下方設定開局提醒。',
+                         'join_due': '已報名。到時會在原頻道 @ 你集合。',
+                         'join_only': '已報名。' if self.cog.book.clock() >= p['start'] else '已報名。預約時間到時不會 @ 你。',
+                         'late': '已登記稍後到。可在下方設定本局提醒。'}
+        await interaction.followup.send(confirmations.get(action, '已退出，已撤回本局提醒。')
             + ('' if refreshed else '資料已儲存，但未能確認原卡已更新；請查看我的約局。'), ephemeral=True,
-            **({'view': ReminderView(self.cog, self.key, interaction.user)} if action in {'join', 'late'} else {}))
+            **({'view': ReminderView(self.cog, self.key, interaction.user)} if action in confirmations else {}))
 
 
 class ReminderView(SafeView):
@@ -325,6 +353,7 @@ class ReminderView(SafeView):
         from features.language_preferences import language
         hk = language(owner) == 'hk'
         p = cog.book.get(key)
+        add_preference_button(self, cog, p, owner)
         enabled = owner.id in p.get('reminders', [])
         for action, label in [('remind_on', '本局開局時提醒我'), ('remind_off', '取消本局提醒')]:
             if hk:
@@ -439,10 +468,45 @@ class PlanEntry(SafeView):
         await self.cog.menu_entry(interaction)
 
 
+async def prepare_plan_voice(cog, interaction, p):
+    """Called under the plan lock after the owner and source have been checked."""
+    key, owner = p['id'], interaction.user.id
+    if (owner != p['owner'] or p['status'] not in {'open', 'due', 'gathering', 'live'}
+            or cog.book.clock() > deadline(p)):
+        raise ValueError('此約局已無法開局，請重新開啟原卡。')
+    room_id = p.get('voice')
+    if not room_id:
+        if p.get('assembly', {}).get('opened'):
+            raise ValueError('之前的集合已結束，請重新約一局。')
+        if p['status'] == 'live':
+            raise ValueError('目前無法核對本局語音。')
+        tempvc = cog.bot.get_cog('TempVC')
+        if tempvc is None:
+            raise ValueError('語音功能暫時未能使用，約局紀錄仍保留。')
+        cards = cog.bot.get_cog('SquadCards')
+        settings = cards.state.get('settings', {}) if cards else {}
+        routes = dict(settings.get('routes', {}))
+        if 'category' in settings:
+            routes.setdefault(str(settings['category']), settings['destination'])
+        if str(getattr(interaction.channel, 'category_id', None)) not in routes:
+            raise ValueError('此遊戲區尚未設定場次記錄，請由管理員核對；現有約局保留。')
+        room = await tempvc.room_for_plan(interaction,
+            before_create=lambda: cog.book.begin_voice_attempt(key, owner))
+        session = cards.state.get('sessions', {}).get(str(room.id))
+        if session and session.get('ended') is not None:
+            raise ValueError('上一局仍在整理足跡，請稍後重新開局。')
+        p = cog.book.link_voice(key, owner, room.id)
+        room_id = room.id
+    await cog.refresh(p)
+    url = f'https://discord.com/channels/{p["guild"]}/{room_id}'
+    return f'本局語音已備妥：[加入語音]({url})。有人加入後才開始記錄實際場次。'
+
+
 class StartView(SafeView):
     def __init__(self, cog, key, owner):
         super().__init__(timeout=120)
         self.cog, self.key, self.owner = cog, key, owner
+        self.generation = (cog.book.get(key) or {}).get('assembly', {}).get('generation')
 
     @discord.ui.button(label='確認開局', style=discord.ButtonStyle.primary)
     async def start(self, interaction, button):
@@ -453,33 +517,18 @@ class StartView(SafeView):
             await interaction.response.send_message('此開局面板已無法使用，請重新開啟原卡。', ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        from features.plan_services import AccessError
         async with self.cog.lock:
             try:
                 p = self.cog.book.get(self.key)
-                if not p or p['status'] not in {'open', 'due', 'gathering'} or self.cog.book.clock() > deadline(p):
-                    raise ValueError('此約局已無法開局，請重新開啟原卡。')
-                tempvc = self.cog.bot.get_cog('TempVC')
-                if tempvc is None:
-                    raise ValueError('語音功能暫時未能使用，約局紀錄仍保留。')
-                cards = self.cog.bot.get_cog('SquadCards')
-                settings = cards.state.get('settings', {}) if cards else {}
-                routes = dict(settings.get('routes', {}))
-                if 'category' in settings:
-                    routes.setdefault(str(settings['category']), settings['destination'])
-                if str(getattr(interaction.channel, 'category_id', None)) not in routes:
-                    raise ValueError('此遊戲區尚未設定場次記錄，請由管理員核對；現有約局保留。')
-                room = await tempvc.room_for_plan(interaction,
-                    before_create=lambda: self.cog.book.begin_voice_attempt(self.key, self.owner))
-                session = cards.state.get('sessions', {}).get(str(room.id))
-                if session and session.get('ended') is not None:
-                    raise ValueError('上一局仍在整理足跡，請稍後重新開局；不會重複綁定。')
-                p = self.cog.book.link_voice(self.key, self.owner, room.id)
-                await self.cog.refresh(p)
+                if self.generation is not None:
+                    p = await authorize_assembly(self.cog, interaction, self.key, self.generation, 'private')
+                content = await prepare_plan_voice(self.cog, interaction, p)
+            except AccessError:
+                content = '目前無法核對原卡或你的權限。'
             except ValueError as exc:
-                await interaction.followup.send(str(exc), ephemeral=True)
-                return
-        url = f'https://discord.com/channels/{interaction.guild_id}/{room.id}'
-        await interaction.followup.send(f'本局語音已備妥：[加入語音]({url})。原卡已提供相同入口；有人加入後才開始記錄實際場次。', ephemeral=True, allowed_mentions=NONE)
+                content = str(exc)
+        await interaction.followup.send(content, ephemeral=True, allowed_mentions=NONE)
 
 
 class PlanMenu(SafeView):
@@ -519,6 +568,8 @@ class SquadPlans(commands.Cog):
         self.personal_reminders_v1 = PersonalReminders(self)
         from features.plan_delivery import PlanDelivery
         self.delivery = PlanDelivery(self)
+        from features.plan_assembly_delivery import AssemblyDelivery
+        self.assembly_delivery = AssemblyDelivery(self)
 
     async def member_status(self, guild, user_id, key):
         """02 integration: freshly authorized, read-only and roster-free."""
@@ -584,20 +635,29 @@ class SquadPlans(commands.Cog):
         for p in self.book.all():
             if p['message']:
                 self.bot.add_view(PlanView(self, p), message_id=p['message'])
+            notice = p.get('assembly', {}).get('due', {}).get('message')
+            if notice and p['status'] in ACTIVE:
+                self.bot.add_view(AssemblyView(self, p), message_id=notice)
         self.tick.start()
 
     def cog_unload(self):
         self.tick.cancel()
 
     async def refresh(self, p):
+        updated = await SquadPlans.refresh_card(self, p)
+        assembly = p.get('assembly') or {}
+        if assembly.get('retired') or assembly.get('due', {}).get('message'):
+            await self.assembly_delivery.refresh(self.book.get(p['id']))
+        return updated
+
+    async def refresh_card(self, p):
         channel = self.bot.get_channel(p['channel'])
         if not p['message']:
             self.book.availability(p['id'],'unknown_result')
             return False
-        if not channel:
-            self.book.availability(p['id'],'denied')
-            return False
         try:
+            if not channel:
+                channel = await self.bot.fetch_channel(p['channel'])
             message = await channel.fetch_message(p['message'])
             if message.author.id != self.bot.user.id:
                 return False
@@ -615,8 +675,9 @@ class SquadPlans(commands.Cog):
         except discord.Forbidden:
             self.book.availability(p['id'],'denied')
             return False
-        except (OSError, asyncio.TimeoutError):
-            self.book.availability(p['id'],'unknown_result')
+        except (OSError, asyncio.TimeoutError, discord.RateLimited):
+            # Re-editing a known message is safe even if Discord accepted the first edit.
+            self.book.availability(p['id'], 'temporary_failure' if p.get('assembly') else 'unknown_result')
             return False
         except discord.HTTPException:
             self.book.availability(p['id'],'temporary_failure')
@@ -632,11 +693,28 @@ class SquadPlans(commands.Cog):
                 self.book.expire()
                 for p in self.book.all():
                     if p['status'] == 'gathering' and not self.bot.get_channel(p.get('voice')):
-                        self.book.release_voice(p['id'])
+                        missing = True
+                        if p.get('assembly'):
+                            # A cold gateway cache is not evidence that the linked room was deleted.
+                            try:
+                                await self.bot.fetch_channel(p['voice'])
+                                missing = False
+                            except discord.NotFound:
+                                pass
+                            except (discord.HTTPException, discord.RateLimited, OSError):
+                                missing = False
+                        if missing:
+                            self.book.release_voice(p['id'])
                         p = self.book.get(p['id'])
                     if p.get('delivery'):
                         await self.delivery.reconcile_event(p)
                         await self.delivery.flush_notices(self.book.get(p['id']))
+                        p = self.book.get(p['id'])
+                    if p.get('assembly'):
+                        try:
+                            await self.assembly_delivery.tick(p)
+                        except Exception:
+                            log.exception('Assembly reconciliation failed for plan %s', p['id'])
                         p = self.book.get(p['id'])
                     if p['dirty']:
                         await self.refresh(p)

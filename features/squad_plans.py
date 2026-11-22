@@ -14,6 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from core.json_storage import atomic_write_json
+from features import plan_assembly_state as assembly_state
 
 HK = ZoneInfo('Asia/Hong_Kong')
 ACTIVE = {'open', 'due', 'gathering', 'live'}
@@ -98,6 +99,8 @@ class PlanBook:
                 values = p.get(field, [])
                 if not isinstance(values, list) or any(type(uid) is not int or uid not in p['members'] for uid in values):
                     raise ValueError('Invalid squad plan RSVP state; original file preserved')
+            if 'assembly' in p:
+                assembly_state.validate_assembly(p)
             if 'delivery' in p:
                 from features.plan_delivery import validate_delivery
                 validate_delivery(p)
@@ -132,7 +135,7 @@ class PlanBook:
             return copy.deepcopy(list(self.state['plans'].values()))
 
     def create(self, *, guild, channel, owner, game, mode, start, party, capacity, instant=False,
-               analytics_test=False, delivery_options=None, owner_label=None):
+               analytics_test=False, delivery_options=None, owner_label=None, assembly_host=None):
         with self.lock:
             if instant:
                 start = int(self.clock())
@@ -149,6 +152,8 @@ class PlanBook:
                         game=game, mode=mode, start=start, party=party,
                         capacity=capacity, members=[], status='posting', message=None, dirty=False,
                         instant=instant, late=[], unconfirmed=[], reminders=[], withdrawn=[], revision=0)
+            if not instant and assembly_host is not None:
+                plan['assembly'] = assembly_state.new_assembly(assembly_host)
             if owner_label:
                 plan['owner_label'] = owner_label
             state = copy.deepcopy(self.state)
@@ -176,12 +181,14 @@ class PlanBook:
         if not 1 <= party <= 99 or (capacity is not None and not party < capacity <= party + 99):
             raise ValueError('人數無效。')
 
-    def act(self, key, user, action, *, admin=False, changes=None):
+    def act(self, key, user, action, *, admin=False, changes=None, generation=None):
         with self.lock:
             state = copy.deepcopy(self.state)
             p = state['plans'].get(key)
             if p is None or p['status'] not in ACTIVE or (p['status'] != 'live' and self.clock() > deadline(p)):
                 raise ValueError('此約局已結束，請重新約一局。')
+            if generation is not None:
+                assembly_state.occurrence(p, generation)
             p.setdefault('late', [])
             p.setdefault('unconfirmed', [])
             p.setdefault('reminders', [])
@@ -193,6 +200,8 @@ class PlanBook:
                     raise ValueError('只有發起人可以修改；管理員可以取消。')
                 if action == 'cancel':
                     p['status'] = 'cancelled'
+                    if 'assembly' in p:
+                        assembly_state.close(p['assembly'])
                 else:
                     if set(changes or {}) != {'game', 'mode', 'start', 'party', 'capacity'}:
                         raise ValueError('約局資料不完整。')
@@ -206,6 +215,8 @@ class PlanBook:
                         p['unconfirmed'] = list(p['members'])
                         p.pop('voice', None)
                         p.pop('session', None)
+                        if 'assembly' in p:
+                            p['assembly'] = assembly_state.next_occurrence(p['assembly'])
                     if p.get('delivery'):
                         settings = p['delivery']['settings']
                         if settings['minimum'] is not None and settings['minimum'] == p['capacity']:
@@ -229,10 +240,20 @@ class PlanBook:
                 else:
                     p['reminders'] = [uid for uid in p['reminders'] if uid != user]
                     p['withdrawn'] = sorted(set(p['withdrawn']) | {user})
-            elif action in {'join', 'late'}:
+            elif action in {'join', 'late', 'join_due', 'join_only'}:
+                choice = action in {'join_due', 'join_only'}
+                if choice and 'assembly' not in p:
+                    raise ValueError('此約局未有集合提醒，請從原卡報名。')
+                if action == 'join_due':
+                    assembly_state.require_future_reminder(p, self.clock())
                 if user == p['owner']:
                     raise ValueError('你已計入「已有人數」，無需重複加入。')
                 existing = user in p['members'] and user not in p['unconfirmed']
+                if choice and existing:
+                    assembly_state.set_consent(p['assembly'], user, action == 'join_due')
+                    if p != self.state['plans'][key]:
+                        self._write(state)
+                    return copy.deepcopy(p)
                 if existing and ((action == 'late') == (user in p['late'])):
                     raise ValueError('你已加入。')
                 if not existing and p['capacity'] is not None and p['party'] + len(confirmed(p)) >= p['capacity']:
@@ -244,12 +265,16 @@ class PlanBook:
                 p['late'] = [uid for uid in p['late'] if uid != user]
                 if action == 'late':
                     p['late'].append(user)
+                if choice:
+                    assembly_state.set_consent(p['assembly'], user, action == 'join_due')
                 from features.plan_delivery import record_join
                 record_join(p, user, new=newly_registered, clock=self.clock(), boot=self.delivery_boot)
             elif action == 'leave':
                 if user not in p['members']:
                     raise ValueError('你尚未按卡加入；發起人可修改原有隊伍人數。')
                 p['members'].remove(user)
+                if 'assembly' in p:
+                    assembly_state.remove_member(p['assembly'], user)
                 p['reminders'] = [uid for uid in p['reminders'] if uid != user]
                 p['withdrawn'] = sorted(set(p['withdrawn']) | {user})
                 p['late'] = [uid for uid in p['late'] if uid != user]
@@ -260,6 +285,41 @@ class PlanBook:
             p['revision'] = p.get('revision', 0) + 1
             self._write(state)
             return copy.deepcopy(p)
+
+    def assembly_action(self, key, user, action, generation):
+        with self.lock:
+            state = copy.deepcopy(self.state)
+            p = state['plans'].get(key)
+            if not p:
+                raise ValueError('找不到此約局。')
+            assembly_state.apply_action(p, user, action, generation, self.clock(), deadline(p))
+            if p != self.state['plans'][key]:
+                if action in {'wait', 'nudge', 'host_on', 'host_off'}:
+                    p.update(dirty=True, revision=p.get('revision', 0) + 1)
+                self._write(state)
+            return copy.deepcopy(p)
+
+    def assembly_receipt(self, key, generation, kind, expected, new, **fields):
+        with self.lock:
+            state = copy.deepcopy(self.state)
+            p = state['plans'].get(key)
+            if not p or type(generation) is not int or p.get('assembly', {}).get('generation') != generation:
+                return False
+            if not assembly_state.transition(p, kind, expected, new, fields, self.clock(), deadline(p)):
+                return False
+            self._write(state)
+            return True
+
+    def assembly_retire_done(self, key, message_id):
+        with self.lock:
+            state = copy.deepcopy(self.state)
+            p = state['plans'].get(key)
+            retired = p.get('assembly', {}).get('retired', []) if p else []
+            if type(message_id) is not int or message_id not in retired:
+                return False
+            retired.remove(message_id)
+            self._write(state)
+            return True
 
     def delivery_settings(self, key, user, settings, *, expected_revision):
         from features.plan_delivery import options, new_delivery
@@ -325,6 +385,11 @@ class PlanBook:
             if other and other['id'] != key:
                 raise ValueError('此語音房已連接另一個約局。')
             p.update(voice=voice, status='gathering', dirty=True, revision=p.get('revision', 0) + 1)
+            if 'assembly' in p:
+                p['assembly']['opened'] = True
+                if self.clock() >= p['start']:
+                    p['assembly']['card_due'] = True
+                assembly_state.skip_nudge(p['assembly'])
             p.pop('voice_attempt', None)
             state = copy.deepcopy(self.state)
             state['plans'][key] = p
@@ -355,6 +420,8 @@ class PlanBook:
             p.update(status='ended' if ended else 'live', session=session, dirty=True,
                      revision=p.get('revision', 0) + 1)
             if ended:
+                if 'assembly' in p:
+                    assembly_state.close(p['assembly'])
                 p['footprint'] = footprint
             state = copy.deepcopy(self.state)
             state['plans'][key] = p
@@ -376,10 +443,21 @@ class PlanBook:
         with self.lock:
             state = copy.deepcopy(self.state)
             changed = False
+            now = self.clock()
             for p in state['plans'].values():
-                status = 'expired' if self.clock() > deadline(p) else 'due'
-                if p['status'] in {'open', 'due'} and p['start'] <= self.clock() and p['status'] != status:
+                overdue = now > deadline(p)
+                if overdue and 'assembly' in p and not p['assembly'].get('closed'):
+                    assembly_state.close(p['assembly'])
+                    changed = True
+                status = 'expired' if overdue else 'due'
+                if p['status'] in {'open', 'due'} and p['start'] <= now and p['status'] != status:
                     p.update(status=status, dirty=True, revision=p.get('revision', 0) + 1)
+                    changed = True
+                elif ('assembly' in p and p['status'] in {'gathering', 'live'} and p.get('voice')
+                        and now >= p['start'] and not p['assembly'].get('card_due')):
+                    # The room keeps its status at the RSVP cutoff, but its original card changes controls.
+                    p['assembly']['card_due'] = True
+                    p.update(dirty=True, revision=p.get('revision', 0) + 1)
                     changed = True
             if changed:
                 self._write(state)

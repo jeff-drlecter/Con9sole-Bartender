@@ -32,6 +32,9 @@ class Draft(SafeView):
         super().__init__(timeout=180)
         self.cog, self.channel, self.owner = cog, channel, owner
         self.data = dict(data)
+        self.assembly_host = None if data.get('instant') else True
+        if self.assembly_host is None:
+            self.remove_item(self.assembly)
         self.settings = settings or options(data['party'], data['capacity'], instant=data.get('instant', False))
         self.used = False
         self.auto.disabled = bool(data.get('instant') or self.settings['minimum'] is None)
@@ -39,7 +42,19 @@ class Draft(SafeView):
         self.notice.label = text(owner, '切換報名提醒', '切換報名提醒')
 
     def summary(self):
-        return summary(self.owner, self.data, self.settings)
+        preview = summary(self.owner, self.data, self.settings)
+        if self.assembly_host is None:
+            return preview
+        enabled = '開啟' if self.assembly_host else '關閉'
+        return preview + '\n' + text(self.owner,
+            f'預約時間到及隊友催開局時，在原頻道 @ 我：{enabled}。',
+            f'夠鐘同隊友催開局時，喺原頻道 @ 我：{enabled}。')
+
+    @discord.ui.button(label='切換集合提醒', row=1)
+    async def assembly(self, i, button):
+        if self.assembly_host is not None and await self.authorize_update(i):
+            self.assembly_host = not self.assembly_host
+            await i.edit_original_response(content=self.summary(), view=self)
 
     async def interaction_check(self, i):
         # Discord calls this before the callback. Do not perform REST reads here:
@@ -79,7 +94,7 @@ class Draft(SafeView):
         if not self.data.get('instant'):
             seed['start'] = datetime.fromtimestamp(self.data['start'], HK).strftime('%Y-%m-%d %H:%M')
         form = PlanForm(self.cog, self.channel, instant=self.data.get('instant', False), seed=seed,
-                        confirmed=True, delivery_options=self.settings)
+                        confirmed=True, delivery_options=self.settings, assembly_host=self.assembly_host)
         await form.on_submit(i)
 
     @discord.ui.button(label='成局／最高人數')
