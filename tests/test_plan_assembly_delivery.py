@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +112,7 @@ class AssemblyDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.due()
         await self.tick()
         self.assertEqual(self.mentions(), [1, 2])
+        self.assertFalse(self.channel.send.await_args.kwargs['silent'])
         args = self.channel.send.await_args
         self.assertIn('/20/99', args.args[0])
         self.assertNotIn('<@3>', args.args[0])
@@ -151,6 +153,7 @@ class AssemblyDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.due(deadline(self.p()) - self.p()['start'])
         await self.tick()
         self.assertEqual(self.mentions(), [])
+        self.assertTrue(self.channel.send.await_args.kwargs['silent'])
         self.assertEqual([c.args[0] for c in self.guild.fetch_member.await_args_list], [9])
 
     async def test_crossing_time_boundary_while_fetching_avoids_stale_ping(self):
@@ -162,6 +165,7 @@ class AssemblyDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.channel.fetch_message.side_effect = delayed
         await self.tick()
         self.assertEqual(self.mentions(), [])
+        self.assertTrue(self.channel.send.await_args.kwargs['silent'])
 
     async def test_room_opened_before_due_uses_join_voice_no_nudge(self):
         self.join(2)
@@ -306,7 +310,7 @@ class AssemblyDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ids[:2], [1, users[3]])
         self.assertLessEqual(len(ids), 100)
         reads = [c.args[0] for c in self.guild.fetch_member.await_args_list if c.args[0] != 9]
-        self.assertLessEqual(len(reads), 100)
+        self.assertLessEqual(len(reads), len(ids) + 3 + 5)
         self.assertEqual(reads[:4], [1, *users[:3]])
 
     async def test_source_deleted_during_member_scan_prevents_post(self):
@@ -333,6 +337,7 @@ class AssemblyDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.now += 301
         await self.tick()
         self.assertEqual(self.mentions(), [])
+        self.assertTrue(self.channel.send.await_args.kwargs['silent'])
 
     async def test_cancel_during_preflight_and_expired_plan_never_posts(self):
         self.due()
@@ -359,3 +364,60 @@ class AssemblyDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.channel.permissions_for.return_value = perms
         await self.tick()
         self.assertEqual(self.messages[mid].content, assembly.CLOSED_TEXT)
+
+    async def test_denied_candidates_do_not_consume_mention_slots(self):
+        self.action(1, 'host_off')
+        users = list(range(1000, 1101))
+        for uid in users:
+            self.join(uid)
+        self.denied.update(users[:99])
+        active = peak = 0
+        async def fetch_member(uid):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return N(id=uid, guild=self.guild, bot=uid == 9)
+        self.guild.fetch_member.side_effect = fetch_member
+        self.due()
+        await self.tick()
+        self.assertEqual(self.mentions(), users[99:])
+        self.assertFalse(self.channel.send.await_args.kwargs['silent'])
+        self.assertLessEqual(peak, 5)
+
+    async def test_current_reminder_without_eligible_mentions_is_silent(self):
+        self.action(1, 'host_off')
+        self.join(2)
+        self.denied.add(2)
+        self.due()
+        await self.tick()
+        self.assertEqual(self.mentions(), [])
+        self.assertTrue(self.channel.send.await_args.kwargs['silent'])
+
+    async def test_scan_stops_at_100_eligible_members(self):
+        users = list(range(1000, 1120))
+        for uid in users:
+            self.join(uid)
+        self.due()
+        await self.tick()
+        self.assertEqual(self.mentions(), [1, *users[:99]])
+        reads = [c.args[0] for c in self.guild.fetch_member.await_args_list if c.args[0] != 9]
+        self.assertEqual(reads, [1, *users[:99]])
+
+    async def test_downtime_boundary_stops_a_scan_of_denied_members(self):
+        users = list(range(1000, 1020))
+        for uid in users:
+            self.join(uid)
+        self.denied.update(users)
+        self.due(300)
+        async def slow_member(uid):
+            if uid == users[0]:
+                self.now += 1
+            return N(id=uid, guild=self.guild, bot=uid == 9)
+        self.guild.fetch_member.side_effect = slow_member
+        await self.tick()
+        self.assertTrue(self.channel.send.await_args.kwargs['silent'])
+        self.assertEqual(self.mentions(), [])
+        reads = [c.args[0] for c in self.guild.fetch_member.await_args_list if c.args[0] != 9]
+        self.assertEqual(reads, [1, *users[:4]])

@@ -128,10 +128,14 @@ class AssemblyDelivery:
 
         members = []
         size = len(_text(p, _mode(p, self.book.clock())))
-        for offset in range(0, len(ids), 5):
+        candidates = iter(ids)
+        while len(members) < 100:
             if kind == 'due' and self.book.clock() > p['start'] + FIVE_MINUTES:
                 break
-            batch = await asyncio.gather(*(get(uid) for uid in ids[offset:offset + 5]))
+            chunk = list(islice(candidates, min(5, 100 - len(members))))
+            if not chunk:
+                break
+            batch = await asyncio.gather(*(get(uid) for uid in chunk))
             for member in filter(None, batch):
                 if not self._eligible(channel, [member]):
                     continue
@@ -184,9 +188,8 @@ class AssemblyDelivery:
         consent = set(a['members'])
         if kind == 'nudge':
             candidates = [p['owner'], a['nudge']['actor']]
-        elif now <= p['start'] + FIVE_MINUTES:
-            eligible = chain([p['owner']] if a['host'] else [], (u for u in confirmed(p) if u in consent))
-            candidates = list(islice(eligible, 100))
+        elif now <= p['start'] + FIVE_MINUTES and (a['host'] or consent):
+            candidates = chain([p['owner']] if a['host'] else [], (u for u in confirmed(p) if u in consent))
         else:
             candidates = []
         try:
@@ -227,7 +230,8 @@ class AssemblyDelivery:
             return
         # In the pinned SDK an explicit nonce sets enforce_nonce=true even on internal HTTP retries.
         try:
-            msg = await channel.send(content, allowed_mentions=mentions, view=view, nonce=_nonce(p, kind))
+            msg = await channel.send(content, allowed_mentions=mentions, silent=not mentions.users,
+                                     view=view, nonce=_nonce(p, kind))
         except NETWORK_ERRORS as exc:
             definite = isinstance(exc, discord.HTTPException) and 400 <= exc.status < 500
             self._cas(p, kind, 'sending', 'failed' if definite else 'unknown')
