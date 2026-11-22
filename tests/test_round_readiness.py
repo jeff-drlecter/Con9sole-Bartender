@@ -57,11 +57,14 @@ class Readiness(unittest.TestCase):
             root=Path(tmp)
             with sqlite3.connect(root/'community_stats.sqlite3') as db:
                 db.executescript('CREATE TABLE squad_interest_delivery(session_id TEXT,users TEXT,state TEXT); CREATE TABLE squad_ended_sessions(session_id TEXT); CREATE TABLE squad_card_posts(state TEXT);')
-            (root/'squad_plans.json').write_text(json.dumps({'plans':{'a':{'status':'ended','delivery':{'event':{'state':'unknown'},'notices':[{'state':'queued'}]}}}}))
+            (root/'squad_plans.json').write_text(json.dumps({'plans':{'a':{'status':'ended',
+                'assembly': {'due': {'state': 'unknown'}},
+                'delivery':{'event':{'state':'unknown'},'notices':[{'state':'queued'}]}}}}))
             (root/'squad_cards.json').write_text('{"sessions":{}}')
             before={p.name:p.read_bytes() for p in root.iterdir()}
             result=inspect(root,{})
             with self.assertRaises(ValueError):require_idle(result)
             self.assertTrue(result['plan_event_unresolved_present'])
             self.assertTrue(result['host_notice_unresolved_present'])
+            self.assertTrue(result['assembly_delivery_unresolved_present'])
             self.assertEqual(before,{p.name:p.read_bytes() for p in root.iterdir()})

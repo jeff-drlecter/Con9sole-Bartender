@@ -9,6 +9,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = {
     "members": ("test_staff_boundaries", "test_role_authorization", "test_private_notification_center"),
+    "assembly": ("test_plan_assembly_state", "test_plan_assembly_delivery", "test_plan_assembly_ui",
+                 "test_unified_squad_flow", "test_plan_response_deadline"),
     "plans": ("test_plan_services", "test_plan_delivery", "test_squad_plans", "test_squad_interest",
               "test_squad_integration", "test_unified_squad_flow"),
     "growth": ("test_community_levels", "test_level_membership", "test_level_audit", "test_title_roles"),

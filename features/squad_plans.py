@@ -294,6 +294,8 @@ class PlanBook:
                 raise ValueError('找不到此約局。')
             assembly_state.apply_action(p, user, action, generation, self.clock(), deadline(p))
             if p != self.state['plans'][key]:
+                if action in {'wait', 'nudge', 'host_on', 'host_off'}:
+                    p.update(dirty=True, revision=p.get('revision', 0) + 1)
                 self._write(state)
             return copy.deepcopy(p)
 
