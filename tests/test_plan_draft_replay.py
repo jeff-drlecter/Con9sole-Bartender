@@ -140,9 +140,10 @@ class PlanDraftReplayTests(unittest.IsolatedAsyncioTestCase):
             denied = await self.press(draft.cancel, self.other)
             denied.response.send_message.assert_awaited_once()
             message = denied.response.send_message.await_args
-            self.snapshot("其他會員嘗試取消", message.args[0], message.kwargs.get("view"))
+            content = message.args[0] if message.args else message.kwargs.get("content")
+            self.snapshot("其他會員嘗試取消", content, message.kwargs.get("view"))
             self.assertIs(message.kwargs.get("ephemeral"), True)
-            self.assertIn("唔屬於你", message.args[0])
+            self.assertIn("唔屬於你", content or "")
             self.assertFalse(draft.used)
 
         with self.subTest(step="開啟人數設定"):
@@ -185,6 +186,22 @@ class PlanDraftReplayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(PlanBook(self.cog.book.path).all(), [], "取消後重新載入預約簿應為空")
             self.guild.create_scheduled_event.assert_not_awaited()
             self.channel.send.assert_not_awaited()
+
+
+class ReplayReportTests(unittest.TestCase):
+    def test_empty_cancel_reply_can_be_rendered_as_failure(self):
+        from scripts.draft_replay_report import write_report
+
+        step = {"step": "取消草稿", "content": None, "controls": []}
+        trace = {"passed": False, "failed_step": step["step"], "steps": [step]}
+        with tempfile.TemporaryDirectory() as folder:
+            evidence = Path(folder)
+            (evidence / "trace.json").write_text(json.dumps(trace), encoding="utf-8")
+            page, count = write_report(evidence)
+            html = page.read_text(encoding="utf-8")
+        self.assertEqual(count, 1)
+        self.assertIn("未通過 · 取消草稿", html)
+        self.assertIn("<p></p>", html)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 
 def render_control(control):
-    label = escape(control["label"])
+    label = escape(control["label"] or "")
     if control["value"] is not None:
         value = escape(control["value"], quote=True)
         if control["required"]:
@@ -28,14 +28,14 @@ def hong_kong_time(match):
     return value.strftime("%Y-%m-%d %H:%M（香港）")
 
 
-def render_report(evidence):
+def write_report(evidence):
     trace = json.loads((evidence / "trace.json").read_text(encoding="utf-8"))
     steps = trace["steps"]
     verdict = "通過" if trace["passed"] else f'未通過 · {escape(trace["failed_step"] or "互動或測試環境")}'
     cards = []
     for step in steps:
         controls = "".join(render_control(control) for control in step["controls"])
-        content = escape(step["content"])
+        content = escape(step["content"] or "")
         content = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", content)
         content = re.sub(r"&lt;t:(\d{1,11}):F&gt;", hong_kong_time, content)
         cards.append(f'<section><h2>{escape(step["step"])}</h2>'
@@ -65,7 +65,11 @@ input { display: block; background: white; width: 100%; margin-top: 3px }
 </style>""" + f"<header><h1>約局草稿離線驗收 · {verdict}</h1>"
                     + "<p>合成會員操作後，Discord SDK 回傳嘅文字、欄位及按鈕狀態。</p></header><main>"
                     + "".join(cards) + "</main></html>", encoding="utf-8")
+    return page, len(steps)
 
+
+def render_report(evidence):
+    page, step_count = write_report(evidence)
     mac_chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     chrome = (shutil.which("google-chrome") or shutil.which("chromium")
               or shutil.which("chromium-browser") or (mac_chrome if Path(mac_chrome).is_file() else None))
@@ -74,7 +78,7 @@ input { display: block; background: white; width: 100%; margin-top: 3px }
 
     # An empty browser profile renders only the local report, without loading Discord or a user session.
     screenshot = evidence / "replay.png"
-    rows = (len(steps) + 1) // 2
+    rows = (step_count + 1) // 2
     height = max(680, 240 + 320 * rows)
     browser_env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "LANG", "SYSTEMROOT") if k in os.environ}
     with tempfile.TemporaryDirectory(prefix="draft-replay-browser-") as profile:
@@ -85,4 +89,4 @@ input { display: block; background: white; width: 100%; margin-top: 3px }
         result = subprocess.run(command, env=browser_env, capture_output=True, text=True, timeout=60)
     if result.returncode or not screenshot.is_file() or not screenshot.stat().st_size:
         raise SystemExit(f"Chrome could not capture {page}: {result.stderr[-1000:]}")
-    print(f"Saved {len(steps)} SDK states and their visual report: {screenshot}")
+    print(f"Saved {step_count} SDK states and their visual report: {screenshot}")
