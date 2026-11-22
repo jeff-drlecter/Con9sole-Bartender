@@ -123,8 +123,7 @@ class AssemblyBookTests(unittest.TestCase):
         with patch.object(self.book, '_write', side_effect=AssertionError('unexpected duplicate write')):
             p = self.book.assembly_action(key, 4, 'wait', 1)
         self.assertEqual(p['assembly']['waiting'], [4])
-        self.assertEqual({k: p[k] for k in p if k != 'assembly'},
-                         {k: before[k] for k in before if k != 'assembly'})
+        self.assertEqual(p, dict(before, assembly=p['assembly'], dirty=True, revision=before['revision'] + 1))
         self.now += 300
         with self.assertRaises(ValueError):
             self.book.assembly_action(key, 4, 'nudge', 1)
