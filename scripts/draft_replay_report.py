@@ -16,6 +16,8 @@ def render_control(control):
     label = escape(control["label"])
     if control["value"] is not None:
         value = escape(control["value"], quote=True)
+        if control["required"]:
+            label += "（必填）"
         return f'<label>{label}<input readonly value="{value}"></label>'
     disabled = " disabled" if control["disabled"] else ""
     return f"<button{disabled}>{label}</button>"
@@ -29,7 +31,7 @@ def hong_kong_time(match):
 def render_report(evidence):
     trace = json.loads((evidence / "trace.json").read_text(encoding="utf-8"))
     steps = trace["steps"]
-    verdict = "通過" if trace["passed"] else "未通過"
+    verdict = "通過" if trace["passed"] else f'未通過 · {escape(trace["failed_step"] or "互動或測試環境")}'
     cards = []
     for step in steps:
         controls = "".join(render_control(control) for control in step["controls"])

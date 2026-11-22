@@ -66,32 +66,43 @@ class PlanDraftReplayTests(unittest.IsolatedAsyncioTestCase):
 
     def snapshot(self, step, content, view):
         controls = []
-        for row in view.to_components() if view is not None else []:
-            for field in row["components"]:
-                value = field.get("value", "") if field["type"] == discord.ComponentType.text_input.value else None
-                controls.append(dict(label=field["label"], value=value, disabled=field.get("disabled", False)))
+        for row in view.to_components() if hasattr(view, "to_components") else []:
+            for field in row.get("components", []):
+                control = dict(label=field.get("label", field.get("placeholder", "")), value=None,
+                               disabled=field.get("disabled", False))
+                if field["type"] == discord.ComponentType.text_input.value:
+                    control.update(value=field.get("value", ""), required=field.get("required", True))
+                controls.append(control)
         self.trace.append(dict(step=step, content=content, controls=controls))
 
     def opened_modal(self, step, interaction, expected_type):
         interaction.response.send_modal.assert_awaited_once()
         modal, = interaction.response.send_modal.await_args.args
+        self.snapshot(step, getattr(modal, "title", ""), modal)
         self.assertIsInstance(modal, expected_type)
-        self.snapshot(step, modal.title, modal)
         return modal
 
     def edited_draft(self, step, interaction):
         interaction.edit_original_response.assert_awaited_once()
         kwargs = interaction.edit_original_response.await_args.kwargs
-        view, content = kwargs["view"], kwargs["content"]
-        self.assertIsInstance(view, Draft, content)
+        view, content = kwargs.get("view"), kwargs.get("content", "")
         self.snapshot(step, content, view)
+        self.assertIsInstance(view, Draft, content)
         return view, content
 
     async def submit(self, modal, **values):
         interaction = self.interaction()
-        # Build Discord's modal-submit payload from the IDs of the controls actually sent.
-        rows = [{"type": 1, "components": [{"type": 4, "custom_id": getattr(modal, name).custom_id,
-                                            "value": value}]} for name, value in values.items()]
+        # Only submit fields a user could fill or clear in the emitted SDK form.
+        entries = {getattr(modal, name).custom_id: value for name, value in values.items()}
+        rows = []
+        for row in modal.to_components():
+            for field in row["components"]:
+                key = field["custom_id"]
+                value = entries.pop(key, field.get("value", ""))
+                self.assertTrue(value or not field.get("required", True),
+                                f'{field["label"]} is required and cannot be submitted empty')
+                rows.append({"type": 1, "components": [{"type": field["type"], "custom_id": key, "value": value}]})
+        self.assertFalse(entries, "Input supplied for a field missing from the SDK form")
         modal._refresh(interaction, rows, {})
         self.assertTrue(await modal.interaction_check(interaction))
         await modal.on_submit(interaction)
@@ -129,14 +140,15 @@ class PlanDraftReplayTests(unittest.IsolatedAsyncioTestCase):
             denied = await self.press(draft.cancel, self.other)
             denied.response.send_message.assert_awaited_once()
             message = denied.response.send_message.await_args
+            self.snapshot("其他會員嘗試取消", message.args[0], message.kwargs.get("view"))
             self.assertIs(message.kwargs.get("ephemeral"), True)
             self.assertIn("唔屬於你", message.args[0])
-            self.snapshot("其他會員嘗試取消", message.args[0], message.kwargs.get("view"))
             self.assertFalse(draft.used)
 
         with self.subTest(step="開啟人數設定"):
             numbers = self.opened_modal("開啟人數設定", await self.press(draft.numbers), Numbers)
             self.assertEqual((numbers.minimum.default, numbers.capacity.default), ("4", "4"))
+            self.assertFalse(self.trace[-1]["controls"][0]["required"], "成局人數必須容許留空")
 
         with self.subTest(step="清空成局人數"):
             edited = await self.submit(numbers, minimum="", capacity="4")
@@ -159,14 +171,15 @@ class PlanDraftReplayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(reopened.capacity.value, "4", "重開後應保留最高四人")
             self.assertEqual([control["value"] for control in self.trace[-1]["controls"]], ["", "4"],
                              "重開時送往 Discord 的表格應顯示空白成局人數和四人上限")
+            self.assertFalse(self.trace[-1]["controls"][0]["required"], "重開後成局人數仍須容許留空")
 
         with self.subTest(step="取消草稿"):
             cancelled = await self.press(draft.cancel)
             cancelled.response.edit_message.assert_awaited_once()
             kwargs = cancelled.response.edit_message.await_args.kwargs
+            self.snapshot("取消草稿", kwargs.get("content", ""), kwargs.get("view"))
             self.assertEqual(kwargs["content"], "草稿已取消。")
             self.assertIsNone(kwargs["view"], "取消後必須移除所有按鈕")
-            self.snapshot("取消草稿", kwargs["content"], kwargs["view"])
             self.assertTrue(draft.used)
             self.assertEqual(self.cog.book.all(), [])
             self.assertEqual(PlanBook(self.cog.book.path).all(), [], "取消後重新載入預約簿應為空")
@@ -179,8 +192,10 @@ if __name__ == "__main__":
     result = unittest.TextTestRunner(verbosity=2, failfast=True).run(case)
     # Discovery never writes evidence. Only the single-scenario runner reads this opt-in.
     if destination := os.environ.get("CON9SOLE_REPLAY_TRACE"):
+        failed_step = next((getattr(test, "params", {}).get("step", "互動或測試環境")
+                            for test, _ in result.failures + result.errors), None)
         with Path(destination).open("x", encoding="utf-8") as stream:
-            json.dump({"passed": result.wasSuccessful(), "steps": case.trace},
+            json.dump({"passed": result.wasSuccessful(), "failed_step": failed_step, "steps": case.trace},
                       stream, ensure_ascii=False, indent=2)
             stream.write("\n")
     if not result.wasSuccessful():
