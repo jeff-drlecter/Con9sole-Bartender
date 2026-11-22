@@ -106,8 +106,6 @@ async def assembly_click(cog, interaction, key, generation, surface, action):
             if action == 'start':
                 if p['owner'] != interaction.user.id or cog.book.clock() < p['start']:
                     raise ValueError('預約時間到後，只有發起人可以確認開局。')
-                if p['assembly'].get('opened') and not p.get('voice'):
-                    raise ValueError('之前的集合已結束，請從原卡查看目前安排。')
                 from cogs.squad_plans import prepare_plan_voice
                 content = await prepare_plan_voice(cog, interaction, p)
             else:

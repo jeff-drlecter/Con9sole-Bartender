@@ -134,6 +134,42 @@ class AssemblyReplay(unittest.IsolatedAsyncioTestCase):
         await button(updated, '🎙️ 確認開局').callback(self.interaction(1))
         self.assertFalse(self.room_calls)
 
+    async def test_released_room_cannot_be_recreated_from_either_entry(self):
+        self.due()
+        original = PlanView(self.cog, self.plan())
+        await button(original, '🎙️ 確認開局').callback(self.interaction(1))
+        self.book.release_voice(self.key)
+        await StartView(self.cog, self.key, 1).start.callback(self.interaction(1))
+        await button(original, '🎙️ 確認開局').callback(self.interaction(1))
+        self.assertEqual(self.room_calls, [1])
+        self.assertIsNone(self.plan().get('voice'))
+
+    async def test_transient_original_edit_is_retried_after_restart(self):
+        self.due()
+        self.book.link_voice(self.key, 1, 300)
+        msg = N(author=self.bot.user, content='', edit=AsyncMock(side_effect=[TimeoutError(), None]))
+        self.ch.guild = self.guild
+        self.ch.fetch_message = AsyncMock(return_value=msg)
+        self.bot.get_channel = lambda channel: None
+        self.bot.fetch_channel = AsyncMock(return_value=self.ch)
+        self.assertFalse(await SquadPlans.refresh_card(self.cog, self.plan()))
+        self.cog.book = self.book = PlanBook(self.path, clock=lambda: self.now)
+        self.assertTrue(self.plan()['dirty'])
+        self.assertTrue(await SquadPlans.refresh_card(self.cog, self.plan()))
+        self.assertFalse(self.plan()['dirty'])
+        self.assertTrue(button(msg.edit.await_args.kwargs['view'], '🎧 加入語音').url.endswith('/300'))
+
+    async def test_early_room_keeps_both_registration_routes_across_restart_at_due(self):
+        self.book.link_voice(self.key, 1, 300)
+        original = PlanView(self.cog, self.plan())
+        self.now = self.data['start']
+        self.cog.book = self.book = PlanBook(self.path, clock=lambda: self.now)
+        restarted = PlanView(self.cog, self.plan())
+        before = {c.custom_id for c in original.children if c.custom_id}
+        after = {c.custom_id for c in restarted.children if c.custom_id}
+        self.assertFalse(before - after)
+        self.assertTrue(button(restarted, '到時提醒已截止').disabled)
+
     async def test_host_preview_and_bound_published_opt_out(self):
         draft = Draft(self.cog, self.ch, self.actor(1), self.data)
         self.assertIn('原頻道 @ 我：開啟', draft.summary())

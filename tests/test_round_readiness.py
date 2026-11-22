@@ -68,3 +68,7 @@ class Readiness(unittest.TestCase):
             self.assertTrue(result['host_notice_unresolved_present'])
             self.assertTrue(result['assembly_delivery_unresolved_present'])
             self.assertEqual(before,{p.name:p.read_bytes() for p in root.iterdir()})
+            for assembly in ({'retired': [101]}, {'unresolved': [{'generation': 1, 'kind': 'due', 'state': 'unknown'}]}):
+                (root/'squad_plans.json').write_text(json.dumps({'plans': {'a': {'status': 'cancelled', 'assembly': assembly}}}))
+                with self.assertRaisesRegex(ValueError, 'assembly_delivery_unresolved'):
+                    require_idle(inspect(root, {}))

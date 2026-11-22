@@ -47,8 +47,9 @@ def inspect(root, environ=None):
         plan_event_unresolved_present=any(p.get('delivery',{}).get('event',{}).get('state') in {'creating','unknown','syncing','unknown_sync','conflict'} for p in plans.values()),
         host_notice_unresolved_present=any(n.get('state') in {'queued','sending','unknown'} for p in plans.values() for n in p.get('delivery',{}).get('notices',[])),
         assembly_delivery_unresolved_present=any(
-            p.get('assembly', {}).get(kind, {}).get('state') in {'requested', 'sending', 'unknown'}
-            for p in plans.values() for kind in ('due', 'nudge')),
+            a.get('retired') or a.get('unresolved') or
+            any(a.get(kind, {}).get('state') in {'requested', 'sending', 'unknown'} for kind in ('due', 'nudge'))
+            for a in (p.get('assembly', {}) for p in plans.values())),
         persisted_active_voice_sessions_present=any(s.get('ended') is None for s in sessions.values()),
         voice_evidence='persisted Bot state; not a live Discord voice-state snapshot',
         legacy_receipt_policy='preserve and quarantine unclassified receipts; never guess origins or replay uncertain',

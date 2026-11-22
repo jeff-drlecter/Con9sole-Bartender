@@ -258,9 +258,11 @@ class PlanView(SafeView):
         assembly = plan.get('assembly')
         generation = assembly['generation'] if assembly else None
         joins = [('join', '🙋 我參加', discord.ButtonStyle.success)]
-        if assembly and plan['status'] in ACTIVE and cog.book.clock() < plan['start']:
-            joins = [('join_due', '⏰ 我參加，到時提醒我', discord.ButtonStyle.success),
-                     ('join_only', '只報名', discord.ButtonStyle.secondary)]
+        before_start = bool(assembly and cog.book.clock() < plan['start'])
+        if assembly and plan['status'] in ACTIVE:
+            due_label = '⏰ 我參加，到時提醒我' if before_start else '到時提醒已截止'
+            joins = [('join_due', due_label, discord.ButtonStyle.success),
+                     ('join_only', '只報名' if before_start else '🙋 我參加', discord.ButtonStyle.secondary)]
         for action, label, style in [*joins, ('late', '稍後到', discord.ButtonStyle.secondary),
                                      ('manage', '名單／管理', discord.ButtonStyle.secondary)]:
             if action == 'manage' and plan['status'] not in ACTIVE:
@@ -268,7 +270,8 @@ class PlanView(SafeView):
             version = generation if action != 'manage' else None
             suffix = f':{version}' if version is not None else ''
             button = discord.ui.Button(label=label, style=style, custom_id=f"plan:{self.key}:{action}{suffix}",
-                                       disabled=action != 'manage' and plan['status'] not in ACTIVE)
+                                       disabled=(action != 'manage' and plan['status'] not in ACTIVE
+                                                 or action == 'join_due' and not before_start))
             async def callback(interaction, action=action, version=version):
                 await self.handle(interaction, action, generation=version)
             button.callback = callback
@@ -336,7 +339,7 @@ class PlanView(SafeView):
             refreshed = await self.cog.refresh(p)
         confirmations = {'join': '已加入。原有隊友請勿重複報名。可在下方設定開局提醒。',
                          'join_due': '已報名。到時會在原頻道 @ 你集合。',
-                         'join_only': '已報名。預約時間到時不會 @ 你。',
+                         'join_only': '已報名。' if self.cog.book.clock() >= p['start'] else '已報名。預約時間到時不會 @ 你。',
                          'late': '已登記稍後到。可在下方設定本局提醒。'}
         await interaction.followup.send(confirmations.get(action, '已退出，已撤回本局提醒。')
             + ('' if refreshed else '資料已儲存，但未能確認原卡已更新；請查看我的約局。'), ephemeral=True,
@@ -473,6 +476,8 @@ async def prepare_plan_voice(cog, interaction, p):
         raise ValueError('此約局已無法開局，請重新開啟原卡。')
     room_id = p.get('voice')
     if not room_id:
+        if p.get('assembly', {}).get('opened'):
+            raise ValueError('之前的集合已結束，請重新約一局。')
         if p['status'] == 'live':
             raise ValueError('目前無法核對本局語音。')
         tempvc = cog.bot.get_cog('TempVC')
@@ -650,10 +655,9 @@ class SquadPlans(commands.Cog):
         if not p['message']:
             self.book.availability(p['id'],'unknown_result')
             return False
-        if not channel:
-            self.book.availability(p['id'],'denied')
-            return False
         try:
+            if not channel:
+                channel = await self.bot.fetch_channel(p['channel'])
             message = await channel.fetch_message(p['message'])
             if message.author.id != self.bot.user.id:
                 return False
@@ -671,8 +675,9 @@ class SquadPlans(commands.Cog):
         except discord.Forbidden:
             self.book.availability(p['id'],'denied')
             return False
-        except (OSError, asyncio.TimeoutError):
-            self.book.availability(p['id'],'unknown_result')
+        except (OSError, asyncio.TimeoutError, discord.RateLimited):
+            # Re-editing a known message is safe even if Discord accepted the first edit.
+            self.book.availability(p['id'], 'temporary_failure' if p.get('assembly') else 'unknown_result')
             return False
         except discord.HTTPException:
             self.book.availability(p['id'],'temporary_failure')
