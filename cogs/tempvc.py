@@ -57,6 +57,7 @@ VC_LIMIT_CHANNEL_COOLDOWNS: dict[int, float] = {}
 
 TEMP_VC_LIMIT_CHOICES: tuple[int, ...] = (2, 5, 8, 11, 12, 16, 24, 32)
 MAX_ADMIN_SELECT_OPTIONS = 25
+MODE_NAME_DEBOUNCE_SECONDS = 1
 
 
 async def mention_or_id(
@@ -649,7 +650,7 @@ class TempVC(commands.Cog):
     async def _apply_mode_name(self, channel: discord.VoiceChannel) -> None:
         try:
             while channel.id in self._mode_names:
-                await asyncio.sleep(1)
+                await asyncio.sleep(MODE_NAME_DEBOUNCE_SECONDS)
                 name = self._mode_names[channel.id]
                 current = channel.guild.get_channel(channel.id)
                 if current is None or not is_temp_vc_id(channel.id) or temp_channel_number(current.name) is None:

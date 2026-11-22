@@ -23,19 +23,21 @@ class ModeNameTests(unittest.IsolatedAsyncioTestCase):
         self.tracked.stop()
 
     async def drain(self):
-        # The real one-second debounce is exercised, including task cleanup.
         await asyncio.gather(*self.cog._mode_tasks.values())
 
     async def test_latest_selection_wins_and_clear_restores_number(self):
         self.cog.queue_mode_name(self.channel, 'Park')
+        await asyncio.sleep(0)  # Let the worker start its real debounce before the next selection.
+        self.channel.edit.assert_not_awaited()
         self.cog.queue_mode_name(self.channel, 'REC')
         self.assertEqual(len(self.cog._mode_tasks), 1)
         await self.drain()
         self.channel.edit.assert_awaited_once_with(name='REC • 1', reason='Sync small-team call game mode')
         self.channel.name = 'REC • 1'
         self.channel.edit.reset_mock()
-        self.cog.queue_mode_name(self.channel, '')
-        await self.drain()
+        with patch('cogs.tempvc.MODE_NAME_DEBOUNCE_SECONDS', 0):
+            self.cog.queue_mode_name(self.channel, '')
+            await self.drain()
         self.assertEqual(self.channel.edit.await_args.kwargs['name'], '小隊call • 1')
 
     async def test_each_mode_numbers_independently_and_reserves_pending_names(self):
@@ -60,6 +62,7 @@ class ModeNameTests(unittest.IsolatedAsyncioTestCase):
             self.cog.queue_mode_name(self.channel, 'REC')
         self.assertFalse(self.cog._mode_tasks)
 
+    @patch('cogs.tempvc.MODE_NAME_DEBOUNCE_SECONDS', 0)
     async def test_deleted_room_and_noop_do_not_edit(self):
         self.channel.guild.get_channel.return_value = None
         self.cog.queue_mode_name(self.channel, 'REC')
@@ -77,6 +80,7 @@ class ModeNameTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(t.cancelled() for t in tasks))
         self.channel.edit.assert_not_awaited()
 
+    @patch('cogs.tempvc.MODE_NAME_DEBOUNCE_SECONDS', 0)
     async def test_squad_bridge_queues_mode(self):
         cog = MagicMock()
         cog.bot.get_cog.return_value = self.cog

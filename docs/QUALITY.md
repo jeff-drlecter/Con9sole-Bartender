@@ -25,7 +25,7 @@ python scripts/verify.py all
 
 將 `plans` 換成表內組名即可縮小測試範圍。`static` 強制重新編譯 Git 追蹤嘅 Python 源碼，將 `SyntaxWarning` 升格成錯誤，並驗證 Codex 配置同測試清單。新增 Python 檔後先 stage，先會納入本機編譯。`all` 再以 unittest discovery 執行整個 `tests/`，包括未列入任何快速組別嘅測試。執行器會建立臨時資料目錄，測試子程序唔繼承主機嘅 Bot Token 或資料庫路徑。
 
-PR 工作流程另有鎖檔依賴審計、容器排除私密檔案探針、非 root 身份及掛載卷驗證。Fly 嘅 main 部署流程重用同一 Python 指令，保留機器、持久卷、閒置狀態及備份檢查。正式合併同部署繼續跟原有授權流程。
+開啟 PR（包括 Draft）或推送新提交到已有 PR 嘅分支，都會自動跑必要檢查 `validate`。未開 PR 時，可以喺 Actions → Python checks → Run workflow 揀分支手動執行。兩種入口都會跑全套測試、鎖檔依賴審計、容器排除私密檔案探針、非 root 身份及掛載卷驗證。Fly 嘅 main 部署流程重用同一 Python 指令，保留機器、持久卷、閒置狀態及備份檢查。正式合併同部署繼續跟原有授權流程。
 
 ## 可執行嘅驗收條件
 

@@ -119,10 +119,13 @@ class RoleAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.target.add_roles.assert_not_awaited()
 
     async def test_bulk_privileged_role_is_rejected_before_first_member(self):
+        self.actor.guild_permissions = discord.Permissions(manage_guild=True)
         group = Role(70, 1)
         self.target.roles.append(group)
         self.role = Role(50, 10, administrator=True)
         await self.apply(bulk=group)
+        self.inter.followup.send.assert_awaited_once()
+        self.assertIn('只有 Administrator', self.inter.followup.send.await_args.kwargs['content'])
         self.target.add_roles.assert_not_awaited()
 
     async def test_managed_system_role_cannot_be_changed(self):

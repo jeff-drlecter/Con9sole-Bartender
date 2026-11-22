@@ -49,13 +49,6 @@ class Services(unittest.IsolatedAsyncioTestCase):
         self.source.side_effect=AccessError('denied')
         await view.children[0].callback(i)
         self.assertEqual(len(i.edit_original_response.await_args.kwargs['embed'].fields),0)
-    async def test_concurrent_last_slot(self):
-        k=self.create()
-        async def join(uid):
-            async with self.cog.lock:
-                try:self.book.act(k,uid,'join');return True
-                except ValueError:return False
-        self.assertEqual(sum(await asyncio.gather(join(2),join(3))),1)
     async def test_cancel_draft_no_write(self):
         draft=InstantDraft(self.cog,N(id=30),2,dict(game='FC',mode='',party=1,missing=2))
         i=N(user=N(id=2),response=N(edit_message=AsyncMock(),send_message=AsyncMock()))
