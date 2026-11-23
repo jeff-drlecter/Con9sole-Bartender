@@ -3,6 +3,7 @@ from types import SimpleNamespace as S
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import config
 from cogs.rss_delivery import RSSDelivery
 from core.rss_personal_ui import IntelligenceSettings, NewsCardPanel, PreferencesView
 from core.rss_preferences import DEFAULT
@@ -20,6 +21,7 @@ class RoundIntegrationTests(unittest.IsolatedAsyncioTestCase):
         from features.menu_views import PublicExploreButton
         for code in ('hk', 'tw', 'neutral'):
             inter = interaction()
+            inter.guild.id = inter.guild_id = config.GUILD_ID
             if code != 'neutral':
                 inter.user.roles = [S(id=123456789, name='語境偏好｜' + ('香港' if code == 'hk' else '台灣'),
                                       managed=False, permissions=S(value=0))]
@@ -31,6 +33,36 @@ class RoundIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('揀選' if code == 'hk' else '選擇', result['content'])
             self.assertNotIn('你想加入綜合聊天區嗎', result['content'])
             inter.user.add_roles.assert_not_called()
+
+    async def test_public_explore_links_only_the_visible_public_chat(self):
+        from features.menu_views import PublicExploreButton
+        inter = interaction()
+        inter.guild.id = inter.guild_id = config.GUILD_ID
+        inter.user.roles = [S(id=123, name='off-topic')]
+        chat = MagicMock(spec=discord.TextChannel)
+        chat.mention = '<#1013033957383741542>'
+        chat.jump_url = f'https://discord.com/channels/{config.GUILD_ID}/1013033957383741542'
+        inter.guild.get_channel.return_value = chat
+        with patch('features.menu_views.send_or_followup', new_callable=AsyncMock) as send:
+            for visible in (True, False):
+                chat.permissions_for.return_value = discord.Permissions(view_channel=visible)
+                await PublicExploreButton().callback(inter)
+                result = send.await_args.kwargs
+                self.assertTrue(result['ephemeral'])
+                inter.guild.get_channel.assert_called_with(1013033957383741542)
+                if visible:
+                    self.assertEqual(result['view'].children[0].url, chat.jump_url)
+                    self.assertIn(chat.mention, result['content'])
+                else:
+                    self.assertNotIn('view', result)
+                    self.assertNotIn(chat.mention, result['content'])
+
+            inter.guild.id = inter.guild_id = 1
+            inter.guild.get_channel.reset_mock()
+            await PublicExploreButton().callback(inter)
+            inter.guild.get_channel.assert_not_called()
+            self.assertNotIn('view', send.await_args.kwargs)
+        inter.user.add_roles.assert_not_called()
 
     async def test_all_previous_quick_ids_and_removed_actions_dispatch(self):
         cog = MagicMock()

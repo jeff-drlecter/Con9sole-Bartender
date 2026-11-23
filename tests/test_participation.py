@@ -57,37 +57,50 @@ class PublicPlanTests(unittest.TestCase):
         c.overwrites_for.side_effect=lambda target:discord.PermissionOverwrite.from_pair(*ow.pair())
         return c
 
-    def test_only_two_public_targets_and_only_message_bits(self):
-        channels=[self.channel(cid) for cid in f.TARGETS]+[self.channel(999)]
-        plan=f.build([NS(id=f.OFF_TOPIC,managed=False)],channels,1,7)
-        self.assertEqual(len(plan['ops']),2)
-        mask=discord.Permissions(send_messages=True,send_messages_in_threads=True).value
-        for op in plan['ops']:
-            self.assertEqual(op['before'][1],op['after'][1])
-            self.assertEqual(op['before'][0]^op['after'][0],mask)
+    def test_only_public_chat_and_only_message_bits(self):
+        channels = [self.channel(1013033957383741542), self.channel(1279353169671098408)]
+        plan = f.build([NS(id=f.OFF_TOPIC, managed=False)], channels, 1, 7)
+        self.assertEqual([op['channel'] for op in plan['ops']], [1013033957383741542])
+        op = plan['ops'][0]
+        mask = discord.Permissions(send_messages=True, send_messages_in_threads=True).value
+        self.assertEqual(op['before'][1], op['after'][1])
+        self.assertEqual(op['before'][0] ^ op['after'][0], mask)
 
     def test_explicit_readonly_channel_preserved(self):
-        channels=[self.channel(cid,deny=True) for cid in f.TARGETS]
+        channels=[self.channel(config.PUBLIC_CHAT_CHANNEL_ID,deny=True)]
         plan=f.build([NS(id=f.OFF_TOPIC,managed=False)],channels,1,7)
-        self.assertFalse(plan['ops']);self.assertEqual(len(plan['skipped']),2)
+        self.assertFalse(plan['ops']);self.assertEqual(len(plan['skipped']),1)
 
     def test_missing_moved_or_hidden_channel_stops(self):
         role=[NS(id=f.OFF_TOPIC,managed=False)]
         with self.assertRaises(ValueError):f.build(role,[],1,7)
-        channels=[self.channel(cid) for cid in f.TARGETS];channels[0].category_id=999
+        channels=[self.channel(config.PUBLIC_CHAT_CHANNEL_ID)];channels[0].category_id=999
         with self.assertRaises(ValueError):f.build(role,channels,1,7)
 
 
 class ExecutionRechecks(unittest.IsolatedAsyncioTestCase):
     async def test_moved_channel_after_preview_never_written(self):
         import time
-        op=dict(kind='overwrite',target=f.OFF_TOPIC,channel=next(iter(f.TARGETS)),before=[0,0],after=[2048,0],state='prepared')
+        op=dict(kind='overwrite',target=f.OFF_TOPIC,channel=config.PUBLIC_CHAT_CHANNEL_ID,before=[0,0],after=[2048,0],state='prepared')
         plan=dict(id='x',guild=1,actor=7,stamp=time.time(),ops=[op])
         channel=MagicMock(spec=discord.TextChannel);channel.category_id=999
         channel.set_permissions=AsyncMock()
         with patch('features.anti_scam_fix.current',AsyncMock(return_value=([0,0],NS(),channel))):
             with self.assertRaises(ValueError):await f.execute(NS(),plan,AsyncMock(return_value=True))
         channel.set_permissions.assert_not_awaited()
+
+    async def test_legacy_mixed_journal_rejected_before_apply_or_restore(self):
+        for restore in (False, True):
+            # Put the valid target first in the executor's traversal order.
+            ids = [1013033957383741542, 1279353169671098408]
+            if restore:
+                ids.reverse()
+            ops = [dict(kind='overwrite', target=f.OFF_TOPIC, channel=cid,
+                        state='verified' if restore else 'prepared', attempted=restore) for cid in ids]
+            with patch('features.anti_scam_fix.execute', new_callable=AsyncMock) as executor:
+                with self.assertRaisesRegex(ValueError, '重新預覽'):
+                    await f.execute(NS(), dict(ops=ops), AsyncMock(return_value=True), restore=restore)
+                executor.assert_not_awaited()
 
     async def test_revocation_during_room_lookup_prevents_create(self):
         from cogs.tempvc import TempVC
