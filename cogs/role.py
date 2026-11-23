@@ -251,7 +251,8 @@ class RoleManager(commands.Cog):
             operation = f"bulk_{operation}"
         # role_change_denial has just checked this same actor's admin/helper authority.
         actor_kind = "admin" if is_server_admin(inter.user) else "helper"
-        reason = encode_role_audit_reason(inter.user.id, actor_kind, operation)
+        reason = encode_role_audit_reason(inter.user.id, actor_kind, operation,
+                                          group_id=target_role.id if target_role is not None else None)
 
         if target_member is not None:
             member = target_member

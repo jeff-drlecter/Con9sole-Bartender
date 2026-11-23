@@ -15,7 +15,8 @@ SUITES = {
               "test_squad_integration", "test_unified_squad_flow"),
     "growth": ("test_community_levels", "test_level_membership", "test_level_audit", "test_title_roles"),
     "locale": ("test_language_preferences", "test_stage3_wording"),
-    "runtime": ("test_round_readiness", "test_runtime_backup", "test_audit_readable", "test_audit_recovery_privacy"),
+    "runtime": ("test_round_readiness", "test_runtime_backup", "test_audit_readable", "test_audit_recovery_privacy",
+                "test_member_role_log", "test_role_audit_reason"),
 }
 
 

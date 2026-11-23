@@ -127,7 +127,7 @@ class RoleAuthorizationTests(unittest.IsolatedAsyncioTestCase):
                                 (self.target.remove_roles, 'bulk_role_revoke')):
             call.assert_awaited_once()
             self.assertEqual(parse_role_audit_reason(call.await_args.kwargs['reason']),
-                             RoleAuditReason(self.actor.id, 'admin', operation))
+                             RoleAuditReason(self.actor.id, 'admin', operation, group.id))
 
     async def test_helper_cannot_bulk_change_even_safe_roles(self):
         group = Role(70, 1)

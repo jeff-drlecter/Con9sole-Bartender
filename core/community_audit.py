@@ -10,6 +10,7 @@ from core.sqlite_storage import connect_sqlite, enable_wal
 
 RETENTION_SECONDS = 30 * 86400
 MAX_EVENTS = 20000
+ROLE_AUDIT_WAIT = 15  # Seconds to allow the separate Discord audit event to arrive.
 
 
 def event_id() -> str:
@@ -32,25 +33,51 @@ class AuditStore:
             ''')
             if 'started' not in {row[1] for row in db.execute('PRAGMA table_info(audit_events)')}:
                 db.execute('ALTER TABLE audit_events ADD COLUMN started REAL')
+            if 'role_match' not in {row[1] for row in db.execute('PRAGMA table_info(audit_events)')}:
+                db.execute('ALTER TABLE audit_events ADD COLUMN role_match TEXT')
+            db.execute('CREATE INDEX IF NOT EXISTS audit_role_match ON audit_events(role_match,stamp) WHERE role_match IS NOT NULL')
             db.execute('CREATE TABLE IF NOT EXISTS audit_reviews(id INTEGER PRIMARY KEY,event TEXT NOT NULL,actor INTEGER NOT NULL,action TEXT NOT NULL,stamp REAL NOT NULL)')
             # A process may have died after Discord accepted a send. Never blindly resend it.
             db.execute("UPDATE audit_events SET state='uncertain',error='process interrupted during delivery' WHERE state='sending'")
 
-    def append(self, category, payload, *, key=None, now=None):
-        now = time.time() if now is None else now
+    def append(self, category, payload, *, key=None, now=None, role_delta=None, observed=False):
         key = key or event_id()
         with connect_sqlite(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
+            now = time.time() if now is None else now
             if db.execute('SELECT 1 FROM audit_events WHERE id=?', (key,)).fetchone():
                 return key
+            match = None
+            due = 0
+            if role_delta is not None:
+                # Matching only suppresses a redundant observation. Every named
+                # executor comes from its own immutable Discord audit entry.
+                match = ('observation:' if observed else 'audit:') + role_delta
+                opposite = ('audit:' if observed else 'observation:') + role_delta
+                partners = db.execute(
+                    'SELECT id,state,attempts FROM audit_events WHERE role_match=? AND stamp BETWEEN ? AND ? LIMIT 2',
+                    (opposite, now - ROLE_AUDIT_WAIT, now),
+                ).fetchall()
+                if len(partners) == 1:
+                    partner, state, attempts = partners[0]
+                    if observed:
+                        db.execute('UPDATE audit_events SET role_match=NULL WHERE id=?', (partner,))
+                        return partner
+                    if state == 'pending' and not attempts:
+                        db.execute('DELETE FROM audit_events WHERE id=?', (partner,))
+                    else:
+                        db.execute('UPDATE audit_events SET role_match=NULL WHERE id=?', (partner,))
+                    match = None
+                if observed:
+                    due = now + ROLE_AUDIT_WAIT
             db.execute("DELETE FROM audit_events WHERE stamp<? AND state IN ('sent','acknowledged')", (now-RETENTION_SECONDS,))
             count = db.execute('SELECT count(*) FROM audit_events').fetchone()[0]
             if count >= MAX_EVENTS:
                 db.execute("DELETE FROM audit_events WHERE id IN (SELECT id FROM audit_events WHERE state IN ('sent','acknowledged') ORDER BY stamp LIMIT 1000)")
                 if db.execute('SELECT count(*) FROM audit_events').fetchone()[0] >= MAX_EVENTS:
                     raise RuntimeError('Audit outbox full: unresolved records preserved')
-            db.execute('INSERT INTO audit_events(id,stamp,category,payload) VALUES(?,?,?,?)',
-                       (key, now, category, json.dumps(payload, ensure_ascii=False)))
+            db.execute('INSERT INTO audit_events(id,stamp,category,payload,role_match,due) VALUES(?,?,?,?,?,?)',
+                       (key, now, category, json.dumps(payload, ensure_ascii=False), match, due))
         return key
 
     def pending(self, category, now=None, limit=5):
