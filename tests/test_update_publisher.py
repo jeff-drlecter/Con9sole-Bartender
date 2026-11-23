@@ -11,6 +11,7 @@ import discord
 
 from features.update_publisher import (
     AnnouncementDraft,
+    COMMUNITY_LINE,
     build_announcement_embed,
     build_announcement_text,
     game_name_from_forum,
@@ -143,6 +144,13 @@ class UpdatePublisherTests(unittest.TestCase):
         self.assertIn("🧭 **加入方法**", text)
         self.assertIn("<id:customize>", text)
         self.assertIn("勾選想加入的遊戲角色，即可看到對應專區", text)
+        self.assertTrue(text.endswith("\n\n" + COMMUNITY_LINE))
+
+    def test_feature_announcement_includes_community_line_once(self) -> None:
+        for body in ("更新咗組隊功能。", f"更新咗組隊功能。\n{COMMUNITY_LINE}"):
+            with self.subTest(body=body):
+                draft = AnnouncementDraft(kind="feature", title="更新", body=body)
+                self.assertEqual(build_announcement_text(draft).count(COMMUNITY_LINE), 1)
 
     def test_game_modal_suggests_new_feature_copy(self) -> None:
         game_a = record_created_game(guild_id=1, name="FC27", detail="FC27 detail", path=self.path)
