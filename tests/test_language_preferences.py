@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock
 import discord
+from features.role_audit_reason import RoleAuditReason, parse_role_audit_reason
 from features.language_preferences import language, preference_roles, ROLE_NAMES, serialize_prompts, localize_menu, menu_text
 
 
@@ -99,5 +100,9 @@ class LanguageAsyncTests(unittest.IsolatedAsyncioTestCase):
         await LanguageView(10).choose(interaction, 'tw')
         self.assertEqual(member.add_roles.await_args.args, (tw,))
         self.assertEqual(member.remove_roles.await_args.args, (hk,))
+        self.assertEqual(parse_role_audit_reason(member.add_roles.await_args.kwargs['reason']),
+                         RoleAuditReason(10, 'self', 'language_grant'))
+        self.assertEqual(parse_role_audit_reason(member.remove_roles.await_args.kwargs['reason']),
+                         RoleAuditReason(10, 'self', 'language_revoke'))
         self.assertIn(unrelated, fresh.roles)
         self.assertEqual(interaction.followup.send.await_args.args[0], '已切換為台灣用語。')

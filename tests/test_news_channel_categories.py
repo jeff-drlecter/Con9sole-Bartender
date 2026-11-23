@@ -72,11 +72,12 @@ from types import SimpleNamespace as S
 from unittest.mock import AsyncMock,patch
 import config
 from core.news_channel_ui import NewsChannelSelect,NewsChannelView
+from features.role_audit_reason import RoleAuditReason,parse_role_audit_reason
 async def main():
     ps,xbox,pc,game=object(),object(),object(),object()
     roles=dict(ps=ps,xbox=xbox,pc=pc)
     member=S(id=1,roles=[ps,xbox,game],add_roles=AsyncMock(),remove_roles=AsyncMock())
-    fresh=S(id=1,roles=[ps,game])
+    fresh=S(id=1,roles=[ps,pc,game])
     guild=S(fetch_member=AsyncMock(side_effect=[member,fresh]))
     i=S(user=S(id=1),guild=guild,guild_id=config.GUILD_ID,
         response=S(defer=AsyncMock(),send_message=AsyncMock()),followup=S(send=AsyncMock()))
@@ -86,9 +87,11 @@ async def main():
     assert not await view.interaction_check(i)
     i.user.id=1
     with patch('core.news_channel_ui.safe_roles',AsyncMock(return_value=roles)):
-        await NewsChannelSelect.callback(S(values=['ps']),i)
-    member.add_roles.assert_not_awaited()
-    member.remove_roles.assert_awaited_once_with(xbox,reason='Member news channel choice')
+        await NewsChannelSelect.callback(S(values=['ps','pc']),i)
+    for call,role,operation in ((member.add_roles,pc,'news_grant'), (member.remove_roles,xbox,'news_revoke')):
+        call.assert_awaited_once()
+        assert call.await_args.args == (role,)
+        assert parse_role_audit_reason(call.await_args.kwargs['reason']) == RoleAuditReason(1,'self',operation)
     assert i.followup.send.call_args.kwargs['ephemeral']
     assert game in fresh.roles
 asyncio.run(main())

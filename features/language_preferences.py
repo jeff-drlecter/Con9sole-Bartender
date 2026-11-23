@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import discord
 
+from features.role_audit_reason import encode_role_audit_reason
+
 ROLE_NAMES = {"hk": "語境偏好｜香港", "tw": "語境偏好｜台灣"}
 from features.onboarding_wording import LANGUAGE_TITLE
 PROMPT_TITLE = LANGUAGE_TITLE
@@ -139,8 +141,10 @@ class LanguageView(discord.ui.View):
                 if any(r >= me.top_role for r in roles.values()):
                     raise ValueError("Bot 無法管理語境角色，請管理員檢查角色排序。")
                 # Per-role endpoints preserve concurrent unrelated role assignments.
-                await member.add_roles(roles[code], reason="Member wording preference")
-                await member.remove_roles(roles["hk" if code == "tw" else "tw"], reason="Member wording preference")
+                grant_reason = encode_role_audit_reason(interaction.user.id, "self", "language_grant")
+                revoke_reason = encode_role_audit_reason(interaction.user.id, "self", "language_revoke")
+                await member.add_roles(roles[code], reason=grant_reason)
+                await member.remove_roles(roles["hk" if code == "tw" else "tw"], reason=revoke_reason)
                 fresh = await interaction.guild.fetch_member(member.id)
                 selected = {r.id for r in fresh.roles} & {r.id for r in roles.values()}
                 if selected != {roles[code].id}:

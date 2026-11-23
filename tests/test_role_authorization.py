@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 import cogs.role as roles
+from features.role_audit_reason import RoleAuditReason, parse_role_audit_reason
 
 
 class Role:
@@ -80,6 +81,15 @@ class RoleAuthorizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_safe_lower_game_role_still_works(self):
         await self.apply(target=self.target)
         self.target.add_roles.assert_awaited_once()
+        reason = self.target.add_roles.await_args.kwargs['reason']
+        self.assertEqual(parse_role_audit_reason(reason), RoleAuditReason(self.actor.id, 'helper', 'role_grant'))
+
+    async def test_manage_guild_helper_uses_admin_authority_for_revoke(self):
+        self.actor.guild_permissions = discord.Permissions(manage_guild=True)
+        self.target.roles.append(self.role)
+        await self.apply(target=self.target, mode='remove')
+        reason = self.target.remove_roles.await_args.kwargs['reason']
+        self.assertEqual(parse_role_audit_reason(reason), RoleAuditReason(self.actor.id, 'admin', 'role_revoke'))
 
     async def test_only_safe_self_mod_exception_is_retained(self):
         self.role = Role(roles.MOD_ROLE_ID, 40)
@@ -109,8 +119,15 @@ class RoleAuthorizationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [high, self.target]
         with patch.object(roles.asyncio, 'sleep', new=AsyncMock()):
             await self.apply(bulk=group)
+            self.target.roles.append(self.role)
+            await self.apply(bulk=group, mode='remove')
         high.add_roles.assert_not_awaited()
-        self.target.add_roles.assert_awaited_once()
+        high.remove_roles.assert_not_awaited()
+        for call, operation in ((self.target.add_roles, 'bulk_role_grant'),
+                                (self.target.remove_roles, 'bulk_role_revoke')):
+            call.assert_awaited_once()
+            self.assertEqual(parse_role_audit_reason(call.await_args.kwargs['reason']),
+                             RoleAuditReason(self.actor.id, 'admin', operation))
 
     async def test_helper_cannot_bulk_change_even_safe_roles(self):
         group = Role(70, 1)
