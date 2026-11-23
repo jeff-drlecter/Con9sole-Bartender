@@ -143,6 +143,14 @@ class UpdatePublisherTests(unittest.TestCase):
         self.assertIn("🧭 **加入方法**", text)
         self.assertIn("<id:customize>", text)
         self.assertIn("勾選想加入的遊戲角色，即可看到對應專區", text)
+        self.assertTrue(text.endswith("\n\n我們的初衷很簡單，希望大家都能找到一起玩遊戲的夥伴。"))
+
+    def test_feature_announcement_includes_community_line_once(self) -> None:
+        mission = "我們的初衷很簡單，希望大家都能找到一起玩遊戲的夥伴。"
+        for body in ("組隊功能已更新。", f"組隊功能已更新。\n{mission}"):
+            with self.subTest(body=body):
+                draft = AnnouncementDraft(kind="feature", title="更新", body=body)
+                self.assertEqual(build_announcement_text(draft).count(mission), 1)
 
     def test_game_modal_suggests_new_feature_copy(self) -> None:
         game_a = record_created_game(guild_id=1, name="FC27", detail="FC27 detail", path=self.path)
@@ -164,7 +172,8 @@ class VersionButtonTests(unittest.IsolatedAsyncioTestCase):
         with patch("cogs.update_publisher.latest_announcement_version", return_value=(3, 9, 2)):
             view = VersionSelectionView(owner_id=1, guild_id=2, kind="feature", games=[])
         self.assertEqual([button.version for button in view.children], ["v3.9.3", "v3.10.0", "v4.0.0"])
-        interaction = SimpleNamespace(response=SimpleNamespace(send_modal=AsyncMock()))
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1, roles=[]),
+                                      response=SimpleNamespace(send_modal=AsyncMock()))
         await view.children[1].callback(interaction)
         modal = interaction.response.send_modal.call_args.args[0]
         self.assertEqual(modal.version, "v3.10.0")
@@ -182,7 +191,8 @@ class VersionButtonTests(unittest.IsolatedAsyncioTestCase):
         with patch("cogs.update_publisher.latest_announcement_version", return_value=(3, 9, 1)):
             view = VersionSelectionView(owner_id=1, guild_id=2, kind="feature", games=[], review_view=review)
         self.assertEqual(view.children[0].version, "v3.9.1")
-        interaction = SimpleNamespace(response=SimpleNamespace(send_modal=AsyncMock(), send_message=AsyncMock()))
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1, roles=[]),
+                                      response=SimpleNamespace(send_modal=AsyncMock(), send_message=AsyncMock()))
         for state in ("cancelled", "publishing", "editing"):
             setattr(review, state, True)
             await view.children[1].callback(interaction)
@@ -212,6 +222,7 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
         thread.send.assert_awaited_once()
         self.assertEqual(thread.send.call_args.args[0], "內容 B")
         self.assertEqual(thread.send.call_args.kwargs["allowed_mentions"].to_dict(), {"parse": []})
+        self.assertIs(thread.send.call_args.kwargs["silent"], True)
         self.assertNotIn("內容 B", build_announcement_text(draft))
         self.assertIn("內容 B", draft_preview_text(draft, []))
         self.assertIn("<#123>", result)
@@ -243,13 +254,13 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
             create_public_threads=False, send_messages_in_threads=True)
         channel.send = AsyncMock()
         guild.get_channel = lambda _: channel
-        i = SimpleNamespace(guild=guild, response=SimpleNamespace(defer=AsyncMock()),
+        i = SimpleNamespace(user=SimpleNamespace(id=1, roles=[]), guild=guild, response=SimpleNamespace(defer=AsyncMock()),
                             followup=SimpleNamespace(send=AsyncMock()))
         view = DraftReviewView(owner_id=1, guild_id=2, draft=self.draft(), games=[])
         with patch("cogs.update_publisher.config.ANNOUNCEMENT_CHANNEL_ID", 123):
             await view.publish_draft.callback(i)
         channel.send.assert_not_awaited()
-        self.assertIn("都未有發佈", i.followup.send.call_args.args[0])
+        self.assertIn("均未發佈", i.followup.send.call_args.args[0])
 
     async def test_thread_failure_does_not_republish_a_on_second_click(self):
         guild = SimpleNamespace(id=2, me=object())
@@ -257,10 +268,11 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
         channel.guild, channel.mention = guild, "<#3>"
         channel.permissions_for.return_value = SimpleNamespace(
             create_public_threads=True, send_messages_in_threads=True)
-        message = SimpleNamespace(id=99, jump_url="https://discord.com/channels/2/3/99")
+        channel.is_news.return_value = True
+        message = SimpleNamespace(id=99, jump_url="https://discord.com/channels/2/3/99", publish=AsyncMock())
         channel.send = AsyncMock(return_value=message)
         guild.get_channel = lambda _: channel
-        i = SimpleNamespace(guild=guild, response=SimpleNamespace(defer=AsyncMock()),
+        i = SimpleNamespace(user=SimpleNamespace(id=1, roles=[]), guild=guild, response=SimpleNamespace(defer=AsyncMock()),
                             followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
         view = DraftReviewView(owner_id=1, guild_id=2, draft=self.draft(), games=[])
         with patch("cogs.update_publisher.config.ANNOUNCEMENT_CHANNEL_ID", 123), \
@@ -269,5 +281,8 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
             await view.publish_draft.callback(i)
             await view.publish_draft.callback(i)
         channel.send.assert_awaited_once()
+        self.assertIs(channel.send.call_args.kwargs["silent"], True)
+        self.assertEqual(channel.send.call_args.kwargs["allowed_mentions"].to_dict(), {"parse": []})
+        message.publish.assert_not_awaited()
         publish.assert_awaited_once()
-        self.assertIn("唔會重複", i.followup.send.call_args.args[0])
+        self.assertIn("不會重複", i.followup.send.call_args.args[0])

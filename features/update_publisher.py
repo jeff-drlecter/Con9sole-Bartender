@@ -14,6 +14,7 @@ from core.storage_paths import GAME_ANNOUNCEMENTS_PATH
 
 
 UPDATE_PUBLISHER_COLOR = 0x5865F2
+COMMUNITY_LINE = "我們的初衷很簡單，希望大家都能找到一起玩遊戲的夥伴。"
 MAX_PENDING_GAMES = 30
 AnnouncementKind = Literal["feature", "game"]
 
@@ -238,6 +239,8 @@ def build_announcement_text(
             "• 勾選想加入的遊戲角色，即可看到對應專區"
         )
 
+    if COMMUNITY_LINE not in draft.body:
+        sections.append(COMMUNITY_LINE)
     return "\n\n".join(sections)
 
 
@@ -287,7 +290,7 @@ def game_draft_from_pending(games: list[PendingGame], *, intro: str = "") -> Ann
     if not games:
         raise ValueError("暫時冇待公告的新遊戲。")
 
-    clean_intro = intro.strip() or "以下遊戲專區已準備好，歡迎入嚟一齊玩。"
+    clean_intro = intro.strip() or "以下遊戲專區現已開放，歡迎加入。"
     return AnnouncementDraft(
         kind="game",
         title="🎮 遊戲專區更新",
