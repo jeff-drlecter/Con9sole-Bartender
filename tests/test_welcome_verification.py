@@ -119,19 +119,20 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         await WelcomeLog(self.bot).on_member_join(joined)
         self.assertIn(v.VERIFY_BUTTON, [b.custom_id for b in send.await_args.kwargs['view'].children])
 
-    async def test_shared_welcome_links_only_a_public_viewable_playtest_forum(self):
+    async def test_shared_welcome_links_only_a_public_viewable_age_restricted_playtest_forum(self):
         forum_id = 1279353169671098408
-        forum = dict(self.source_data, type=15, id=str(forum_id), name='遊戲開發與試玩', nsfw=False)
+        forum = dict(self.source_data, type=15, id=str(forum_id), name='遊戲開發與試玩', nsfw=True)
         deny_view = str(discord.Permissions(view_channel=True).value)
         private = [dict(id=str(GUILD), type=0, allow='0', deny=deny_view),
                    dict(id=str(GAME), type=0, allow=deny_view, deny='0')]
         denied_recipient = [dict(id=str(NEW), type=1, allow='0', deny=deny_view)]
         adult_category = dict(self.source_data, id='800', type=4, nsfw=True)
         send = self.patch(discord.TextChannel, 'send', AsyncMock())
-        for changes, visible in [({}, True), ({'nsfw': True}, False),
+        for changes, visible in [({}, True), ({'nsfw': False}, False),
                                  ({'permission_overwrites': private}, False),
                                  ({'permission_overwrites': denied_recipient}, False),
-                                 ({'parent_id': '800'}, False), ({'type': 0}, False),
+                                 ({'parent_id': '800'}, True), ({'type': 0}, False),
+                                 ({'parent_id': '800', 'nsfw': False}, False),
                                  ({'id': '123'}, False)]:
             with self.subTest(changes=changes):
                 self.guild_data['channels'] = [self.source_data, adult_category, dict(forum, **changes)]
@@ -143,7 +144,7 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
                                  ['entry:games:v2', 'entry:menu:v2', 'entry:help:v2', v.VERIFY_BUTTON])
                 self.assertEqual(len(links), int(visible))
                 if visible:
-                    self.assertEqual((str(links[0].emoji), links[0].label), ('🧪', '遊戲開發與試玩'))
+                    self.assertEqual((str(links[0].emoji), links[0].label), ('🧪', '遊戲開發與試玩（18+）'))
                     self.assertEqual(links[0].url, f'https://discord.com/channels/{GUILD}/{forum_id}')
         self.add.assert_not_awaited()
 

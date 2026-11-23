@@ -62,12 +62,13 @@ class MemberEntryView(SafeView):
 
             if member is not None and member.guild.id == config.GUILD_ID:
                 forum = member.guild.get_channel(config.PLAYTEST_FORUM_ID)
-                if (isinstance(forum, discord.ForumChannel) and not forum.is_nsfw()
+                # This forum retains age-restricted history. Discord gates the native link.
+                if (isinstance(forum, discord.ForumChannel) and forum.is_nsfw()
                         and forum.guild.id == member.guild.id
-                        and (forum.category_id is None or (forum.category and not forum.category.is_nsfw()))
+                        and (forum.category_id is None or forum.category is not None)
                         and forum.permissions_for(member.guild.default_role).view_channel
                         and forum.permissions_for(member).view_channel):
-                    self.add_item(discord.ui.Button(label='遊戲開發與試玩', emoji='🧪',
+                    self.add_item(discord.ui.Button(label='遊戲開發與試玩（18+）', emoji='🧪',
                                                     url=forum.jump_url, row=1))
 
     async def verify(self, interaction):
