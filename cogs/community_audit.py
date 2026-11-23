@@ -69,7 +69,7 @@ class CommunityAudit(commands.Cog):
         if task:
             await asyncio.gather(task,return_exceptions=True)
 
-    async def emit(self, category, title, description, *, key=None, subject=None, role_delta=None, observed=False):
+    async def emit(self, category, title, description, *, key=None, subject=None, role_delta=None, role_event='audit'):
         try:
             payload={'title':title[:200],'description':description[:3500]}
             if subject is not None:
@@ -77,7 +77,7 @@ class CommunityAudit(commands.Cog):
                 avatar=getattr(subject,'display_avatar',None)
                 if avatar: payload['author']['icon_url']=str(avatar)
             key = await asyncio.to_thread(self.store.append,category,
-                payload,key=key,role_delta=role_delta,observed=observed)
+                payload,key=key,role_delta=role_delta,role_event=role_event)
             return key
         except Exception:
             async with self.failure_lock:
@@ -203,13 +203,14 @@ class CommunityAudit(commands.Cog):
         delta = role_delta_key(after.id, added, removed)
         if delta and not lines:
             detail = '\n'.join([who(after), '操作來源未確認（只收到成員狀態更新）', *role_change_lines(added, removed)])
-            await self.emit('member','成員身份組變更',detail,subject=after,role_delta=delta,observed=True)
+            await self.emit('member','成員身份組變更',detail,subject=after,role_delta=delta,role_event='observation')
             return
         if delta:
             # Keep the profile changes even if a separate role audit arrives.
-            lines += ['身份組操作來源請參閱本頻道對應的審核紀錄。', *role_change_lines(added, removed)]
+            lines += ['身份組操作來源未確認。如收到官方審核，本頻道會另列執行帳戶。', *role_change_lines(added, removed)]
         if lines:
-            await self.emit('member','成員資料變更',who(after)+'\n'+'\n'.join(lines),subject=after)
+            await self.emit('member','成員資料變更',who(after)+'\n'+'\n'.join(lines),subject=after,
+                            role_delta=delta,role_event='profile')
 
     @commands.Cog.listener()
     async def on_user_update(self,before,after):

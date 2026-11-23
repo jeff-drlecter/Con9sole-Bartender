@@ -39,6 +39,8 @@ def role_change_lines(added, removed):
 
 def attribution(entry, bot_id, actor, actor_id, target_id, added, removed):
     """Only our bot can attest to an interaction. Never redistribute free-form reasons."""
+    if getattr(entry.extra, 'integration_type', None):
+        return 'Discord 整合服務', '未有可核實的發起人紀錄'
     if not actor_id:
         return '來源未確認', '未能從審核紀錄確認'
     if actor_id == bot_id:

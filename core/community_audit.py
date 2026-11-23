@@ -40,7 +40,7 @@ class AuditStore:
             # A process may have died after Discord accepted a send. Never blindly resend it.
             db.execute("UPDATE audit_events SET state='uncertain',error='process interrupted during delivery' WHERE state='sending'")
 
-    def append(self, category, payload, *, key=None, now=None, role_delta=None, observed=False):
+    def append(self, category, payload, *, key=None, now=None, role_delta=None, role_event='audit'):
         key = key or event_id()
         with connect_sqlite(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
@@ -50,10 +50,22 @@ class AuditStore:
             match = None
             due = 0
             if role_delta is not None:
+                # An intervening change can reverse a previous assignment. Never
+                # suppress a later observation using evidence from before that change.
+                member_id = role_delta.split(':', 1)[0]
+                observation_key = 'observation:' + role_delta
+                audit_key = 'audit:' + role_delta
+                db.execute(
+                    'UPDATE audit_events SET role_match=NULL WHERE (role_match GLOB ? OR role_match GLOB ?) '
+                    'AND stamp>=? AND (? OR role_match NOT IN (?,?))',
+                    (f'observation:{member_id}:*', f'audit:{member_id}:*', now - ROLE_AUDIT_WAIT,
+                     role_event == 'profile', observation_key, audit_key),
+                )
+            if role_delta is not None and role_event != 'profile':
                 # Matching only suppresses a redundant observation. Every named
                 # executor comes from its own immutable Discord audit entry.
-                match = ('observation:' if observed else 'audit:') + role_delta
-                opposite = ('audit:' if observed else 'observation:') + role_delta
+                observed = role_event == 'observation'
+                match, opposite = (observation_key, audit_key) if observed else (audit_key, observation_key)
                 partners = db.execute(
                     'SELECT id,state,attempts FROM audit_events WHERE role_match=? AND stamp BETWEEN ? AND ? LIMIT 2',
                     (opposite, now - ROLE_AUDIT_WAIT, now),

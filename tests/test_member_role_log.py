@@ -31,11 +31,11 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
         self.cog = CommunityAudit(NS(user=self.bot))
         self.cog.store = AuditStore(self.path)
 
-    async def audit(self, executor, reason=None, *, key=100, remove=False):
+    async def audit(self, executor, reason=None, *, key=100, remove=False, extra=None):
         added, removed = ([], [self.role]) if remove else ([self.role], [])
         event = NS(id=key, action=discord.AuditLogAction.member_role_update, guild=self.guild,
                    user=executor, user_id=getattr(executor, 'id', None), target=self.target,
-                   reason=reason, extra=None, before=NS(roles=removed), after=NS(roles=added))
+                   reason=reason, extra=extra, before=NS(roles=removed), after=NS(roles=added))
         await self.cog.on_audit_log_entry_create(event)
 
     async def observe(self, *, remove=False):
@@ -84,6 +84,33 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
         self.role = NS(id=71, name='Game')
         await self.audit(self.bot, reason, key=104)
         self.assertNotIn('會員自助', self.cards()['member-role-audit:104'])
+
+    async def test_integration_is_not_attributed_as_a_manual_admin_action(self):
+        await self.audit(self.staff, extra=NS(integration_type='twitch'))
+        card = self.cards()['member-role-audit:100']
+        self.assertIn('Discord 整合服務', card)
+        self.assertIn('未有可核實的發起人紀錄', card)
+        self.assertIn('**執行帳戶**　Staff', card)
+
+    async def test_repeated_grant_after_removal_keeps_its_own_evidence(self):
+        await self.audit(self.staff)
+        await self.audit(self.staff, key=101, remove=True)
+        await self.observe(remove=True)
+        self.cog.store = AuditStore(self.path)
+        await self.observe()
+        self.assertEqual(len(self.cards(later=True)), 3)
+        self.assertTrue(any('操作來源未確認' in text and '新增身份組' in text for text in self.cards(later=True).values()))
+
+    async def test_gateway_first_then_mixed_profile_change_keeps_both_grants(self):
+        await self.observe()
+        base = dict(id=self.target.id, name=self.target.name, guild=self.guild)
+        await self.cog.on_member_update(NS(**base, roles=[self.role], nick='old'), NS(**base, roles=[], nick='new'))
+        self.cog.store = AuditStore(self.path)
+        await self.audit(self.staff)
+        cards = self.cards(later=True)
+        self.assertEqual(len(cards), 3)
+        self.assertTrue(any('身份組操作來源未確認' in text and '暱稱' in text for text in cards.values()))
+        self.assertTrue(any('只收到成員狀態更新' in text for text in cards.values()))
 
     async def test_audit_before_or_after_observation_and_restart(self):
         await self.observe()
