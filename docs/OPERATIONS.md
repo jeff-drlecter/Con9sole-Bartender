@@ -31,6 +31,8 @@ flyctl logs --app con9sole-bartender --no-tail
 
 A healthy deployment has a completed GitHub workflow, a completed Fly release, and a `started` machine in `sin`. Machine state alone does not prove the Discord connection is healthy, so confirm `/ping` after functional changes.
 
+The **Discord deployment gap** in the Fly Deploy job summary measures from Fly signalling the old process to shut down until the replacement's first Discord ready event with the persistent welcome verification button registered. It uses Fly log timestamps for the target Machine during this rollout and checks the ready event's image commit. This is a readiness estimate; a real button click is a separate check. Build time is excluded. Missing, ambiguous or out-of-order markers and failed deployments are reported as unavailable. The observer only reads the short Fly log buffer; it does not contact members or store log contents.
+
 ## Rollback decision
 
 Rollback when a new release repeatedly crashes, cannot log in to Discord, loses a core command, or produces data-write errors. Do not roll back merely for a cosmetic issue that can be fixed forward safely.
