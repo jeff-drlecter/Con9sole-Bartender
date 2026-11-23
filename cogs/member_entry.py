@@ -41,7 +41,7 @@ def game_entry_moves(guild):
 
 
 class MemberEntryView(SafeView):
-    def __init__(self, *, legacy=False, welcome=False, member=None):
+    def __init__(self, *, legacy=False, welcome=False):
         super().__init__(timeout=None)
         buttons = LEGACY_BUTTONS if legacy else ENTRY_BUTTONS
         version = 'v1' if legacy else 'v2'
@@ -59,17 +59,6 @@ class MemberEntryView(SafeView):
                                        custom_id=VERIFY_BUTTON, row=0)
             button.callback = self.verify
             self.add_item(button)
-
-            if member is not None and member.guild.id == config.GUILD_ID:
-                forum = member.guild.get_channel(config.PLAYTEST_FORUM_ID)
-                # This forum retains age-restricted history. Discord gates the native link.
-                if (isinstance(forum, discord.ForumChannel) and forum.is_nsfw()
-                        and forum.guild.id == member.guild.id
-                        and (forum.category_id is None or forum.category is not None)
-                        and forum.permissions_for(member.guild.default_role).view_channel
-                        and forum.permissions_for(member).view_channel):
-                    self.add_item(discord.ui.Button(label='遊戲開發與試玩（18+）', emoji='🧪',
-                                                    url=forum.jump_url, row=1))
 
     async def verify(self, interaction):
         cog = interaction.client.get_cog('MemberEntry')

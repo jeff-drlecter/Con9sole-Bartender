@@ -37,6 +37,23 @@ async def support_destination(interaction, source_member):
     return None
 
 
+async def playtest_destination(interaction, source_member):
+    guild = interaction.guild
+    if (guild is None or guild.id != config.GUILD_ID or interaction.guild_id != config.GUILD_ID
+            or not any(getattr(role, 'id', None) == config.PLAYTEST_ROLE_ID for role in source_member.roles)):
+        return None
+    try:
+        member, forum = await fresh_access(guild, interaction.user.id, config.PLAYTEST_FORUM_ID)
+    except (SourceUnavailable, discord.HTTPException, OSError):
+        return None
+    # fresh_access checks current View Channel and Read Message History. Recheck the
+    # opt-in on that same member snapshot before exposing the native age-gated link.
+    if (isinstance(forum, discord.ForumChannel) and forum.id == config.PLAYTEST_FORUM_ID
+            and forum.is_nsfw() and not member.pending and member.get_role(config.PLAYTEST_ROLE_ID)):
+        return forum
+    return None
+
+
 async def show_next_steps(i, *, reason='no_destination', replace=False, return_to=None):
     """03 entry point: await show_next_steps(i, reason='unavailable'|'no_destination').
 
@@ -58,6 +75,7 @@ async def show_route(i,action,*,source=None,return_to=None,replace=False):
     if not i.response.is_done():await i.response.defer(ephemeral=True,thinking=not replace)
     try:
         member, _, _ = await source.resolve(i)
+        view = NextSteps(source, member, return_to)
         if action == 'observe':
             content = words(member,
                 '可以先看看。到 <id:customize> 自選聊天、新聞或直播內容；日後也可在這裡選擇遊戲，再到主選單找隊友。',
@@ -78,7 +96,12 @@ async def show_route(i,action,*,source=None,return_to=None,replace=False):
             content = words(member,
                 '🎮 到 <id:customize> 選擇遊戲，再到主選單找隊友。找不到想玩的遊戲，可按「找 Helper」或「先觀望」。',
                 '🎮 去 <id:customize> 揀遊戲，再去主選單搵隊友。搵唔到啱玩嘅遊戲，可以按「搵 Helper」或者「先觀望」。')
-        kwargs=dict(content=content,embed=None,view=NextSteps(source,member,return_to),allowed_mentions=discord.AllowedMentions.none())
+            if action == 'games':
+                forum = await playtest_destination(i, member)
+                if forum is not None:
+                    view.add_item(discord.ui.Button(label='遊戲開發與試玩（18+）', emoji='🧪',
+                                                    url=forum.jump_url, row=1))
+        kwargs=dict(content=content,embed=None,view=view,allowed_mentions=discord.AllowedMentions.none())
     except SourceUnavailable:
         kwargs=dict(content=text(i.user,'denied'),embed=None,view=None,allowed_mentions=discord.AllowedMentions.none())
     if replace:await i.edit_original_response(**kwargs)

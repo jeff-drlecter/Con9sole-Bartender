@@ -119,34 +119,59 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         await WelcomeLog(self.bot).on_member_join(joined)
         self.assertIn(v.VERIFY_BUTTON, [b.custom_id for b in send.await_args.kwargs['view'].children])
 
-    async def test_shared_welcome_links_only_a_public_viewable_age_restricted_playtest_forum(self):
-        forum_id = 1279353169671098408
-        forum = dict(self.source_data, type=15, id=str(forum_id), name='遊戲開發與試玩', nsfw=True)
-        deny_view = str(discord.Permissions(view_channel=True).value)
-        private = [dict(id=str(GUILD), type=0, allow='0', deny=deny_view),
-                   dict(id=str(GAME), type=0, allow=deny_view, deny='0')]
-        denied_recipient = [dict(id=str(NEW), type=1, allow='0', deny=deny_view)]
-        adult_category = dict(self.source_data, id='800', type=4, nsfw=True)
+    async def test_shared_game_chooser_links_only_the_current_opted_in_reader(self):
+        forum_id, opt_in = 1279353169671098408, 1574308758182699109
+        forum = dict(self.source_data, id=str(forum_id), type=15, name='遊戲開發與試玩', nsfw=True)
+        self.roles.append(role(opt_in, '試玩遊戲', 1))
+        self.members[NEW]['roles'].append(str(opt_in))
+        self.guild_data['channels'] = [self.source_data, forum]
+        guild = await self.get_guild(GUILD)
+        self.patch(self.state.http, 'get_roles', AsyncMock(side_effect=lambda _: deepcopy(self.roles)))
+        fetch_channel = self.patch(self.state.http, 'get_channel', AsyncMock(
+            side_effect=lambda cid: deepcopy(self.source_data if cid == WELCOME else forum)))
+        welcome = guild.get_channel(WELCOME)
         send = self.patch(discord.TextChannel, 'send', AsyncMock())
-        for changes, visible in [({}, True), ({'nsfw': False}, False),
-                                 ({'permission_overwrites': private}, False),
-                                 ({'permission_overwrites': denied_recipient}, False),
-                                 ({'parent_id': '800'}, True), ({'type': 0}, False),
-                                 ({'parent_id': '800', 'nsfw': False}, False),
-                                 ({'id': '123'}, False)]:
-            with self.subTest(changes=changes):
-                self.guild_data['channels'] = [self.source_data, adult_category, dict(forum, **changes)]
-                guild = await self.get_guild(GUILD)
-                await WelcomeLog(self.bot).on_member_join(await guild.fetch_member(NEW))
-                view = send.await_args.kwargs['view']
-                links = [b for b in view.children if b.url]
-                self.assertEqual([b.custom_id for b in view.children if b.custom_id],
-                                 ['entry:games:v2', 'entry:menu:v2', 'entry:help:v2', v.VERIFY_BUTTON])
-                self.assertEqual(len(links), int(visible))
-                if visible:
-                    self.assertEqual((str(links[0].emoji), links[0].label), ('🧪', '遊戲開發與試玩（18+）'))
-                    self.assertEqual(links[0].url, f'https://discord.com/channels/{GUILD}/{forum_id}')
+        await WelcomeLog(self.bot).on_member_join(await guild.fetch_member(NEW))
+        shared_view = send.await_args.kwargs['view']
+        self.assertFalse(any(button.url for button in shared_view.children))
+        self.assertEqual([b.custom_id for b in shared_view.children],
+                         ['entry:games:v2', 'entry:menu:v2', 'entry:help:v2', v.VERIFY_BUTTON])
+        chooser = shared_view.children[0]
+
+        async def click_chooser(clicker):
+            i = self.click()
+            i.guild, i.channel, i.user = guild, welcome, clicker
+            i.response.is_done = lambda: False
+            i.followup = N(send=AsyncMock())
+            await chooser.callback(i)
+            result = i.followup.send.await_args.kwargs
+            self.assertTrue(result['ephemeral'])
+            self.assertIn('<id:customize>', result['content'])
+            return [b for b in result['view'].children if b.url]
+
+        opted_in = await guild.fetch_member(NEW)
+        other = await guild.fetch_member(OTHER)
+        self.assertEqual(await click_chooser(other), [])
+        links = await click_chooser(opted_in)
+        self.assertEqual([(str(b.emoji), b.label, b.url) for b in links], [
+            ('🧪', '遊戲開發與試玩（18+）', f'https://discord.com/channels/{GUILD}/{forum_id}')])
+        self.members[NEW]['roles'].remove(str(opt_in))
+        fetch_channel.reset_mock()
+        self.assertEqual(await click_chooser(opted_in), [])  # stale interaction still holds the role
+        self.assertEqual([call.args[0] for call in fetch_channel.await_args_list], [WELCOME])
+        self.members[NEW]['roles'].append(str(opt_in))
+        for permission in ('view_channel', 'read_message_history'):
+            forum['permission_overwrites'] = [dict(id=str(NEW), type=1, allow='0',
+                                                   deny=str(discord.Permissions(**{permission: True}).value))]
+            self.assertEqual(await click_chooser(opted_in), [])
+        forum['permission_overwrites'] = []
+        forum['nsfw'] = False
+        self.assertEqual(await click_chooser(opted_in), [])
+        forum['nsfw'] = True
+        forum['type'] = 0
+        self.assertEqual(await click_chooser(opted_in), [])
         self.add.assert_not_awaited()
+        self.remove.assert_not_awaited()
 
     async def test_multiple_members_can_verify_themselves_on_someone_elses_older_card(self):
         for uid in (NEW, OTHER):

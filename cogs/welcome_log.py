@@ -73,7 +73,7 @@ class WelcomeLog(commands.Cog):
                     preference_member = member
                 message = welcome_message(preference_member, rules_mention, bot_mention)
                 from cogs.member_entry import MemberEntryView
-                await channel.send(message, view=MemberEntryView(welcome=True, member=preference_member),
+                await channel.send(message, view=MemberEntryView(welcome=True),
                                    allowed_mentions=discord.AllowedMentions.none())
         except Exception as exc:
             log.exception("Failed to send welcome message: member=%s guild=%s", member.id, member.guild.id)
