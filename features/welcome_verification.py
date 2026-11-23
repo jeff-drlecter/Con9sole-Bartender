@@ -158,6 +158,8 @@ class WelcomeVerification:
 
         if grant:
             target = actor
+            if target.joined_at is None:
+                raise CheckFailed(UNAVAILABLE)
             if role in target.roles:
                 await asyncio.to_thread(remember, target.id)
                 return '你已經有會員驗證，可以使用完整會員功能。'

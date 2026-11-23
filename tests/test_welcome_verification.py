@@ -220,6 +220,13 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('已完成', await self.verify())
         self.add.assert_awaited_once()
 
+    async def test_missing_clicker_join_time_blocks_grant_until_member_data_is_complete(self):
+        joined_at = self.members[NEW].pop('joined_at')
+        self.assertEqual(await self.verify(), v.UNAVAILABLE)
+        self.add.assert_not_awaited()
+        self.members[NEW]['joined_at'] = joined_at
+        self.assertIn('已完成', await self.verify())
+
     async def test_bot_hierarchy_unknown_member_roles_and_timeout(self):
         with patch.dict(self.roles[-1], permissions='0'):
             self.assertEqual(await self.verify(), v.UNAVAILABLE)
