@@ -1,5 +1,6 @@
 """One self-grant per member, including across rejoins and process restarts."""
 import asyncio
+import re
 import sqlite3
 from weakref import WeakValueDictionary
 
@@ -13,7 +14,8 @@ VERIFY_BUTTON = 'entry:verify:v1'
 APPROVED_ROLE_ID = 1279040517451022419
 REVIEW = '請搵 Helper 覆核你嘅會員驗證。'
 UNAVAILABLE = '暫時確認唔到驗證設定或權限，請搵 Helper。'
-RULES = '請先完成 Discord 入群守則確認，再按「我是活人」。'
+RULES = '請先完成 Discord 入群守則確認，再按「我是人類」。'
+WELCOME_ONLY = '請撳歡迎頻道入面 Bot 歡迎訊息上嘅驗證按鈕。'
 # Treat future/unknown bits as unsafe by default, including channel overwrites.
 MEMBER_PERMISSIONS = discord.Permissions(
     view_channel=True, read_message_history=True, send_messages=True,
@@ -101,7 +103,7 @@ class WelcomeVerification:
     async def change(self, interaction, target_id):
         grant = target_id is None
         if grant and (interaction.channel_id != config.WELCOME_CHANNEL_ID or not interaction.message):
-            raise CheckFailed('請喺自己嘅歡迎訊息使用呢個按鈕。')
+            raise CheckFailed(WELCOME_ONLY)
         guild = await interaction.client.fetch_guild(config.GUILD_ID, with_counts=False)
         if guild.id != config.GUILD_ID or not guild.owner_id or guild.unavailable:
             raise CheckFailed(UNAVAILABLE)
@@ -118,11 +120,13 @@ class WelcomeVerification:
 
         if grant:
             message = await channel.fetch_message(interaction.message.id)
-            ids = {getattr(item, 'custom_id', None) for row in message.components for item in row.children}
+            has_button = any(
+                isinstance(item, discord.Button) and item.custom_id == VERIFY_BUTTON and not item.disabled
+                for row in message.components for item in getattr(row, 'children', ())
+            )
             if (message.author.id != interaction.client.user.id or message.webhook_id is not None
-                    or VERIFY_BUTTON not in ids
-                    or not message.content.startswith(f'🎉 歡迎 <@{interaction.user.id}> 加入 **')):
-                raise CheckFailed('請喺自己今次入群嘅歡迎訊息使用呢個按鈕。')
+                    or not has_button or not re.match(r'🎉 歡迎 <@[0-9]+> 加入 \*\*', message.content)):
+                raise CheckFailed(WELCOME_ONLY)
             # Discord can return new channel types this library cannot construct.
             # Inspect their raw role overwrites too, retaining unknown permission bits.
             channels = await guild._state.http.get_all_guild_channels(guild.id)
@@ -154,8 +158,8 @@ class WelcomeVerification:
 
         if grant:
             target = actor
-            if not target.joined_at or message.created_at < target.joined_at:
-                raise CheckFailed('請喺自己今次入群嘅歡迎訊息使用呢個按鈕。')
+            if target.joined_at is None:
+                raise CheckFailed(UNAVAILABLE)
             if role in target.roles:
                 await asyncio.to_thread(remember, target.id)
                 return '你已經有會員驗證，可以使用完整會員功能。'
