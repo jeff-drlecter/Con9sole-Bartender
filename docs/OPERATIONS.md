@@ -33,6 +33,12 @@ A healthy deployment has a completed GitHub workflow, a completed Fly release, a
 
 The **Discord deployment gap** in the Fly Deploy job summary measures from Fly signalling the old process to shut down until the replacement's first Discord ready event with the persistent welcome verification button registered. It uses Fly log timestamps for the target Machine during this rollout and checks the ready event's image commit. This is a readiness estimate; a real button click is a separate check. Build time is excluded. Missing, ambiguous or out-of-order markers and failed deployments are reported as unavailable. The observer only reads the short Fly log buffer; it does not contact members or store log contents.
 
+### Slash command registration during startup
+
+The first boot syncs the empty global registry and the configured guild's commands. Each successful sync saves a hash of its definitions in `/data/command-sync-v1-<application>-<scope>.json`. A later boot skips the Discord request for each unchanged scope. Changed definitions and failed requests get another sync. Look for `skipped sync scope=` in the startup log and compare the deploy gap on the next routine rollout with unchanged commands.
+
+Admin `/reload` always syncs the guild. If Discord's command list was changed externally, the volume was restored, or a release predating these receipts ran in between, set `FORCE_COMMAND_SYNC=1` for one startup to reconcile both scopes, then clear it. A receipt that cannot be removed blocks the overwrite for that scope; restore write access before retrying. The bot can still connect to the gateway.
+
 ## Rollback decision
 
 Rollback when a new release repeatedly crashes, cannot log in to Discord, loses a core command, or produces data-write errors. Do not roll back merely for a cosmetic issue that can be fixed forward safely.
