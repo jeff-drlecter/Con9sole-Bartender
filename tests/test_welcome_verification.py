@@ -114,6 +114,7 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         joined = await guild.fetch_member(NEW)
         joined.pending = True
         await WelcomeLog(self.bot).on_member_join(joined)
+        self.assertRegex(send.await_args.args[0], r'「我是人類」[^\n]*\n[^\n]*10 秒再試一次[^\n]*本頻道找 Helper')
         self.assertIn(v.VERIFY_BUTTON, [b.custom_id for b in send.await_args.kwargs['view'].children])
         self.assertEqual(send.await_args.kwargs['allowed_mentions'].to_dict(), {'parse': []})
         joined.pending = False
