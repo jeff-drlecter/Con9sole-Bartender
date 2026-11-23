@@ -88,6 +88,19 @@ jobs:
           # Recheck after backup; never retry an uncertain deployment as a build fallback.
           preflight_command="$(python -c 'import shlex; from pathlib import Path; print("python -c " + shlex.quote(Path("scripts/inspect_round_readiness.py").read_text()))')"
           flyctl ssh console --app con9sole-bartender -C "$preflight_command --require-idle"
+          # Listen across the cutover before the old process disappears from Fly's log buffer.
+          result="$RUNNER_TEMP/deploy-gap-$GITHUB_RUN_ATTEMPT"
+          python scripts/measure_deploy_gap.py "${{ steps.existing.outputs.machine }}" "$GITHUB_SHA" "$(date -u +%FT%T.%NZ)" "$result" >> "$GITHUB_STEP_SUMMARY" &
+          observer=$!
+          finish_measurement() {
+            local deploy_status=$?
+            if ! (echo "$deploy_status" > "$result.tmp" && mv "$result.tmp" "$result"); then
+              kill "$observer" 2>/dev/null || true
+            fi
+            wait "$observer" || echo 'Discord deployment gap unavailable (observer failed).' >> "$GITHUB_STEP_SUMMARY"
+            return "$deploy_status"
+          }
+          trap finish_measurement EXIT
           flyctl deploy --image "registry.fly.io/con9sole-bartender:git-$GITHUB_SHA" --ha=false --update-only --only-machines "${{ steps.existing.outputs.machine }}" --strategy rolling
 
       - name: Verify Fly.io machine status

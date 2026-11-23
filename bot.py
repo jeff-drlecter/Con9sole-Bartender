@@ -13,6 +13,7 @@ import config
 from core.app_command_errors import handle_app_command_error
 from core.config_validation import validate_config
 from core.logging_config import configure_logging
+from features.welcome_verification import VERIFY_BUTTON
 
 configure_logging()
 log = logging.getLogger("con9sole-bartender")
@@ -42,6 +43,7 @@ class Bot(commands.Bot):
             intents=intents,
             tree_cls=Con9soleCommandTree,
         )
+        self._reported_release_ready = False
 
     async def setup_hook(self) -> None:
         for warning in validate_config():
@@ -104,6 +106,12 @@ class Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("✅ Logged in as %s (%s)", self.user, self.user and self.user.id)
+        if self._reported_release_ready or not self.is_ready():
+            return
+        if any(getattr(item, "custom_id", None) == VERIFY_BUTTON and not item.disabled
+               for view in self.persistent_views for item in view.children):
+            log.info("Release ready commit=%s", os.getenv("APP_COMMIT", "unknown"))
+            self._reported_release_ready = True
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
