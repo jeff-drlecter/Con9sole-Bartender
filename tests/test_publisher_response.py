@@ -4,6 +4,7 @@ import pathlib
 import types
 import unittest
 from unittest.mock import AsyncMock, Mock
+from features.wording import text as private_text
 
 source = pathlib.Path(__file__).resolve().parents[1] / 'cogs' / 'update_publisher.py'
 
@@ -24,7 +25,7 @@ class PublisherResponse(unittest.IsolatedAsyncioTestCase):
         self.error = type('DiscordException', (Exception,), {})
         self.channel = Channel()
         self.channel.send = AsyncMock(return_value=types.SimpleNamespace(id=99, jump_url='https://discord.com/message'))
-        self.scope = dict(config=types.SimpleNamespace(ANNOUNCEMENT_CHANNEL_ID=30),
+        self.scope = dict(config=types.SimpleNamespace(ANNOUNCEMENT_CHANNEL_ID=30), private_text=private_text,
                           discord=types.SimpleNamespace(TextChannel=Channel, DiscordException=self.error, AllowedMentions=types.SimpleNamespace(none=lambda:None)),
                           log=types.SimpleNamespace(exception=Mock()), mark_games_published=Mock(),
                           record_published_version=Mock(), publish_optional_thread=AsyncMock(return_value=""))
@@ -33,6 +34,7 @@ class PublisherResponse(unittest.IsolatedAsyncioTestCase):
             draft=types.SimpleNamespace(kind='game', game_ids=('game',), version='v1.0.0', thread_body=''),
             announcement_text=lambda: 'announcement', stop=Mock())
         self.inter = types.SimpleNamespace(
+            user=types.SimpleNamespace(id=1, roles=[]),
             guild=types.SimpleNamespace(id=1, get_channel=lambda _: self.channel),
             client=types.SimpleNamespace(fetch_channel=AsyncMock(return_value=self.channel)),
             response=types.SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
