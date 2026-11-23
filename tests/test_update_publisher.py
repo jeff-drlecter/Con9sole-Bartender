@@ -222,6 +222,7 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
         thread.send.assert_awaited_once()
         self.assertEqual(thread.send.call_args.args[0], "內容 B")
         self.assertEqual(thread.send.call_args.kwargs["allowed_mentions"].to_dict(), {"parse": []})
+        self.assertIs(thread.send.call_args.kwargs["silent"], True)
         self.assertNotIn("內容 B", build_announcement_text(draft))
         self.assertIn("內容 B", draft_preview_text(draft, []))
         self.assertIn("<#123>", result)
@@ -267,7 +268,8 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
         channel.guild, channel.mention = guild, "<#3>"
         channel.permissions_for.return_value = SimpleNamespace(
             create_public_threads=True, send_messages_in_threads=True)
-        message = SimpleNamespace(id=99, jump_url="https://discord.com/channels/2/3/99")
+        channel.is_news.return_value = True
+        message = SimpleNamespace(id=99, jump_url="https://discord.com/channels/2/3/99", publish=AsyncMock())
         channel.send = AsyncMock(return_value=message)
         guild.get_channel = lambda _: channel
         i = SimpleNamespace(user=SimpleNamespace(id=1, roles=[]), guild=guild, response=SimpleNamespace(defer=AsyncMock()),
@@ -279,5 +281,8 @@ class AnnouncementThreadTests(unittest.IsolatedAsyncioTestCase):
             await view.publish_draft.callback(i)
             await view.publish_draft.callback(i)
         channel.send.assert_awaited_once()
+        self.assertIs(channel.send.call_args.kwargs["silent"], True)
+        self.assertEqual(channel.send.call_args.kwargs["allowed_mentions"].to_dict(), {"parse": []})
+        message.publish.assert_not_awaited()
         publish.assert_awaited_once()
         self.assertIn("不會重複", i.followup.send.call_args.args[0])

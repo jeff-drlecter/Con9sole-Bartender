@@ -66,6 +66,8 @@ Never delete or replace a `/data` file without first making a backup. SQLite is 
 
 Set `ANNOUNCEMENT_CHANNEL_ID` in `config.py` to the target text or announcement channel before release. A zero or invalid value leaves publishing disabled. New games are only added to the pending list; they are never posted automatically.
 
+Update Publisher posts the update and any optional thread reply as ordinary messages in this server. Both use Discord's silent delivery with mentions disabled. Members can read them in the channel without a push or desktop notification. The bot does not crosspost to servers following the channel.
+
 After deployment, open `/menu` → Admin Tool → Update Publisher as an Admin or Helper. Create a feature or game draft, confirm the private preview, then test Publish and Cancel with a non-production draft if appropriate.
 
 ## Dependency updates

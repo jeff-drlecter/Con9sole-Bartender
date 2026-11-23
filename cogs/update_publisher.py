@@ -347,7 +347,7 @@ async def publish_optional_thread(message: discord.Message, draft: AnnouncementD
         thread = await message.create_thread(
             name=f"Con9sole 更新 {draft.version}｜補充內容"[:100],
             reason="Update Publisher optional content B")
-        await thread.send(draft.thread_body.strip(), allowed_mentions=discord.AllowedMentions.none())
+        await thread.send(draft.thread_body.strip(), allowed_mentions=discord.AllowedMentions.none(), silent=True)
         return private_text(member, " Thread 已建立：{channel}").format(channel=thread.mention)
     except discord.DiscordException:
         log.exception("Announcement published but thread failed: message=%s", message.id)
@@ -565,7 +565,11 @@ class DraftReviewView(discord.ui.View):
                     return
 
             try:
-                published_message = await channel.send(content=self.announcement_text(), allowed_mentions=discord.AllowedMentions.none())
+                published_message = await channel.send(
+                    content=self.announcement_text(),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    silent=True,
+                )
             except discord.DiscordException:
                 log.exception("Unable to publish update: channel=%s guild=%s", channel.id, guild.id)
                 await interaction.followup.send(private_text(interaction.user, "❌ 發佈未能確認；請先查看公告頻道，確認冇出文先重試。"), ephemeral=True)
