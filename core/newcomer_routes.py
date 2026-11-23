@@ -37,19 +37,24 @@ async def support_destination(interaction, source_member):
     return None
 
 
+def has_playtest_access_role(member):
+    role_ids = (config.PLAYTEST_ROLE_ID, config.GAME_DEV_ROLE_ID)
+    return any(getattr(role, 'id', None) in role_ids for role in member.roles)
+
+
 async def playtest_destination(interaction, source_member):
     guild = interaction.guild
     if (guild is None or guild.id != config.GUILD_ID or interaction.guild_id != config.GUILD_ID
-            or not any(getattr(role, 'id', None) == config.PLAYTEST_ROLE_ID for role in source_member.roles)):
+            or not has_playtest_access_role(source_member)):
         return None
     try:
         member, forum = await fresh_access(guild, interaction.user.id, config.PLAYTEST_FORUM_ID)
     except (SourceUnavailable, discord.HTTPException, OSError):
         return None
     # fresh_access checks current View Channel and Read Message History. Recheck the
-    # opt-in on that same member snapshot before exposing the native age-gated link.
+    # access role on that same member snapshot before exposing the native age-gated link.
     if (isinstance(forum, discord.ForumChannel) and forum.id == config.PLAYTEST_FORUM_ID
-            and forum.is_nsfw() and not member.pending and member.get_role(config.PLAYTEST_ROLE_ID)):
+            and forum.is_nsfw() and not member.pending and has_playtest_access_role(member)):
         return forum
     return None
 
