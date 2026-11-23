@@ -6,7 +6,7 @@ Base: `121a4a0` (Stage 2 alert-only baseline closed by #103). Stage 1 is not re-
 
 ## Display policy
 
-- Personal interaction replies use the requesting member's existing zero-permission wording role. No location inference, no preference migration. Missing/conflicting roles retain the Hong Kong default.
+- Personal interaction replies use the requesting member's existing zero-permission wording role. Members with missing or conflicting preferences see neutral Traditional Chinese, as specified in `docs/language-preferences.md`.
 - Shared recruitment/footprint cards and session notices use neutral Traditional Chinese. They never adopt the last button-clicker's preference.
 - Translate exact Bot-authored literals before inserting dynamic values. Member/game/room names, submitted content, select labels/values, IDs, URLs and mentions remain original. No runtime substring or AI translation.
 - New private controls translate display labels/placeholders only; callbacks, custom IDs, selected values, disabled states, page limits and ownership checks remain. Existing persistent squad IDs remain dispatchable.
