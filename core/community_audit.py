@@ -43,7 +43,7 @@ class AuditStore:
             # A process may have died after Discord accepted a send. Never blindly resend it.
             db.execute("UPDATE audit_events SET state='uncertain',error='process interrupted during delivery' WHERE state='sending'")
 
-    def append(self, category, payload, *, key=None, now=None, role_delta=None, role_event='audit'):
+    def append(self, category, payload, *, key=None, now=None, role_delta=None, role_event='audit', audit_time=None):
         key = key or event_id()
         with connect_sqlite(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
@@ -52,6 +52,7 @@ class AuditStore:
                 return key
             match = None
             due = 0
+            stamp = now
             ambiguous = False
             if role_delta is not None:
                 # A late audit for the first of +R/-R/+R is indistinguishable from
@@ -60,7 +61,12 @@ class AuditStore:
                 db.execute('DELETE FROM role_match_window WHERE seen<=?', (now - ROLE_AUDIT_WAIT,))
                 previous = db.execute('SELECT delta,ambiguous FROM role_match_window WHERE member_id=?',
                                       (member_id,)).fetchone()
-                ambiguous = (role_event in ('profile', 'late_audit') or
+                fresh_audit = audit_time is not None and 0 <= now - audit_time < ROLE_AUDIT_WAIT
+                if fresh_audit:
+                    # Keep the Discord timestamp, so a later observation cannot
+                    # extend the match window by the audit's delivery delay.
+                    stamp = audit_time
+                ambiguous = (role_event == 'profile' or (role_event == 'audit' and not fresh_audit) or
                              previous is not None and (previous[0] != role_delta or bool(previous[1])))
                 db.execute(
                     'INSERT OR REPLACE INTO role_match_window(member_id,delta,seen,ambiguous) VALUES(?,?,?,?)',
@@ -96,7 +102,7 @@ class AuditStore:
                 if db.execute('SELECT count(*) FROM audit_events').fetchone()[0] >= MAX_EVENTS:
                     raise RuntimeError('Audit outbox full: unresolved records preserved')
             db.execute('INSERT INTO audit_events(id,stamp,category,payload,role_match,due) VALUES(?,?,?,?,?,?)',
-                       (key, now, category, json.dumps(payload, ensure_ascii=False), match, due))
+                       (key, stamp, category, json.dumps(payload, ensure_ascii=False), match, due))
         return key
 
     def pending(self, category, now=None, limit=5):

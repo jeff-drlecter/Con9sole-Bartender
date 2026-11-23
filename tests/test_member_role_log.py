@@ -164,8 +164,14 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
 
     def test_observations_coalesce_again_after_a_quiet_window(self):
         store = self.cog.store
-        store.append('member', {}, key='first', role_delta='22:71:', now=100)
-        store.append('member', {}, key='reverse', role_delta='22::71', now=103)
+        store.append('member', {}, key='first', role_delta='22:71:', now=100, audit_time=100)
+        store.append('member', {}, key='reverse', role_delta='22::71', now=103, audit_time=103)
         store.append('member', {}, key='fresh', role_delta='22:71:', role_event='observation', now=130)
-        store.append('member', {}, key='fresh-audit', role_delta='22:71:', now=131)
+        store.append('member', {}, key='fresh-audit', role_delta='22:71:', now=131, audit_time=131)
         self.assertEqual({key for key, _, _ in store.pending('member', now=200)}, {'first','reverse','fresh-audit'})
+
+    def test_audit_first_match_expires_at_discord_event_time_even_after_restart(self):
+        self.cog.store.append('member', {}, key='audit', role_delta='22:71:', now=114, audit_time=100)
+        store = AuditStore(self.path)
+        store.append('member', {}, key='next', role_delta='22:71:', role_event='observation', now=128)
+        self.assertEqual({key: stamp for key, stamp, _ in store.pending('member', now=160)}, {'audit':100,'next':128})

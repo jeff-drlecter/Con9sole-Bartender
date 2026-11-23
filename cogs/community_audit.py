@@ -13,7 +13,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
-from core.community_audit import AuditStore, ROLE_AUDIT_WAIT, event_id
+from core.community_audit import AuditStore, event_id
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
 from core.audit_monitor import WriteFailures
@@ -69,7 +69,8 @@ class CommunityAudit(commands.Cog):
         if task:
             await asyncio.gather(task,return_exceptions=True)
 
-    async def emit(self, category, title, description, *, key=None, subject=None, role_delta=None, role_event='audit'):
+    async def emit(self, category, title, description, *, key=None, subject=None, role_delta=None, role_event='audit',
+                   audit_time=None):
         try:
             payload={'title':title[:200],'description':description[:3500]}
             if subject is not None:
@@ -77,7 +78,7 @@ class CommunityAudit(commands.Cog):
                 avatar=getattr(subject,'display_avatar',None)
                 if avatar: payload['author']['icon_url']=str(avatar)
             key = await asyncio.to_thread(self.store.append,category,
-                payload,key=key,role_delta=role_delta,role_event=role_event)
+                payload,key=key,role_delta=role_delta,role_event=role_event,audit_time=audit_time)
             return key
         except Exception:
             async with self.failure_lock:
@@ -400,10 +401,9 @@ class CommunityAudit(commands.Cog):
                 f'審核編號：`{entry.id}`',
             ])
             # The Discord snowflake dates the audit itself, even after delayed delivery.
-            age = time.time() - entry.created_at.timestamp()
             await self.emit('member','成員身份組變更',member_detail,subject=member,
                             key=f'member-role-audit:{entry.id}',role_delta=role_delta_key(target, added, removed),
-                            role_event='audit' if 0 <= age < ROLE_AUDIT_WAIT else 'late_audit')
+                            audit_time=entry.created_at.timestamp())
 
     async def menu_entry(self,inter):
         await self.show_status(inter)
