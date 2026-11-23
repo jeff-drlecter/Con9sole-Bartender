@@ -11,8 +11,10 @@ from discord.ext import commands
 
 import config
 from core.app_command_errors import handle_app_command_error
+from core.command_sync import CommandSync
 from core.config_validation import validate_config
 from core.logging_config import configure_logging
+from core.storage_paths import DATA_DIR
 from features.welcome_verification import VERIFY_BUTTON
 
 configure_logging()
@@ -43,6 +45,7 @@ class Bot(commands.Bot):
             intents=intents,
             tree_cls=Con9soleCommandTree,
         )
+        self.command_sync = CommandSync(self.tree, DATA_DIR)
         self._reported_release_ready = False
 
     async def setup_hook(self) -> None:
@@ -86,23 +89,16 @@ class Bot(commands.Bot):
         if not loaded:
             log.warning("No cogs loaded from %s", cogs_dir)
 
-        try:
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()
-            log.info("Global app commands cleared")
-        except Exception as exc:
-            log.exception("Global app command clear failed: %r", exc)
-
-        try:
-            if getattr(config, "GUILD_ID", None):
-                guild_obj = discord.Object(id=config.GUILD_ID)
-                await self.tree.sync(guild=guild_obj)
-                log.info("App commands synced to guild %s", config.GUILD_ID)
-            else:
-                await self.tree.sync()
-                log.info("App commands synced globally")
-        except Exception as exc:
-            log.exception("Slash command sync failed: %r", exc)
+        self.tree.clear_commands(guild=None)
+        scopes = [None]
+        if config.GUILD_ID:
+            scopes.append(discord.Object(id=config.GUILD_ID))
+        force_sync = os.getenv("FORCE_COMMAND_SYNC") == "1"
+        for guild in scopes:
+            try:
+                await self.command_sync.sync(guild=guild, force=force_sync)
+            except Exception:
+                log.exception("App command sync failed scope=%s", guild.id if guild else "global")
 
     async def on_ready(self) -> None:
         log.info("✅ Logged in as %s (%s)", self.user, self.user and self.user.id)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import discord
 from discord import app_commands
@@ -9,6 +9,9 @@ from discord.ext import commands
 
 import config
 from core.permissions import is_server_admin
+
+if TYPE_CHECKING:
+    from bot import Bot
 
 COGS_DIR = Path(__file__).resolve().parent
 
@@ -50,7 +53,7 @@ def _normalize_cog_name(cog: str | None) -> str | None:
 
 
 class Reload(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: Bot):
         self.bot = bot
 
     async def _reload_one(self, ext: str) -> tuple[bool, str]:
@@ -66,7 +69,7 @@ class Reload(commands.Cog):
     async def _sync_guild_commands(self) -> tuple[bool, str]:
         try:
             guild_obj = discord.Object(id=config.GUILD_ID)
-            await self.bot.tree.sync(guild=guild_obj)
+            await self.bot.command_sync.sync(guild=guild_obj, force=True)
             return True, ""
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
@@ -116,5 +119,5 @@ class Reload(commands.Cog):
         await inter.followup.send(self._format_result(ok_list, fail_list), ephemeral=True)
 
 
-async def setup(bot: commands.Bot) -> None:
+async def setup(bot: Bot) -> None:
     await bot.add_cog(Reload(bot))

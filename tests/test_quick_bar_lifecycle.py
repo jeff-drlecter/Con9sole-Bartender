@@ -25,8 +25,18 @@ from data.menu_registry import MENU_ITEMS_BY_LAYER
 async def run():
     bot = Bot()
     async with bot:
-        bot.tree.sync = AsyncMock(return_value=[])
+        bot._connection.application_id = 101
+        bot.http.bulk_upsert_global_commands = AsyncMock(return_value=[])
+        bot.http.bulk_upsert_guild_commands = AsyncMock(return_value=[])
         await bot.setup_hook()
+        bot.http.bulk_upsert_global_commands.assert_awaited_once_with(101, payload=[])
+        bot.http.bulk_upsert_guild_commands.assert_awaited_once()
+        guild = discord.Object(config.GUILD_ID)
+        assert len(bot.http.bulk_upsert_guild_commands.await_args.kwargs["payload"]) == len(bot.tree.get_commands(guild=guild))
+        await bot.command_sync.sync(guild=guild)
+        bot.http.bulk_upsert_guild_commands.assert_awaited_once()
+        assert (await bot.get_cog("Reload")._sync_guild_commands()) == (True, "")
+        assert bot.http.bulk_upsert_guild_commands.await_count == 2
         missing = []
         for items in MENU_ITEMS_BY_LAYER.values():
             for item in items:
