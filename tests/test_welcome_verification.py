@@ -15,6 +15,7 @@ import config
 from cogs.member_entry import MemberEntry, MemberEntryView
 from cogs.welcome_log import WelcomeLog, welcome_message
 from features import welcome_verification as v
+from features.role_audit_reason import RoleAuditReason, parse_role_audit_reason
 
 
 GUILD = config.GUILD_ID
@@ -123,6 +124,8 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         for uid in (NEW, OTHER):
             self.assertIn('已完成', await self.verify(self.click(uid)))
             self.assertEqual(self.add.await_args.args, (GUILD, uid, VERIFIED))
+            self.assertEqual(parse_role_audit_reason(self.add.await_args.kwargs['reason']),
+                             RoleAuditReason(uid, 'self', 'verification_grant'))
         self.assertEqual(self.add.await_count, 2)
         self.assertEqual(self.members[GREETED]['roles'], [])
 
@@ -143,8 +146,18 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         self.members[NEW]['roles'].append(str(VERIFIED))
         self.assertIn('已撤回', await self.revoke())
         self.assertEqual(self.remove.await_args.args, (GUILD, NEW, VERIFIED))
+        self.assertEqual(parse_role_audit_reason(self.remove.await_args.kwargs['reason']),
+                         RoleAuditReason(STAFF, 'helper', 'verification_revoke'))
         self.assertEqual(self.members[NEW]['roles'], [str(GAME)])
         self.assertEqual(await self.verify(), v.REVIEW)
+
+    async def test_manage_guild_helper_revokes_as_admin(self):
+        self.roles.append(role(800, 'Manage guild', 7, manage_guild=True))
+        self.members[STAFF]['roles'].append('800')
+        self.members[NEW]['roles'].append(str(VERIFIED))
+        self.assertIn('已撤回', await self.revoke())
+        self.assertEqual(parse_role_audit_reason(self.remove.await_args.kwargs['reason']),
+                         RoleAuditReason(STAFF, 'admin', 'verification_revoke'))
 
     async def test_unauthorized_helper_and_protected_targets(self):
         self.members[NEW]['roles'].append(str(VERIFIED))

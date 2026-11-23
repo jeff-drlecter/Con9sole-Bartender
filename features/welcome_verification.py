@@ -9,6 +9,7 @@ import discord
 import config
 from core.sqlite_storage import connect_sqlite
 from core.storage_paths import STATS_DB
+from features.role_audit_reason import encode_role_audit_reason
 
 VERIFY_BUTTON = 'entry:verify:v1'
 APPROVED_ROLE_ID = 1279040517451022419
@@ -181,12 +182,14 @@ class WelcomeVerification:
         if grant:
             if not await asyncio.to_thread(remember, target.id):
                 raise CheckFailed(REVIEW)
-            await target.add_roles(role, reason='Member accepted welcome self-verification', atomic=True)
+            reason = encode_role_audit_reason(actor.id, 'self', 'verification_grant')
+            await target.add_roles(role, reason=reason, atomic=True)
             return '已完成會員驗證，你可以使用完整會員功能。'
 
         # Persist the hold even if the role was already manually removed or the
         # subsequent Discord response is lost. Staff can still restore it natively.
         await asyncio.to_thread(remember, target.id)
         if role in target.roles:
-            await target.remove_roles(role, reason=f'Welcome verification revoked by {actor.id}', atomic=True)
+            reason = encode_role_audit_reason(actor.id, 'admin' if admin else 'helper', 'verification_revoke')
+            await target.remove_roles(role, reason=reason, atomic=True)
         return '已停用呢位成員嘅自行驗證，並已撤回會員驗證身份組。'

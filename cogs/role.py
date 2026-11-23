@@ -6,8 +6,9 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from core.safe_send import send_or_followup
 from core.permissions import is_admin_or_helper, is_helper, is_server_admin
+from core.safe_send import send_or_followup
+from features.role_audit_reason import encode_role_audit_reason
 
 TARGET_GUILD = discord.Object(id=config.GUILD_ID)
 MOD_ROLE_ID = config.MOD_ROLE_ID
@@ -245,6 +246,14 @@ class RoleManager(commands.Cog):
             )
             return
 
+        operation = "role_grant" if mode == "add" else "role_revoke"
+        if target_role is not None:
+            operation = f"bulk_{operation}"
+        # role_change_denial has just checked this same actor's admin/helper authority.
+        actor_kind = "admin" if is_server_admin(inter.user) else "helper"
+        reason = encode_role_audit_reason(inter.user.id, actor_kind, operation,
+                                          group_id=target_role.id if target_role is not None else None)
+
         if target_member is not None:
             member = target_member
             if not bot_can_edit_member(self.bot, guild, member):
@@ -261,7 +270,7 @@ class RoleManager(commands.Cog):
                     if role in member.roles:
                         await send_or_followup(inter, content="ℹ️ 此成員已擁有該角色。", ephemeral=True)
                         return
-                    await member.add_roles(role, reason=f"/role_grant by {inter.user}")
+                    await member.add_roles(role, reason=reason)
                     await send_or_followup(inter, content=
                         f"✅ 已為 {member.mention} 加上 {role.mention}。",
                         ephemeral=True,
@@ -270,7 +279,7 @@ class RoleManager(commands.Cog):
                     if role not in member.roles:
                         await send_or_followup(inter, content="ℹ️ 此成員沒有該角色。", ephemeral=True)
                         return
-                    await member.remove_roles(role, reason=f"/role_revoke by {inter.user}")
+                    await member.remove_roles(role, reason=reason)
                     await send_or_followup(inter, content=
                         f"✅ 已為 {member.mention} 移除 {role.mention}。",
                         ephemeral=True,
@@ -308,19 +317,13 @@ class RoleManager(commands.Cog):
                     if role in member.roles:
                         skipped_have += 1
                     else:
-                        await member.add_roles(
-                            role,
-                            reason=f"/role_grant bulk by {inter.user} from {target_role.name}",
-                        )
+                        await member.add_roles(role, reason=reason)
                         changed += 1
                 else:
                     if role not in member.roles:
                         skipped_have += 1
                     else:
-                        await member.remove_roles(
-                            role,
-                            reason=f"/role_revoke bulk by {inter.user} from {target_role.name}",
-                        )
+                        await member.remove_roles(role, reason=reason)
                         changed += 1
             except discord.Forbidden:
                 skipped_cant += 1

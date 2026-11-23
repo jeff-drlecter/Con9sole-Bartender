@@ -21,6 +21,7 @@ from core.audit_privacy import require_private_audit_channel
 from core.secret_redaction import redact_credentials
 from features.audit_format import safe, who, user_identity, where, changes, role_label, identity_footer, ACTIONS
 from features.member_names import account_label
+from features.member_role_log import attribution, role_change_lines, role_changes, role_delta_key
 
 log = logging.getLogger(__name__)
 ROUTES = {
@@ -68,7 +69,8 @@ class CommunityAudit(commands.Cog):
         if task:
             await asyncio.gather(task,return_exceptions=True)
 
-    async def emit(self, category, title, description, *, key=None, subject=None):
+    async def emit(self, category, title, description, *, key=None, subject=None, role_delta=None, role_event='audit',
+                   audit_time=None):
         try:
             payload={'title':title[:200],'description':description[:3500]}
             if subject is not None:
@@ -76,7 +78,7 @@ class CommunityAudit(commands.Cog):
                 avatar=getattr(subject,'display_avatar',None)
                 if avatar: payload['author']['icon_url']=str(avatar)
             key = await asyncio.to_thread(self.store.append,category,
-                payload,key=key)
+                payload,key=key,role_delta=role_delta,role_event=role_event,audit_time=audit_time)
             return key
         except Exception:
             async with self.failure_lock:
@@ -198,11 +200,18 @@ class CommunityAudit(commands.Cog):
         if after.guild.id!=config.GUILD_ID:
             return
         lines=changes(before,after,[('nick','暱稱'),('timed_out_until','禁言至'),('pending','入會審核')])
-        b={r.id:r for r in before.roles}; a={r.id:r for r in after.roles}
-        if a.keys()-b.keys(): lines.append('🟢 新增身份組：'+', '.join(role_label(a[i]) for i in sorted(a.keys()-b.keys())))
-        if b.keys()-a.keys(): lines.append('🔴 移除身份組：'+', '.join(role_label(b[i]) for i in sorted(b.keys()-a.keys())))
+        added, removed = role_changes(before.roles, after.roles)
+        delta = role_delta_key(after.id, added, removed)
+        if delta and not lines:
+            detail = '\n'.join([who(after), '操作來源未確認（只收到成員狀態更新）', *role_change_lines(added, removed)])
+            await self.emit('member','成員身份組變更',detail,subject=after,role_delta=delta,role_event='observation')
+            return
+        if delta:
+            # Keep the profile changes even if a separate role audit arrives.
+            lines += ['身份組操作來源未確認。如收到官方審核，本頻道會另列執行帳戶。', *role_change_lines(added, removed)]
         if lines:
-            await self.emit('member','成員資料變更',who(after)+'\n'+'\n'.join(lines),subject=after)
+            await self.emit('member','成員資料變更',who(after)+'\n'+'\n'.join(lines),subject=after,
+                            role_delta=delta,role_event='profile')
 
     @commands.Cog.listener()
     async def on_user_update(self,before,after):
@@ -381,6 +390,20 @@ class CommunityAudit(commands.Cog):
             count=getattr(extra,'count',None)
             if count is not None: detail+=f'\n涉及數量：{count}'
         await self.emit('server','官方審核｜'+action,detail,key=f'audit:{entry.id}',subject=actor_user)
+        if entry.action == discord.AuditLogAction.member_role_update:
+            member = entry.guild.get_member(target) if target else None
+            executor = getattr(self.bot, 'user', None)
+            added, removed = role_changes(getattr(entry.before, 'roles', ()), getattr(entry.after, 'roles', ()))
+            source, initiator = attribution(entry, getattr(executor, 'id', None), actor_user, actor_id, target, added, removed)
+            member_detail = '\n'.join([
+                f'**操作來源**　{source}', f'**發起人**　{initiator}', f'**執行帳戶**　{actor}',
+                f'**受影響會員**　{who(member) if member else target_label}', *role_change_lines(added, removed),
+                f'審核編號：`{entry.id}`',
+            ])
+            # The Discord snowflake dates the audit itself, even after delayed delivery.
+            await self.emit('member','成員身份組變更',member_detail,subject=member,
+                            key=f'member-role-audit:{entry.id}',role_delta=role_delta_key(target, added, removed),
+                            audit_time=entry.created_at.timestamp())
 
     async def menu_entry(self,inter):
         await self.show_status(inter)

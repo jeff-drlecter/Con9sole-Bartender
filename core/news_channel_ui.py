@@ -5,6 +5,7 @@ from pathlib import Path
 import discord
 from features.news_channel_categories import CHANNELS,LABELS,ROLE_NAMES
 from features.language_preferences import language
+from features.role_audit_reason import encode_role_audit_reason
 from core.storage_paths import DATA_DIR
 from core.rss_wording import rss_text
 from core.news_channel_inventory import fetch_news_channels
@@ -52,9 +53,11 @@ class NewsChannelSelect(discord.ui.Select):
                 if chosen-set(CHANNELS): raise ValueError('請重新開啟新聞分類選單。')
                 for key,role in roles.items():
                     if key in chosen and role not in member.roles:
-                        await member.add_roles(role,reason='Member news channel choice')
+                        reason = encode_role_audit_reason(interaction.user.id, 'self', 'news_grant')
+                        await member.add_roles(role, reason=reason)
                     elif key not in chosen and role in member.roles:
-                        await member.remove_roles(role,reason='Member news channel choice')
+                        reason = encode_role_audit_reason(interaction.user.id, 'self', 'news_revoke')
+                        await member.remove_roles(role, reason=reason)
                 fresh=await interaction.guild.fetch_member(member.id)
                 selected={k for k,r in roles.items() if r in fresh.roles}
                 if selected!=chosen: raise ValueError('尚未確認設定，請重新開啟選單檢查。')
