@@ -13,7 +13,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
-from core.community_audit import AuditStore, event_id
+from core.community_audit import AuditStore, ROLE_AUDIT_WAIT, event_id
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
 from core.audit_monitor import WriteFailures
@@ -399,8 +399,11 @@ class CommunityAudit(commands.Cog):
                 f'**受影響會員**　{who(member) if member else target_label}', *role_change_lines(added, removed),
                 f'審核編號：`{entry.id}`',
             ])
+            # The Discord snowflake dates the audit itself, even after delayed delivery.
+            age = time.time() - entry.created_at.timestamp()
             await self.emit('member','成員身份組變更',member_detail,subject=member,
-                            key=f'member-role-audit:{entry.id}',role_delta=role_delta_key(target, added, removed))
+                            key=f'member-role-audit:{entry.id}',role_delta=role_delta_key(target, added, removed),
+                            role_event='audit' if 0 <= age < ROLE_AUDIT_WAIT else 'late_audit')
 
     async def menu_entry(self,inter):
         await self.show_status(inter)

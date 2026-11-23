@@ -36,6 +36,9 @@ class AuditStore:
             if 'role_match' not in {row[1] for row in db.execute('PRAGMA table_info(audit_events)')}:
                 db.execute('ALTER TABLE audit_events ADD COLUMN role_match TEXT')
             db.execute('CREATE INDEX IF NOT EXISTS audit_role_match ON audit_events(role_match,stamp) WHERE role_match IS NOT NULL')
+            db.execute('CREATE TABLE IF NOT EXISTS role_match_window('
+                       'member_id TEXT PRIMARY KEY, delta TEXT NOT NULL, seen REAL NOT NULL, ambiguous INTEGER NOT NULL)')
+            db.execute('CREATE INDEX IF NOT EXISTS role_window_expiry ON role_match_window(seen)')
             db.execute('CREATE TABLE IF NOT EXISTS audit_reviews(id INTEGER PRIMARY KEY,event TEXT NOT NULL,actor INTEGER NOT NULL,action TEXT NOT NULL,stamp REAL NOT NULL)')
             # A process may have died after Discord accepted a send. Never blindly resend it.
             db.execute("UPDATE audit_events SET state='uncertain',error='process interrupted during delivery' WHERE state='sending'")
@@ -49,25 +52,29 @@ class AuditStore:
                 return key
             match = None
             due = 0
+            ambiguous = False
             if role_delta is not None:
-                # An intervening change can reverse a previous assignment. Never
-                # suppress a later observation using evidence from before that change.
+                # A late audit for the first of +R/-R/+R is indistinguishable from
+                # an audit for the last +R. Keep every observation until a quiet window.
                 member_id = role_delta.split(':', 1)[0]
-                observation_key = 'observation:' + role_delta
-                audit_key = 'audit:' + role_delta
+                db.execute('DELETE FROM role_match_window WHERE seen<=?', (now - ROLE_AUDIT_WAIT,))
+                previous = db.execute('SELECT delta,ambiguous FROM role_match_window WHERE member_id=?',
+                                      (member_id,)).fetchone()
+                ambiguous = (role_event in ('profile', 'late_audit') or
+                             previous is not None and (previous[0] != role_delta or bool(previous[1])))
                 db.execute(
-                    'UPDATE audit_events SET role_match=NULL WHERE (role_match GLOB ? OR role_match GLOB ?) '
-                    'AND stamp>=? AND (? OR role_match NOT IN (?,?))',
-                    (f'observation:{member_id}:*', f'audit:{member_id}:*', now - ROLE_AUDIT_WAIT,
-                     role_event == 'profile', observation_key, audit_key),
+                    'INSERT OR REPLACE INTO role_match_window(member_id,delta,seen,ambiguous) VALUES(?,?,?,?)',
+                    (member_id, role_delta, now, ambiguous),
                 )
-            if role_delta is not None and role_event != 'profile':
+            if role_delta is not None and not ambiguous:
                 # Matching only suppresses a redundant observation. Every named
                 # executor comes from its own immutable Discord audit entry.
                 observed = role_event == 'observation'
+                observation_key = 'observation:' + role_delta
+                audit_key = 'audit:' + role_delta
                 match, opposite = (observation_key, audit_key) if observed else (audit_key, observation_key)
                 partners = db.execute(
-                    'SELECT id,state,attempts FROM audit_events WHERE role_match=? AND stamp BETWEEN ? AND ? LIMIT 2',
+                    'SELECT id,state,attempts FROM audit_events WHERE role_match=? AND stamp>? AND stamp<=? LIMIT 2',
                     (opposite, now - ROLE_AUDIT_WAIT, now),
                 ).fetchall()
                 if len(partners) == 1:
@@ -115,6 +122,7 @@ class AuditStore:
 
     def prune(self):
         with connect_sqlite(self.path) as db:
+            db.execute('DELETE FROM role_match_window WHERE seen<=?', (time.time()-ROLE_AUDIT_WAIT,))
             db.execute("DELETE FROM audit_events WHERE stamp<? AND state IN ('sent','acknowledged')", (time.time()-RETENTION_SECONDS,))
             db.execute('DELETE FROM audit_reviews WHERE stamp<?',(time.time()-RETENTION_SECONDS,))
 

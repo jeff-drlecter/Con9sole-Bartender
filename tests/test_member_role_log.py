@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -31,11 +32,12 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
         self.cog = CommunityAudit(NS(user=self.bot))
         self.cog.store = AuditStore(self.path)
 
-    async def audit(self, executor, reason=None, *, key=100, remove=False, extra=None):
+    async def audit(self, executor, reason=None, *, key=100, remove=False, extra=None, age=0):
         added, removed = ([], [self.role]) if remove else ([self.role], [])
         event = NS(id=key, action=discord.AuditLogAction.member_role_update, guild=self.guild,
                    user=executor, user_id=getattr(executor, 'id', None), target=self.target,
-                   reason=reason, extra=extra, before=NS(roles=removed), after=NS(roles=added))
+                   reason=reason, extra=extra, before=NS(roles=removed), after=NS(roles=added),
+                   created_at=datetime.fromtimestamp(time.time()-age, timezone.utc))
         await self.cog.on_audit_log_entry_create(event)
 
     async def observe(self, *, remove=False):
@@ -98,8 +100,19 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
         await self.observe(remove=True)
         self.cog.store = AuditStore(self.path)
         await self.observe()
-        self.assertEqual(len(self.cards(later=True)), 3)
+        self.assertEqual(len(self.cards(later=True)), 4)
         self.assertTrue(any('操作來源未確認' in text and '新增身份組' in text for text in self.cards(later=True).values()))
+
+    async def test_delayed_first_audit_cannot_hide_a_later_identical_grant(self):
+        await self.observe()
+        await self.observe(remove=True)
+        self.cog.store = AuditStore(self.path)
+        await self.observe()
+        await self.audit(self.staff)
+        cards = self.cards(later=True)
+        self.assertEqual(len(cards), 4)
+        self.assertEqual(sum('只收到成員狀態更新' in card and '新增身份組' in card for card in cards.values()), 2)
+        self.assertIn('管理員', cards['member-role-audit:100'])
 
     async def test_gateway_first_then_mixed_profile_change_keeps_both_grants(self):
         await self.observe()
@@ -118,6 +131,9 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
         self.cog.store = AuditStore(self.path)
         await self.audit(self.staff)
         await self.audit(self.staff)  # Duplicate Discord entry.
+        # Independent, unambiguous audit-first removal on another member.
+        self.target = NS(id=66, name='Second', bot=False)
+        self.people[self.target.id] = self.target
         await self.audit(self.staff, key=101, remove=True)
         await self.observe(remove=True)
         self.assertEqual(set(self.cards(later=True)), {'member-role-audit:100','member-role-audit:101'})
@@ -140,3 +156,16 @@ class MemberRoleLogTests(unittest.IsolatedAsyncioTestCase):
         with sqlite3.connect(self.path) as db:
             self.assertEqual(db.execute('SELECT state,message_id FROM audit_events WHERE id=?', (key,)).fetchone(), ('sent',700))
         self.assertEqual(set(self.cards()), {'member-role-audit:100'})
+
+    async def test_old_discord_audit_cannot_absorb_a_fresh_observation(self):
+        await self.observe()
+        await self.audit(self.staff, age=ROLE_AUDIT_WAIT + 10)
+        self.assertEqual(len(self.cards(later=True)), 2)
+
+    def test_observations_coalesce_again_after_a_quiet_window(self):
+        store = self.cog.store
+        store.append('member', {}, key='first', role_delta='22:71:', now=100)
+        store.append('member', {}, key='reverse', role_delta='22::71', now=103)
+        store.append('member', {}, key='fresh', role_delta='22:71:', role_event='observation', now=130)
+        store.append('member', {}, key='fresh-audit', role_delta='22:71:', now=131)
+        self.assertEqual({key for key, _, _ in store.pending('member', now=200)}, {'first','reverse','fresh-audit'})
