@@ -21,7 +21,7 @@ GUILD = config.GUILD_ID
 WELCOME = config.WELCOME_CHANNEL_ID
 VERIFIED = config.VERIFIED_ROLE_ID
 HELPER = config.HELPER_ROLE_IDS[0]
-BOT, NEW, STAFF = 11, 22, 33
+BOT, NEW, STAFF, GREETED, OTHER = 11, 22, 33, 44, 55
 BOT_ROLE, GAME, HIGH = 1001, 1002, 1003
 JOINED = datetime.now(timezone.utc) - timedelta(minutes=5)
 
@@ -44,7 +44,7 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         self.client = discord.Client(intents=discord.Intents.none())
         self.state = self.client._connection
         self.members = {BOT: member(BOT, [BOT_ROLE], bot=True), NEW: member(NEW, [GAME]),
-                        STAFF: member(STAFF, [HELPER])}
+                        STAFF: member(STAFF, [HELPER]), GREETED: member(GREETED), OTHER: member(OTHER)}
         self.roles = [role(GUILD, '@everyone', 0, view_channel=True, read_message_history=True),
                       role(VERIFIED, '會員', 5, bypass_slowmode=True, send_tts_messages=True), role(HELPER, 'helpers', 3),
                       role(GAME, 'Game', 1), role(HIGH, 'Rank', 6),
@@ -62,9 +62,10 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         self.remove = AsyncMock(side_effect=lambda gid, uid, rid, **kw: self.members[uid]['roles'].remove(str(rid)))
         self.patch(self.state.http, 'add_role', self.add)
         self.patch(self.state.http, 'remove_role', self.remove)
-        self.message = N(id=1234, author=N(id=BOT), webhook_id=None, created_at=datetime.now(timezone.utc),
-                         content=f'🎉 歡迎 <@{NEW}> 加入 **Guild**！',
-                         components=[N(children=[N(custom_id=v.VERIFY_BUTTON)])])
+        self.old_button = discord.Button(dict(type=2, style=3, label='我是活人', custom_id='entry:verify:v1'))
+        self.message = N(id=1234, author=N(id=BOT), webhook_id=None, created_at=JOINED - timedelta(days=1),
+                         content=f'🎉 歡迎 <@{GREETED}> 加入 **Guild**！',
+                         components=[N(children=[self.old_button])])
         self.patch(discord.TextChannel, 'fetch_message', AsyncMock(return_value=self.message))
         self.bot = N(user=N(id=BOT, mention=f'<@{BOT}>'), fetch_guild=self.get_guild)
         self.cog = MemberEntry(self.bot)
@@ -98,11 +99,12 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
     async def test_welcome_only_and_copy_before_press(self):
         view = MemberEntryView(welcome=True)
         self.assertEqual([item.label for item in view.children],
-                         ['選擇遊戲', '開主選單', '搵 Helper', '我是活人'])
+                         ['選擇遊戲', '開主選單', '搵 Helper', '我是人類'])
+        self.assertEqual(view.children[-1].custom_id, self.old_button.custom_id)
         self.assertTrue(view.is_persistent())
         self.assertNotIn(v.VERIFY_BUTTON, [item.custom_id for item in MemberEntryView().children])
         copy = welcome_message(N(mention='<@22>', guild=N(name='x')), '<#7>', '')
-        for word in ('<#7>', '打招呼', '搵隊友', '我是活人', '用齊會員功能', '搵 Helper'):
+        for word in ('<#7>', '打招呼', '搵隊友', '我是人類', '任何人嘅歡迎訊息', '解鎖完整會員功能', '搵 Helper'):
             self.assertIn(word, copy)
         guild = await self.get_guild(GUILD)
         ch = await guild.fetch_channel(WELCOME)
@@ -116,6 +118,13 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         joined.pending = False
         await WelcomeLog(self.bot).on_member_join(joined)
         self.assertIn(v.VERIFY_BUTTON, [b.custom_id for b in send.await_args.kwargs['view'].children])
+
+    async def test_multiple_members_can_verify_themselves_on_someone_elses_older_card(self):
+        for uid in (NEW, OTHER):
+            self.assertIn('已完成', await self.verify(self.click(uid)))
+            self.assertEqual(self.add.await_args.args, (GUILD, uid, VERIFIED))
+        self.assertEqual(self.add.await_count, 2)
+        self.assertEqual(self.members[GREETED]['roles'], [])
 
     async def test_concurrent_click_restart_removal_and_staff_recovery(self):
         outcomes = await asyncio.gather(self.verify(), self.verify())
@@ -168,7 +177,7 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
             self.members[NEW][field] = original
         self.add.assert_not_awaited()
 
-    async def test_wrong_source_owner_webhook_and_old_join_are_private_noops(self):
+    async def test_wrong_source_webhook_and_hidden_channel_are_private_noops(self):
         i = self.click()
         i.channel_id += 1
         await self.verify(i)
@@ -177,9 +186,12 @@ class VerifyTests(unittest.IsolatedAsyncioTestCase):
         await self.verify(i)
         self.get_guild.assert_not_awaited()
         for attr, invalid in [('author', N(id=123)), ('webhook_id', BOT), ('components', []),
-                              ('content', '🎉 歡迎 <@77> 加入 **x**'), ('created_at', JOINED - timedelta(days=1))]:
+                              ('components', [N(children=[N(custom_id=v.VERIFY_BUTTON)])]),
+                              ('content', '🎉 歡迎大家！')]:
             with patch.object(self.message, attr, invalid):
-                self.assertIn('自己', await self.verify())
+                self.assertEqual(await self.verify(), v.WELCOME_ONLY)
+        with patch.object(self.old_button, 'disabled', True):
+            self.assertEqual(await self.verify(), v.WELCOME_ONLY)
         self.source_data['permission_overwrites'] = [
             dict(id=str(NEW), type=1, deny=str(discord.Permissions(view_channel=True).value), allow='0')]
         self.assertEqual(await self.verify(), v.UNAVAILABLE)

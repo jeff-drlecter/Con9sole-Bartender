@@ -55,7 +55,7 @@ class MemberEntryView(SafeView):
             self.add_item(button)
 
         if welcome:
-            button = discord.ui.Button(label='我是活人', style=discord.ButtonStyle.success,
+            button = discord.ui.Button(label='我是人類', style=discord.ButtonStyle.success,
                                        custom_id=VERIFY_BUTTON, row=0)
             button.callback = self.verify
             self.add_item(button)
