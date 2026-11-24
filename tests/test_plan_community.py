@@ -32,13 +32,13 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
         self.room.id, self.room.guild = 300, self.guild
         self.temp = N(room_for_plan=AsyncMock(return_value=self.room), set_community_name=AsyncMock(return_value=True))
         self.directory = Directory(folder / 'directory.json', config.GUILD_ID)
-        self.team = self.directory.save('team-a', create=True, name='A 隊', game='FC',
+        self.team = self.directory.save('team-a', create=True, name='Entry Level', game='FC',
                                         pic_id=98765, notes='PIC note', status='open')
         self.modules = {'TempVC': self.temp, 'SquadCards': N(state={'settings': {'routes': {'40': 200}}}),
                         'CommunityDirectory': N(directory=self.directory)}
         bot = N(get_cog=self.modules.get, get_channel=lambda ident: {300: self.room, 200: self.channel}.get(ident))
         self.cog = N(book=self.book, bot=bot, lock=asyncio.Lock(), refresh=AsyncMock(return_value=True))
-        self.data = dict(game='FC', mode='Clubs', party=1, start=self.now + 3600, capacity=3)
+        self.data = dict(game='FC', mode='Clubs 球會', party=1, start=self.now + 3600, capacity=3)
         self.enterContext(patch('cogs.squad_plans.allowed', return_value=True))
         self.enterContext(patch('features.plan_services.fresh_source', new=AsyncMock(return_value=(self.member, self.channel))))
         self.enterContext(patch('features.plan_browse_ui.fresh_source', new=AsyncMock(return_value=(self.member, self.channel))))
@@ -57,7 +57,7 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
         return self.book.get(plan['id'])
 
     async def test_select_and_publish_on_both_drafts(self):
-        for draft in (InstantDraft(self.cog, self.channel, 42, dict(game='FC', mode='Clubs', party=1, missing=2), self.member),
+        for draft in (InstantDraft(self.cog, self.channel, 42, dict(game='FC', mode='Clubs 球會', party=1, missing=2), self.member),
                       Draft(self.cog, self.channel, self.member, self.data)):
             with self.subTest(type=type(draft).__name__):
                 async def choose(interaction, bot, selected, *, current_key):
@@ -67,10 +67,10 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
                 with patch('features.plan_community.choose_community', side_effect=choose):
                     button = next(b for b in draft.children if b.label == '選擇公會（選填）')
                     await button.callback(self.click())
-                self.assertIn('A 隊', draft.summary())
+                self.assertIn('Clubs 球會．Entry Level', draft.summary())
                 await draft.publish.callback(self.click())
                 posted = self.channel.send.await_args.kwargs
-                self.assertIn('A 隊', str(posted['embed'].to_dict()))
+                self.assertIn('Entry Level', str(posted['embed'].to_dict()))
                 self.assertNotIn('98765', str(posted['embed'].to_dict()))
                 self.assertNotIn('PIC note', str(posted['embed'].to_dict()))
                 self.assertTrue(any(b.label == '查看公會' for b in posted['view'].children))
@@ -92,7 +92,8 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
         await prepare_plan_voice(self.cog, self.click(), self.cog.book.get(p['id']))
         self.temp.room_for_plan.assert_awaited_once()
         self.assertEqual(self.temp.set_community_name.await_count, 2)
-        self.temp.set_community_name.assert_awaited_with(self.room, 'A 隊', owner_id=42, source=f"plan:{p['id']}")
+        self.temp.set_community_name.assert_awaited_with(self.room, 'Entry Level', owner_id=42,
+                                                        source=f"plan:{p['id']}", mode='Clubs 球會')
         self.assertNotIn('community_rooms_pending', self.cog.book.get(p['id']))
 
     async def test_archived_before_open_and_unselected_legacy(self):
@@ -106,7 +107,7 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
         tagged = self.create()
         self.directory.save('team-a', archived=True)
         await prepare_plan_voice(self.cog, self.click(), tagged)
-        self.temp.set_community_name.assert_awaited_once_with(self.room, None, owner_id=42, source=f"plan:{tagged['id']}")
+        self.temp.set_community_name.assert_awaited_once_with(self.room, None, owner_id=42, source=f"plan:{tagged['id']}", mode='')
 
     async def test_remove_from_live_plan_preserves_rsvp_and_blocks_stale_picker(self):
         p = self.create()
@@ -121,7 +122,7 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated['members'], [43])
         self.assertEqual(updated['status'], 'live')
         self.assertTrue(await sync_community_rooms(self.cog, updated))
-        self.temp.set_community_name.assert_awaited_once_with(self.room, None, owner_id=42, source=f"plan:{p['id']}")
+        self.temp.set_community_name.assert_awaited_once_with(self.room, None, owner_id=42, source=f"plan:{p['id']}", mode='')
 
     async def test_non_owner_cannot_open_picker_from_management(self):
         p = self.create()
@@ -138,4 +139,4 @@ class PlanCommunityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('voice', edited)
         self.assertEqual(edited['community_key'], 'team-a')
         await sync_community_rooms(self.cog, edited)
-        self.temp.set_community_name.assert_awaited_once_with(self.room, None, owner_id=42, source=f"plan:{p['id']}")
+        self.temp.set_community_name.assert_awaited_once_with(self.room, None, owner_id=42, source=f"plan:{p['id']}", mode='')

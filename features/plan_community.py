@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import discord
 
 from features.community_directory import DirectoryUnavailable
+from features.member_names import plain_name
 from features.plan_services import AccessError, fresh_source, source
 from features.squad_community import active_community, choose_community
 from features.squad_plans import ACTIVE
+from features.tempvc_settings import community_room_name
 
 log = logging.getLogger(__name__)
 
@@ -20,8 +22,8 @@ def draft_line(cog, data):
     card = active_community(cog.bot, key)
     if card is None:
         return '\n本局公會已無法查閱，請重新選擇或移除。'
-    name = discord.utils.escape_mentions(discord.utils.escape_markdown(card['name']))
-    return f'\n🏷️ 本局公會：{name}（開局後用作語音房名稱）'
+    preview = community_room_name(card['name'], data.get('mode', ''))
+    return f"\n🏷️ 本局公會：{plain_name(card['name'])} · 預計房名：{plain_name(preview)}"
 
 
 def add_draft_picker(view, data, owner_id):
@@ -118,7 +120,8 @@ async def sync_community_rooms(cog, plan):
             if plan.get('voice') == room_id and plan['status'] in {'gathering', 'live'}:
                 community = active_community(cog.bot, plan.get('community_key'), strict=True)
                 name = community['name'] if community else None
-            if not await tempvc.set_community_name(room, name, owner_id=plan['owner'], source=f"plan:{plan['id']}"):
+            if not await tempvc.set_community_name(room, name, owner_id=plan['owner'],
+                                                   source=f"plan:{plan['id']}", mode=plan['mode'] if name else ''):
                 complete = False
                 continue
         except discord.NotFound:
