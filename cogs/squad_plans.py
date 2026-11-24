@@ -295,7 +295,7 @@ class PlanView(SafeView):
             self.add_item(reminder)
             if plan.get('community_key'):
                 add_community_details(self, cog.bot, plan['community_key'],
-                                      custom_id=f"plan:{self.key}:community:{plan['community_key']}", row=1)
+                                      custom_id=f"plan:{self.key}:community", row=1)
         if plan.get('voice') and plan['status'] in {'gathering', 'live'}:
             self.add_item(voice_link(plan, row=0))
         if assembly:
