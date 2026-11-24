@@ -98,6 +98,7 @@ async def edit_plan_community(cog, interaction, plan_id):
 
 async def sync_community_rooms(cog, plan):
     """Hand off persisted room IDs to TempVC. Clear a receipt only after durable acceptance."""
+    complete = True
     for room_id in plan.get('community_rooms_pending', []):
         room = cog.bot.get_channel(room_id)
         try:
@@ -107,7 +108,9 @@ async def sync_community_rooms(cog, plan):
             if room_id not in plan.get('community_rooms_pending', []):
                 continue
             if not isinstance(room, discord.VoiceChannel) or room.guild.id != plan['guild']:
-                return False
+                # IDs cannot change channel type or move to another guild.
+                cog.book.community_room_synced(plan['id'], room_id, plan)
+                continue
             tempvc = cog.bot.get_cog('TempVC')
             if tempvc is None:
                 return False
@@ -116,11 +119,13 @@ async def sync_community_rooms(cog, plan):
                 community = active_community(cog.bot, plan.get('community_key'), strict=True)
                 name = community['name'] if community else None
             if not await tempvc.set_community_name(room, name, owner_id=plan['owner'], source=f"plan:{plan['id']}"):
-                return False
+                complete = False
+                continue
         except discord.NotFound:
             pass  # Discord has already removed the target room.
         except (discord.HTTPException, DirectoryUnavailable, OSError, sqlite3.Error):
             log.warning('Community room name pending for plan %s', plan['id'], exc_info=True)
-            return False
+            complete = False
+            continue
         cog.book.community_room_synced(plan['id'], room_id, plan)
-    return True
+    return complete
