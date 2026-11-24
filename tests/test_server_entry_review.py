@@ -175,6 +175,19 @@ class ServerEntryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CredentialTests(unittest.TestCase):
+    def test_game_order_excludes_only_archive_and_template_category_names(self):
+        excluded_names = ('封存', '🗄️｜封存', 'sample-template', '🧩｜sample-template')
+        active_names = ('FC', '封存遊戲', '遊戲封存', 'sample-template-game',
+                        'my-sample-template', '🗄️｜封存遊戲', '🧩｜sample-template-game')
+        for name in excluded_names + active_names:
+            for chat_name in ('fc-吹水組隊', 'fc-吹水組隊💬'):
+                with self.subTest(category=name, chat=chat_name):
+                    first = N(id=1, name='官方更新-fc', position=0, _sorting_bucket=0)
+                    chat = N(id=2, name=chat_name, position=1, _sorting_bucket=0)
+                    category = N(id=7, name=name, text_channels=[first, chat], channels=[first, chat])
+                    targets = game_entry_moves(N(categories=[category]))
+                    self.assertEqual(targets, [] if name in excluded_names else [chat])
+
     def test_game_order_excludes_templates_and_ambiguous_categories(self):
         def category(ident, names):
             children = [N(id=n, name=name, position=n, _sorting_bucket=0) for n, name in enumerate(names, 1)]
