@@ -17,6 +17,7 @@ def welcome_message(member, rules_mention: str, bot_mention: str) -> str:
         f"🎉 歡迎 {member.mention} 加入 **{member.guild.name}**！",
         f"📜 喺 Discord 確認 {rules_mention} 嘅入群守則後，就可以同大家打招呼、搵隊友。",
         "你可以喺任何人嘅歡迎訊息撳「我是人類」，為自己領取 Verified 身份，解鎖完整會員功能。",
+        "如果按鈕沒有回應，請等約 10 秒再試一次。仍然無法驗證的話，可以在本頻道找 Helper 幫忙。",
         "想揀遊戲或開主選單，可以用下面嘅按鈕。有問題就按「搵 Helper」。",
     ))
 
