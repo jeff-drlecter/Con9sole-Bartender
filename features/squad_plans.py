@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from core.json_storage import atomic_write_json
 from features import plan_assembly_state as assembly_state
+from features.community_directory import stable_key
 
 HK = ZoneInfo('Asia/Hong_Kong')
 ACTIVE = {'open', 'due', 'gathering', 'live'}
@@ -26,6 +27,14 @@ def confirmed(plan):
 
 def deadline(plan):
     return plan['start'] + (6 * 3600 if plan.get('instant') else 2 * 3600)
+
+
+def queue_community_room(plan):
+    room = plan.get('voice')
+    if room and plan.get('community_key'):
+        pending = plan.setdefault('community_rooms_pending', [])
+        if room not in pending:
+            pending.append(room)
 
 
 def parse_start(value, now=None):
@@ -101,6 +110,11 @@ class PlanBook:
                     raise ValueError('Invalid squad plan RSVP state; original file preserved')
             if 'assembly' in p:
                 assembly_state.validate_assembly(p)
+            if 'community_key' in p:
+                stable_key(p['community_key'])
+            pending = p.get('community_rooms_pending', [])
+            if not isinstance(pending, list) or any(type(room) is not int or room <= 0 for room in pending):
+                raise ValueError('Invalid pending community room IDs; original file preserved')
             if 'delivery' in p:
                 from features.plan_delivery import validate_delivery
                 validate_delivery(p)
@@ -135,7 +149,7 @@ class PlanBook:
             return copy.deepcopy(list(self.state['plans'].values()))
 
     def create(self, *, guild, channel, owner, game, mode, start, party, capacity, instant=False,
-               analytics_test=False, delivery_options=None, owner_label=None, assembly_host=None):
+               analytics_test=False, delivery_options=None, owner_label=None, assembly_host=None, community_key=None):
         with self.lock:
             if instant:
                 start = int(self.clock())
@@ -156,6 +170,8 @@ class PlanBook:
                 plan['assembly'] = assembly_state.new_assembly(assembly_host)
             if owner_label:
                 plan['owner_label'] = owner_label
+            if community_key is not None:
+                plan['community_key'] = stable_key(community_key)
             state = copy.deepcopy(self.state)
             state['plans'][key] = plan
             plan.update(created_at=self.clock(), analytics_test=bool(analytics_test), origin='instant' if instant else 'scheduled')
@@ -199,6 +215,7 @@ class PlanBook:
                 if user != p['owner'] and not (action == 'cancel' and admin):
                     raise ValueError('只有發起人可以修改；管理員可以取消。')
                 if action == 'cancel':
+                    queue_community_room(p)
                     p['status'] = 'cancelled'
                     if 'assembly' in p:
                         assembly_state.close(p['assembly'])
@@ -211,6 +228,7 @@ class PlanBook:
                     if changes['capacity'] is not None and not material and changes['party'] + len(confirmed(p)) > changes['capacity']:
                         raise ValueError('目標人數不可少於現有參加人數。')
                     if material:
+                        queue_community_room(p)
                         p.setdefault('changes', []).append({k: copy.deepcopy(p[k]) for k in ('game', 'mode', 'start', 'members')})
                         p['unconfirmed'] = list(p['members'])
                         p.pop('voice', None)
@@ -374,6 +392,41 @@ class PlanBook:
     def for_voice(self, voice):
         return next((p for p in self.all() if p.get('voice') == voice and p['status'] in {'gathering', 'live'}), None)
 
+    def set_community(self, key, user, community_key, *, expected):
+        with self.lock:
+            p = self.get(key)
+            if (not p or p['owner'] != user or p['status'] not in ACTIVE
+                    or p['status'] != 'live' and self.clock() > deadline(p)):
+                raise ValueError('只有發起人可以修改進行中約局的公會。')
+            if any(p.get(k) != expected.get(k) for k in ('message', 'channel', 'voice', 'game', 'community_key')):
+                raise ValueError('本局已更新，請重新開啟公會選單。')
+            if p.get('community_key') == community_key:
+                return p
+            queue_community_room(p)
+            if community_key is None:
+                p.pop('community_key', None)
+            else:
+                p['community_key'] = stable_key(community_key)
+                queue_community_room(p)
+            p.update(dirty=True, revision=p.get('revision', 0) + 1)
+            state = copy.deepcopy(self.state)
+            state['plans'][key] = p
+            self._write(state)
+            return copy.deepcopy(p)
+
+    def community_room_synced(self, key, room, expected):
+        with self.lock:
+            p = self.get(key)
+            if (not p or room not in p.get('community_rooms_pending', [])
+                    or any(p.get(k) != expected.get(k) for k in ('voice', 'status', 'community_key'))):
+                return
+            p['community_rooms_pending'].remove(room)
+            if not p['community_rooms_pending']:
+                del p['community_rooms_pending']
+            state = copy.deepcopy(self.state)
+            state['plans'][key] = p
+            self._write(state)
+
     def link_voice(self, key, user, voice):
         with self.lock:
             p = self.get(key)
@@ -385,6 +438,7 @@ class PlanBook:
             if other and other['id'] != key:
                 raise ValueError('此語音房已連接另一個約局。')
             p.update(voice=voice, status='gathering', dirty=True, revision=p.get('revision', 0) + 1)
+            queue_community_room(p)
             if 'assembly' in p:
                 p['assembly']['opened'] = True
                 if self.clock() >= p['start']:
@@ -420,6 +474,7 @@ class PlanBook:
             p.update(status='ended' if ended else 'live', session=session, dirty=True,
                      revision=p.get('revision', 0) + 1)
             if ended:
+                queue_community_room(p)
                 if 'assembly' in p:
                     assembly_state.close(p['assembly'])
                 p['footprint'] = footprint
@@ -434,6 +489,7 @@ class PlanBook:
             p = state['plans'][key]
             if p['status'] != 'gathering':
                 return
+            queue_community_room(p)
             p.pop('voice', None)
             p.update(status='due' if p['start'] <= self.clock() else 'open', dirty=True,
                      revision=p.get('revision', 0) + 1)

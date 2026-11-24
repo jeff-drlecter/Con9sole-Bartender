@@ -28,6 +28,23 @@ def get_hub_channel_name() -> str:
     return str(getattr(config, "TEMP_VC_HUB_NAME", "開call")).strip() or "開call"
 
 
+def community_room_name(name: str, mode: str = '') -> str:
+    """Keep the full community name; only trim mode to Discord's 100-character cap."""
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+        raise ValueError('Invalid community room name')
+    if not isinstance(mode, str):
+        raise ValueError('Invalid community room mode')
+    name = name.strip()
+    mode = ' '.join(mode.split()).rstrip('.．。 ').strip()
+    mode = mode[:max(0, 99 - len(name))].rstrip('.．。 ').strip()
+    result = f'{mode}．{name}' if mode else name
+    if result == get_hub_channel_name():
+        result = f'公會 · {name}'
+        if len(result) > 100:
+            raise ValueError('Reserved hub name is too long to disambiguate')
+    return result
+
+
 def get_temp_channel_base_name() -> str:
     return str(getattr(config, "TEMP_VC_PREFIX", "小隊call •")).strip() or "小隊call •"
 

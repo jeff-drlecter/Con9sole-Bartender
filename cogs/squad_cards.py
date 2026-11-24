@@ -6,6 +6,7 @@ import asyncio
 from contextlib import AsyncExitStack
 import logging
 import os
+import sqlite3
 import time
 import uuid
 
@@ -31,6 +32,8 @@ def humans(channel):
 
 
 def sync_mode_name(cog, channel, session):
+    if session.get('community_key'):
+        return
     tempvc = cog.bot.get_cog("TempVC")
     if tempvc is not None:
         tempvc.queue_mode_name(channel, session.get("mode", ""))
@@ -175,6 +178,8 @@ class RecruitmentChoices(discord.ui.View):
     def __init__(self, cog, key, session):
         super().__init__(timeout=180)
         self.cog, self.key, self.session = cog, key, session
+        self.community_source = (session.get('id'), session.get('destination'), session.get('message'),
+                                 session.get('community_key'), session.get('community_revision', 0))
         profile = game_profile(cog.bot.get_channel(int(key)), session)
         self.add_item(GamePicker(cog, key, session, profile))
         self.add_item(ModePicker(cog, key, session, profile))
@@ -189,6 +194,12 @@ class RecruitmentChoices(discord.ui.View):
         button = discord.ui.Button(label="其他數量／自訂", style=discord.ButtonStyle.secondary, row=2)
         button.callback = self.details
         self.add_item(button)
+        button = discord.ui.Button(label='公會（選填／清除）', row=3)
+        button.callback = self.community
+        self.add_item(button)
+
+    async def community(self, interaction):
+        await self.cog.open_session_community(interaction, self.key, self.session, source=self.community_source)
 
     async def set_count(self, interaction, value):
         await interaction.response.defer(ephemeral=True)
@@ -445,6 +456,10 @@ class CardView(FootprintView):
                                    custom_id=f"squad:{session['id']}", row=0)
         button.callback = self.edit
         self.add_item(button)
+        if session.get('community_key'):
+            from features.squad_community import add_community_details
+            add_community_details(self, cog.bot, session['community_key'],
+                                  custom_id=f"squad-community:{session['id']}", row=2)
 
     async def edit(self, interaction):
         session = self.cog.state["sessions"].get(self.key)
@@ -484,8 +499,188 @@ class SquadCards(commands.Cog):
     def save(self):
         atomic_write_json(self.path, self.state)
 
+    async def community_room(self, interaction, key, expected, source):
+        """Recheck both the recruitment source and the current room-control actor."""
+        from cogs.tempvc import user_can_admin_teardown
+        from features import tempvc_storage
+        def current():
+            session = self.state['sessions'].get(key)
+            plans = self.bot.get_cog('SquadPlans')
+            from features.squad_plans import PlanBook
+            if isinstance(getattr(plans, 'book', None), PlanBook) and plans.book.for_voice(int(key)):
+                return False
+            return (session is expected and session.get('ended') is None
+                    and (session.get('id'), session.get('destination'), session.get('message'),
+                         session.get('community_key'), session.get('community_revision', 0)) == source
+                    and not session.get('plan_id') and not session.get('voice_invite', {}).get('plan')
+                    and interaction.guild_id == config.GUILD_ID
+                    and interaction.channel_id == session.get('destination'))
+        if not current() or interaction.guild is None or interaction.user.bot:
+            return None
+        tempvc = self.bot.get_cog('TempVC')
+        if tempvc is None:
+            return None
+        try:
+            channel = await interaction.guild.fetch_channel(int(key))
+            destination = await interaction.guild.fetch_channel(source[1])
+            if not isinstance(destination, discord.TextChannel) or destination.guild.id != config.GUILD_ID:
+                return None
+            if source[2]:
+                message = await destination.fetch_message(source[2])
+                if message.id != source[2] or message.author.id != self.bot.user.id:
+                    return None
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except discord.HTTPException:
+            return None
+        owner = tempvc_storage.creator_id(int(key))
+        voice = getattr(getattr(member, 'voice', None), 'channel', None)
+        from utils import is_temp_vc_id
+        if (not current() or not isinstance(channel, discord.VoiceChannel)
+                or channel.guild.id != config.GUILD_ID or not is_temp_vc_id(channel.id)
+                or not owner or member.bot or voice is None or voice.id != channel.id
+                or (member.id != owner and not user_can_admin_teardown(member))):
+            return None
+        permissions = channel.permissions_for(member)
+        destination_permissions = destination.permissions_for(member)
+        if (not permissions.view_channel or not permissions.connect
+                or not destination_permissions.view_channel or not destination_permissions.read_message_history):
+            return None
+        return tempvc, channel, owner
+
+    async def open_session_community(self, interaction, key, expected, *, source=None):
+        from features.squad_community import active_community, choose_community
+        from features.community_directory import DirectoryUnavailable
+        source = source or (expected.get('id'), expected.get('destination'), expected.get('message'),
+                            expected.get('community_key'), expected.get('community_revision', 0))
+        # The selector may perform REST authorization; acknowledge before locks/reads.
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        async with self.lock:
+            context = await self.community_room(interaction, key, expected, source)
+        if context is None:
+            await interaction.followup.send('只限原小隊房的現行房主或獲授權房控管理者；約局請從原約局卡設定。', ephemeral=True)
+            return
+
+        async def selected(component, community_key):
+            async with self.lock:
+                context = await self.community_room(component, key, expected, source)
+                if context is None:
+                    await component.followup.send('場次、原頻道或房控權限已變更，未更新公會。', ephemeral=True)
+                    return
+                try:
+                    card = active_community(self.bot, community_key, strict=True) if community_key else None
+                except DirectoryUnavailable:
+                    await component.followup.send('公會目錄暫時無法讀取，未更改設定。', ephemeral=True)
+                    return
+                if community_key and card is None:
+                    await component.followup.send('此公會已不可選用，請重新開啟選單。', ephemeral=True)
+                    return
+                _, channel, owner = context
+                previous = dict(expected)
+                expected['community_key'] = community_key
+                expected['community_owner'] = owner
+                expected['community_revision'] = expected.get('community_revision', 0) + 1
+                expected['dirty'] = True
+                try:
+                    self.save()
+                except OSError:
+                    expected.clear()
+                    expected.update(previous)
+                    await component.followup.send('設定未能儲存，未排入房名更新，請稍後再試。', ephemeral=True)
+                    return
+                await self.sync_community_room(channel, expected)
+                await self.render(channel, expected, manual_refresh=True)
+            await component.edit_original_response(content='已儲存公會設定；房名會按節流更新。', view=None)
+
+        await choose_community(interaction, self.bot, selected, current_key=expected.get('community_key'))
+
+    async def sync_community_room(self, channel, session, *, clear=False):
+        """Journal optional naming work without gating cards, notices or session end."""
+        if not session.get('community_owner'):
+            return True
+        voice = channel.id if channel else next((int(key) for key, value in self.state['sessions'].items()
+                                                 if value is session), None)
+        if voice is None:
+            return True
+        source = f"session:{session['id']}"
+        update = dict(voice=voice, owner=session['community_owner'],
+                      key=None if clear else session.get('community_key'), clear=clear,
+                      mode='' if clear else session.get('mode', ''))
+        pending = self.state.setdefault('community_name_updates', {})
+        if pending.get(source) != update:
+            pending[source] = update
+            getattr(self, '_community_retry_after', {}).pop(source, None)
+            try:
+                self.save()
+            except OSError:
+                # Keep the intent in memory; the core's next state save also persists it.
+                log.exception('Could not persist optional room name intent: source=%s', source)
+        return True
+
+    async def retry_community_names(self):
+        """Drain only naming intents; never refresh cards or send notifications here."""
+        pending = self.state.get('community_name_updates', {})
+        if not pending:
+            return
+        from features import tempvc_storage
+        from features.community_directory import DirectoryUnavailable
+        from features.squad_community import active_community
+        from features.squad_plans import PlanBook
+        retries = getattr(self, '_community_retry_after', None)
+        if retries is None:
+            self._community_retry_after = retries = {}
+        for source, update in list(pending.items()):
+            if retries.get(source, 0) > time.time():
+                continue
+            retries[source] = time.time() + 15
+            try:
+                owner = tempvc_storage.creator_id(update['voice'])
+                if owner == update['owner']:
+                    tempvc = self.bot.get_cog('TempVC')
+                    if tempvc is None:
+                        continue
+                    channel = self.bot.get_channel(update['voice'])
+                    if channel is None:
+                        try:
+                            channel = await self.bot.fetch_channel(update['voice'])
+                        except discord.NotFound:
+                            channel = None
+                    if channel is not None:
+                        if (not isinstance(channel, discord.VoiceChannel) or channel.id != update['voice']
+                                or channel.guild.id != config.GUILD_ID):
+                            continue
+                        session = self.state['sessions'].get(str(update['voice']))
+                        plans = self.bot.get_cog('SquadPlans')
+                        linked = isinstance(getattr(plans, 'book', None), PlanBook) and plans.book.for_voice(channel.id)
+                        active = (not update['clear'] and session and source == f"session:{session['id']}"
+                                  and session.get('ended') is None and not session.get('plan_id')
+                                  and not session.get('voice_invite', {}).get('plan') and not linked
+                                  and session.get('community_owner') == update['owner']
+                                  and session.get('community_key') == update['key'])
+                        card = active_community(self.bot, update['key'], strict=True) if active and update['key'] else None
+                        if pending.get(source) is not update:
+                            continue
+                        if not await tempvc.set_community_name(channel, card['name'] if card else None,
+                                                              owner_id=owner, source=source,
+                                                              mode=session.get('mode', '') if active else ''):
+                            continue
+                if pending.get(source) is update:
+                    pending.pop(source)
+                    try:
+                        self.save()
+                    except OSError:
+                        pending[source] = update
+                        raise
+                    retries.pop(source, None)
+            except (DirectoryUnavailable, sqlite3.Error, OSError, discord.HTTPException, TimeoutError):
+                # Optional directory/storage/transport failure leaves the prior room name alone.
+                log.warning('Optional community room name deferred: source=%s', source)
+
     def cog_unload(self):
         self.tick.cancel()
+        task = getattr(self, '_community_retry_task', None)
+        if task is not None:
+            task.cancel()
 
     async def share_voice(self, interaction, voice_id):
         """Explicit opt-in; all sends/creates serialize with the lifecycle sweeper."""
@@ -633,6 +828,8 @@ class SquadCards(commands.Cog):
         if plan and channel and plan.get('voice') != channel.id:
             plan = None
         if plan and plan['status'] in {'gathering', 'live'}:
+            if session.get('community_owner'):
+                await self.sync_community_room(channel, session, clear=True)
             if session.get('message') and session['message'] != plan['message']:
                 old_destination = self.bot.get_channel(session['destination'])
                 try:
@@ -673,6 +870,8 @@ class SquadCards(commands.Cog):
                     except discord.NotFound:
                         pass
             return
+        if not plan and session.get('community_owner'):
+            await self.sync_community_room(channel, session, clear=ended)
         if session.get('id') and not session.get('plan_id'):
             latest = await checked(run_stats(squad_interest.latest_card_post,session['id']))
             if latest and latest['state']=='sent' and latest['message_id'] and session.get('message')!=latest['message_id']:
@@ -715,6 +914,9 @@ class SquadCards(commands.Cog):
         else:
             lines.append(f"📍 <#{channel.id}>")
         embed = discord.Embed(title=title, description="\n".join(lines), colour=colour)
+        if not ended and session.get('community_key'):
+            from features.squad_community import active_community, add_community_field
+            add_community_field(embed, active_community(self.bot, session['community_key']))
         if ended:
             embed.set_footer(text='曾到場不代表同時遊玩；時長為房間場次時間。')
         value = interest_topic(channel, session)
@@ -729,7 +931,12 @@ class SquadCards(commands.Cog):
         view = FootprintView(self, value) if ended else CardView(self, str(channel.id), session)
         if plan and not ended:
             from cogs.squad_plans import PlanView, card
-            embed, view = card(plan, destination.guild), PlanView(plans, plan)
+            if plan.get('community_key'):
+                from features.squad_community import active_community
+                embed = card(plan, destination.guild, community=active_community(self.bot, plan['community_key']))
+            else:
+                embed = card(plan, destination.guild)
+            view = PlanView(plans, plan)
         kwargs = dict(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         if session.get("message"):
             try:
@@ -1090,6 +1297,8 @@ class SquadCards(commands.Cog):
                                 continue
                         session.setdefault("ended", now)
                         self.save()  # Persist terminal state before any awaited finalization.
+                        if session.get('community_owner'):
+                            await self.sync_community_room(channel, session, clear=True)
                         await run_stats(squad_interest.end_session,session['id'])
                         if session.get('voice_invite'):
                             if not await voice_invites.close_session(self, channel, session):
@@ -1160,6 +1369,9 @@ class SquadCards(commands.Cog):
             async with self.lock:
                 await self.reconcile()
                 await self.close_finished_notices()
+            task = getattr(self, '_community_retry_task', None)
+            if self.state.get('community_name_updates') and (task is None or task.done()):
+                self._community_retry_task = asyncio.create_task(self.retry_community_names())
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.exception("Failed to reconcile squad cards; retrying next tick")

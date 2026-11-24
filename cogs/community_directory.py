@@ -151,10 +151,12 @@ class CommunityDirectory(commands.Cog):
     async def show_card(self, interaction: discord.Interaction, key: str):
         await self.render_card(interaction, key=key)
 
-    async def render_card(self, interaction, *, key, replace=False):
+    async def render_card(self, interaction, *, key, replace=False, active_only=False):
         if not await self.authorize(interaction, replace=replace):
             return
         card = self.directory.get(key)
+        if active_only and card['archived']:
+            raise DirectoryError('此公會已停用，請重新選擇。')
         if card['archived'] and not await self.authorize(interaction, admin=True):
             return
         pic = f"<@{card['pic_id']}>"

@@ -4,6 +4,7 @@ import config
 from core.ui import SafeView, SafeModal
 from features.language_preferences import language
 from features.plan_delivery import options
+from features.plan_community import add_draft_picker, draft_line
 
 
 def text(member, neutral, hk):
@@ -40,9 +41,10 @@ class Draft(SafeView):
         self.auto.disabled = bool(data.get('instant') or self.settings['minimum'] is None)
         self.publish.label = text(owner, '確認發起', '確認發起')
         self.notice.label = text(owner, '切換報名提醒', '切換報名提醒')
+        add_draft_picker(self, self.data, owner.id)
 
     def summary(self):
-        preview = summary(self.owner, self.data, self.settings)
+        preview = summary(self.owner, self.data, self.settings) + draft_line(self.cog, self.data)
         if self.assembly_host is None:
             return preview
         enabled = '開啟' if self.assembly_host else '關閉'
@@ -94,7 +96,8 @@ class Draft(SafeView):
         if not self.data.get('instant'):
             seed['start'] = datetime.fromtimestamp(self.data['start'], HK).strftime('%Y-%m-%d %H:%M')
         form = PlanForm(self.cog, self.channel, instant=self.data.get('instant', False), seed=seed,
-                        confirmed=True, delivery_options=self.settings, assembly_host=self.assembly_host)
+                        confirmed=True, delivery_options=self.settings, assembly_host=self.assembly_host,
+                        community_key=self.data.get('community_key'))
         await form.on_submit(i)
 
     @discord.ui.button(label='成局／最高人數')
