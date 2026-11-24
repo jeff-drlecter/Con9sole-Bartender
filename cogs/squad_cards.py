@@ -575,7 +575,7 @@ class SquadCards(commands.Cog):
                 if community_key and card is None:
                     await component.followup.send('此公會已不可選用，請重新開啟選單。', ephemeral=True)
                     return
-                tempvc, channel, owner = context
+                _, channel, owner = context
                 previous = dict(expected)
                 expected['community_key'] = community_key
                 expected['community_owner'] = owner
@@ -588,38 +588,97 @@ class SquadCards(commands.Cog):
                     expected.update(previous)
                     await component.followup.send('設定未能儲存，未排入房名更新，請稍後再試。', ephemeral=True)
                     return
-                try:
-                    accepted = await tempvc.set_community_name(channel, card['name'] if card else None,
-                        owner_id=owner, source=f"session:{expected['id']}")
-                except (OSError, sqlite3.Error):
-                    accepted = False
-                if accepted:
-                    await self.render(channel, expected, manual_refresh=True)
+                await self.sync_community_room(channel, expected)
+                await self.render(channel, expected, manual_refresh=True)
             await component.edit_original_response(content='已儲存公會設定；房名會按節流更新。', view=None)
 
         await choose_community(interaction, self.bot, selected, current_key=expected.get('community_key'))
 
     async def sync_community_room(self, channel, session, *, clear=False):
-        """Replay only this session's naming intent; another plan/session owns its own."""
-        if not channel or not session.get('community_owner'):
+        """Journal optional naming work without gating cards, notices or session end."""
+        if not session.get('community_owner'):
             return True
+        voice = channel.id if channel else next((int(key) for key, value in self.state['sessions'].items()
+                                                 if value is session), None)
+        if voice is None:
+            return True
+        source = f"session:{session['id']}"
+        update = dict(voice=voice, owner=session['community_owner'],
+                      key=None if clear else session.get('community_key'), clear=clear)
+        pending = self.state.setdefault('community_name_updates', {})
+        if pending.get(source) != update:
+            pending[source] = update
+            getattr(self, '_community_retry_after', {}).pop(source, None)
+            try:
+                self.save()
+            except OSError:
+                # Keep the intent in memory; the core's next state save also persists it.
+                log.exception('Could not persist optional room name intent: source=%s', source)
+        return True
+
+    async def retry_community_names(self):
+        """Drain only naming intents; never refresh cards or send notifications here."""
+        pending = self.state.get('community_name_updates', {})
+        if not pending:
+            return
         from features import tempvc_storage
-        from utils import is_temp_vc_id
-        if not is_temp_vc_id(channel.id) or tempvc_storage.creator_id(channel.id) != session['community_owner']:
-            return True  # The former owner/session no longer controls this room.
-        tempvc = self.bot.get_cog('TempVC')
-        if tempvc is None:
-            return False
-        name = None
-        if not clear and session.get('community_key'):
-            from features.squad_community import active_community
-            community = active_community(self.bot, session['community_key'], strict=True)
-            name = community['name'] if community else None
-        return await tempvc.set_community_name(channel, name, owner_id=session['community_owner'],
-                                              source=f"session:{session['id']}")
+        from features.community_directory import DirectoryUnavailable
+        from features.squad_community import active_community
+        from features.squad_plans import PlanBook
+        retries = getattr(self, '_community_retry_after', None)
+        if retries is None:
+            self._community_retry_after = retries = {}
+        for source, update in list(pending.items()):
+            if retries.get(source, 0) > time.time():
+                continue
+            retries[source] = time.time() + 15
+            try:
+                owner = tempvc_storage.creator_id(update['voice'])
+                if owner == update['owner']:
+                    tempvc = self.bot.get_cog('TempVC')
+                    if tempvc is None:
+                        continue
+                    channel = self.bot.get_channel(update['voice'])
+                    if channel is None:
+                        try:
+                            channel = await self.bot.fetch_channel(update['voice'])
+                        except discord.NotFound:
+                            channel = None
+                    if channel is not None:
+                        if (not isinstance(channel, discord.VoiceChannel) or channel.id != update['voice']
+                                or channel.guild.id != config.GUILD_ID):
+                            continue
+                        session = self.state['sessions'].get(str(update['voice']))
+                        plans = self.bot.get_cog('SquadPlans')
+                        linked = isinstance(getattr(plans, 'book', None), PlanBook) and plans.book.for_voice(channel.id)
+                        active = (not update['clear'] and session and source == f"session:{session['id']}"
+                                  and session.get('ended') is None and not session.get('plan_id')
+                                  and not session.get('voice_invite', {}).get('plan') and not linked
+                                  and session.get('community_owner') == update['owner']
+                                  and session.get('community_key') == update['key'])
+                        card = active_community(self.bot, update['key'], strict=True) if active and update['key'] else None
+                        if pending.get(source) is not update:
+                            continue
+                        if not await tempvc.set_community_name(channel, card['name'] if card else None,
+                                                              owner_id=owner, source=source):
+                            continue
+                if pending.get(source) is update:
+                    pending.pop(source)
+                    try:
+                        self.save()
+                    except OSError:
+                        pending[source] = update
+                        raise
+                    retries.pop(source, None)
+            except (DirectoryUnavailable, sqlite3.Error, OSError, discord.HTTPException, TimeoutError):
+                # Optional directory/storage/transport failure leaves the prior room name alone.
+                log.warning('Optional community room name deferred: source=%s', source)
 
     def cog_unload(self):
         self.tick.cancel()
+        task = getattr(self, '_community_retry_task', None)
+        if task is not None:
+            task.cancel()
 
     async def share_voice(self, interaction, voice_id):
         """Explicit opt-in; all sends/creates serialize with the lifecycle sweeper."""
@@ -768,8 +827,7 @@ class SquadCards(commands.Cog):
             plan = None
         if plan and plan['status'] in {'gathering', 'live'}:
             if session.get('community_owner'):
-                if not await self.sync_community_room(channel, session, clear=True):
-                    raise RuntimeError('Previous session community name is still updating')
+                await self.sync_community_room(channel, session, clear=True)
             if session.get('message') and session['message'] != plan['message']:
                 old_destination = self.bot.get_channel(session['destination'])
                 try:
@@ -811,8 +869,7 @@ class SquadCards(commands.Cog):
                         pass
             return
         if not plan and session.get('community_owner'):
-            if not await self.sync_community_room(channel, session, clear=ended):
-                raise RuntimeError('Session community name is still updating')
+            await self.sync_community_room(channel, session, clear=ended)
         if session.get('id') and not session.get('plan_id'):
             latest = await checked(run_stats(squad_interest.latest_card_post,session['id']))
             if latest and latest['state']=='sent' and latest['message_id'] and session.get('message')!=latest['message_id']:
@@ -1238,8 +1295,8 @@ class SquadCards(commands.Cog):
                                 continue
                         session.setdefault("ended", now)
                         self.save()  # Persist terminal state before any awaited finalization.
-                        if session.get('community_owner') and not await self.sync_community_room(channel, session, clear=True):
-                            continue
+                        if session.get('community_owner'):
+                            await self.sync_community_room(channel, session, clear=True)
                         await run_stats(squad_interest.end_session,session['id'])
                         if session.get('voice_invite'):
                             if not await voice_invites.close_session(self, channel, session):
@@ -1310,6 +1367,9 @@ class SquadCards(commands.Cog):
             async with self.lock:
                 await self.reconcile()
                 await self.close_finished_notices()
+            task = getattr(self, '_community_retry_task', None)
+            if self.state.get('community_name_updates') and (task is None or task.done()):
+                self._community_retry_task = asyncio.create_task(self.retry_community_names())
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.exception("Failed to reconcile squad cards; retrying next tick")

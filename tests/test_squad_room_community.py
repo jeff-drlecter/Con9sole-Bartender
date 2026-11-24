@@ -1,8 +1,10 @@
 """Synthetic room ownership, persistent naming and real recruitment callback tests."""
 import asyncio
+import json
 import tempfile
 import types
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -46,6 +48,9 @@ class _RoomFixture(unittest.IsolatedAsyncioTestCase):
         await self.cog.cog_unload()
 
     async def drain(self):
+        if hasattr(self, 'squad'):
+            self.squad._community_retry_after = {}
+            await self.squad.retry_community_names()
         await asyncio.wait_for(asyncio.gather(*self.cog._mode_tasks.values()), timeout=2)
 
     async def select(self, name, *, source='session:s', owner=5):
@@ -53,6 +58,17 @@ class _RoomFixture(unittest.IsolatedAsyncioTestCase):
 
 
 class CommunityRoomTests(_RoomFixture):
+    async def test_repeated_accepted_name_never_rewrites_or_reschedules_rest(self):
+        with patch.object(tempvc_storage, 'set_community_name', wraps=tempvc_storage.set_community_name) as write:
+            self.assertTrue(await self.select('同一公會'))
+            self.assertTrue(await self.select('同一公會'))
+            await self.drain()
+            self.assertTrue(await self.select('同一公會'))
+            write.assert_called_once()
+        self.channel.guild.fetch_channel.assert_awaited_once()
+        self.channel.edit.assert_awaited_once()
+        self.assertFalse(self.cog._mode_tasks)
+
     async def test_full_name_replacement_modes_and_clear_preserve_original(self):
         self.assertTrue(await self.select('一個完整公會名稱'))
         self.cog.queue_mode_name(self.channel, 'REC')
@@ -297,8 +313,9 @@ class RecruitmentCommunityTests(_RoomFixture):
         await callback(self.interaction(), 'team')
         await self.drain()
         self.directory.directory.get.side_effect = DirectoryUnavailable()
-        with self.assertRaises(DirectoryUnavailable):
-            await self.squad.sync_community_room(self.channel, self.session)
+        await self.squad.sync_community_room(self.channel, self.session)
+        await self.squad.retry_community_names()
+        self.assertIn('session:s', self.squad.state['community_name_updates'])
         self.assertEqual(self.channel.name, '合成公會')
         self.assertEqual(tempvc_storage.community_names(1)[42]['community_name'], '合成公會')
 
@@ -327,3 +344,88 @@ class RecruitmentCommunityTests(_RoomFixture):
         self.squad.save.assert_not_called()
         self.assertNotIn('community_key', self.session)
         self.assertEqual(tempvc_storage.community_names(1), {})
+
+    async def test_optional_faults_do_not_gate_card_notices_or_refresh_on_recovery(self):
+        from features.community_directory import DirectoryUnavailable
+        self.session.update(community_key='team', community_owner=5)
+        message = types.SimpleNamespace(id=99, author=self.bot.user, content='', edit=AsyncMock())
+        self.destination.fetch_message.return_value = message
+        original_get_cog = self.bot.get_cog.side_effect
+        for fault in ('directory', 'missing_tempvc', 'busy'):
+            with self.subTest(fault=fault), ExitStack() as stack:
+                stack.enter_context(patch('cogs.squad_cards.interest_topic', return_value=None))
+                stack.enter_context(patch('cogs.squad_cards.run_stats', AsyncMock(return_value=None)))
+                with ExitStack() as faults:
+                    if fault == 'directory':
+                        faults.enter_context(patch.object(self.directory.directory, 'get', side_effect=DirectoryUnavailable()))
+                    elif fault == 'missing_tempvc':
+                        faults.enter_context(patch.object(self.bot, 'get_cog', side_effect=lambda name: None if name == 'TempVC' else original_get_cog(name)))
+                    else:
+                        faults.enter_context(patch.object(self.cog, 'set_community_name', AsyncMock(return_value=False)))
+                    before_notices = self.squad.notify_interested.await_count
+                    before_edits = message.edit.await_count
+                    original_name = self.channel.name
+                    await SquadCards.render(self.squad, self.channel, self.session)
+                    self.assertEqual(message.edit.await_count, before_edits + 1)
+                    self.assertEqual(self.squad.notify_interested.await_count, before_notices + 1)
+                    self.squad._community_retry_after = {}
+                    await self.squad.retry_community_names()
+                    self.assertIn('session:s', self.squad.state['community_name_updates'])
+                    self.assertEqual(self.channel.name, original_name)
+                    # Retry backoff prevents repeated optional lookups on the next tick.
+                    with patch.object(tempvc_storage, 'creator_id', side_effect=AssertionError('retry too soon')):
+                        await self.squad.retry_community_names()
+                await self.drain()
+                self.assertEqual(self.channel.name, '合成公會')
+                self.assertFalse(self.squad.state['community_name_updates'])
+                self.assertEqual(message.edit.await_count, before_edits + 1)
+                self.assertEqual(self.squad.notify_interested.await_count, before_notices + 1)
+                self.squad.render.assert_not_awaited()
+        with patch.object(tempvc_storage, 'creator_id', side_effect=AssertionError('idle lookup')):
+            await self.squad.retry_community_names()
+
+    async def test_end_footprint_and_notice_close_finish_while_cleanup_survives_restart(self):
+        self.session.update(community_key='team', community_owner=5)
+        await self.select('合成公會')
+        await self.drain()
+        self.squad.path = str(Path(self.temp.name) / 'sessions.json')
+        self.squad.save = types.MethodType(SquadCards.save, self.squad)
+        self.squad.state['settings'] = {'routes': {'20': 30}}
+        self.session.update(ended=100, participants={'5': '合成玩家'})
+        self.channel.category_id, self.channel.members = 20, []
+        self.channel.guild.afk_channel = None
+        self.bot.get_guild.return_value = self.channel.guild
+        self.bot.is_ready.return_value = True
+        self.squad.render = types.MethodType(SquadCards.render, self.squad)
+        self.squad.finish_footprint, self.squad.close_finished_notices = AsyncMock(), AsyncMock()
+        message = types.SimpleNamespace(id=99, author=self.bot.user, content='', edit=AsyncMock())
+        self.destination.fetch_message.return_value = message
+        with patch('cogs.squad_cards.interest_topic', return_value=None), \
+                patch('cogs.squad_cards.run_stats', AsyncMock(return_value=None)) as stats, \
+                patch.object(self.cog, 'set_community_name', AsyncMock(return_value=False)):
+            await SquadCards.tick.coro(self.squad)
+            await self.squad._community_retry_task
+        self.assertNotIn('42', self.squad.state['sessions'])
+        self.squad.finish_footprint.assert_awaited_once()
+        self.squad.close_finished_notices.assert_awaited_once()
+        self.assertIn('end_session', [call.args[0].__name__ for call in stats.await_args_list])
+        pending = self.squad.state['community_name_updates']['session:s']
+        self.assertTrue(pending['clear'])
+        self.assertEqual(self.channel.name, '合成公會')
+        restarted = SquadCards.__new__(SquadCards)
+        restarted.bot, restarted.state = self.bot, json.loads(Path(self.squad.path).read_text())
+        restarted.save, restarted.render, restarted.notify_interested = Mock(), AsyncMock(), AsyncMock()
+        self.assertEqual(restarted.state['sessions'], {})
+        await restarted.retry_community_names()
+        await asyncio.gather(*self.cog._mode_tasks.values())
+        self.assertEqual(self.channel.name, '原有完整房名')
+        self.assertFalse(restarted.state['community_name_updates'])
+        restarted.render.assert_not_awaited()
+        restarted.notify_interested.assert_not_awaited()
+        # A delayed cleanup receipt is safe even after another source takes the room.
+        await self.select('新場次公會', source='plan:new')
+        await asyncio.gather(*self.cog._mode_tasks.values())
+        restarted.state['community_name_updates']['session:s'] = pending
+        await restarted.retry_community_names()
+        self.assertEqual(self.channel.name, '新場次公會')
+        self.assertFalse(restarted.state['community_name_updates'])

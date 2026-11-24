@@ -654,6 +654,9 @@ class TempVC(commands.Cog):
             previous = self._community_names.get(channel.id)
             if name is None and (not previous or previous['source'] != source):
                 return True  # A stale source must never clear another round's name.
+            if (previous and previous['owner_id'] == owner_id and previous['source'] == source
+                    and previous['community_name'] == name):
+                return True  # Already applied or durably queued by this worker.
             intent = tempvc_storage.set_community_name(channel.id, channel.guild.id, owner_id, channel.name, name, source)
             if intent is None:
                 return False
