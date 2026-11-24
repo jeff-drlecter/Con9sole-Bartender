@@ -821,34 +821,39 @@ class TempVC(commands.Cog):
                 return
             await interaction.response.defer(thinking=True, ephemeral=True)
             guild = interaction.guild
-            try:
-                room = await self._find_owned_room(guild, interaction.user.id)
-            except discord.HTTPException:
-                await interaction.edit_original_response(content=wording_text(interaction.user, "暫時確認唔到你原本間房，請稍後再試。"))
+            room, error, created = None, None, False
+            async with shared_async_lock("voice-create", guild.id):
+                # Plan and hub creation persist ownership under this same lock.
+                # Look it up after waiting, before deciding to create another room.
+                try:
+                    room = await self._find_owned_room(guild, interaction.user.id)
+                except discord.HTTPException:
+                    error = wording_text(interaction.user, "暫時確認唔到你原本間房，請稍後再試。")
+                if error is None and room is None:
+                    if self._unloading:
+                        error = "功能正在重載，請重新開啟。"
+                    elif not user_can_run_tempvc(interaction):
+                        error = wording_text(interaction.user, "存取權限已改變，請喺有權加入嘅區域重新開房。")
+                    else:
+                        try:
+                            room = await self._create_manual_temp_vc(
+                                guild, _category_from_ctx_channel(interaction.channel), name=name,
+                                limit=normalize_limit(limit, default=get_auto_vc_user_limit() or 32), creator_id=interaction.user.id,
+                            )
+                            created = True
+                        except discord.HTTPException:
+                            log.exception("Failed to create manual VC: user=%s", interaction.user.id)
+                            error = wording_text(interaction.user, "暫時開唔到房，請稍後再試；如持續出現，請通知管理員。")
+            if error is not None:
+                await interaction.edit_original_response(content=error)
                 return
-            if room is not None:
+            if not created:
                 current_member = guild.get_member(interaction.user.id)
                 if current_member is None or not (room.permissions_for(current_member).view_channel and room.permissions_for(current_member).connect):
                     await interaction.edit_original_response(content=wording_text(interaction.user, "你之前間小隊房目前無法存取，請聯絡管理員。"))
                     return
                 await interaction.edit_original_response(content=wording_text(interaction.user, "🎧 你間小隊 call：{room}").format(room=room.mention), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=guild.id, user_id=interaction.user.id)))
                 return
-            async with shared_async_lock("voice-create", guild.id):
-                if self._unloading:
-                    await interaction.edit_original_response(content="功能正在重載，請重新開啟。")
-                    return
-                if not user_can_run_tempvc(interaction):
-                    await interaction.edit_original_response(content=wording_text(interaction.user, "存取權限已改變，請喺有權加入嘅區域重新開房。"))
-                    return
-                try:
-                    room = await self._create_manual_temp_vc(
-                        guild, _category_from_ctx_channel(interaction.channel), name=name,
-                        limit=normalize_limit(limit, default=get_auto_vc_user_limit() or 32), creator_id=interaction.user.id,
-                    )
-                except discord.HTTPException:
-                    log.exception("Failed to create manual VC: user=%s", interaction.user.id)
-                    await interaction.edit_original_response(content=wording_text(interaction.user, "暫時開唔到房，請稍後再試；如持續出現，請通知管理員。"))
-                    return
             await record_usage("tempvc", interaction.user.id, guild.id)
             await interaction.edit_original_response(content=_build_created_message(room, room.user_limit or 32, wording_member=interaction.user), view=wording_view(interaction.user, TempVCControlView(self, channel_id=room.id, guild_id=room.guild.id, user_id=interaction.user.id)))
 
