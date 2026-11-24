@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,7 @@ from quick_bar_fakes import interaction
 
 import utils
 from cogs.tempvc import TempVC
+from core.action_guard import shared_async_lock
 from features import tempvc_storage
 
 
@@ -183,6 +185,213 @@ class TempVCFlowTests(unittest.IsolatedAsyncioTestCase):
             release.set()
             await task
         self.cog._create_manual_temp_vc.assert_awaited_once()
+
+    def room_creation_fixture(self):
+        i = interaction()
+        guild = i.guild
+        guild.bitrate_limit = 64000
+        category = MagicMock(spec=discord.CategoryChannel)
+        category.id, category.channels = 20, []
+        i.channel.category = category
+        perms = discord.Permissions(view_channel=True, connect=True, speak=True)
+        category.permissions_for.return_value = perms
+        i.user.pending = False
+        i.user.is_timed_out.return_value = False
+        i.user.move_to = AsyncMock()
+        guild.fetch_member = AsyncMock(return_value=i.user)
+        guild.get_member.return_value = i.user
+        rooms = {}
+        guild.get_channel.side_effect = rooms.get
+        guild.fetch_channel = AsyncMock(side_effect=lambda cid: rooms[cid])
+        guild._state.http.get_all_guild_channels = AsyncMock(return_value=[])
+
+        def new_room(cid):
+            room = MagicMock(spec=discord.VoiceChannel)
+            room.id, room.guild, room.category_id = cid, guild, category.id
+            room.name, room.mention = f"room {cid}", f"<#{cid}>"
+            room.user_limit, room.members = 32, []
+            room.permissions_for.return_value = perms
+            rooms[cid] = room
+            return room
+
+        guild.create_voice_channel = AsyncMock(side_effect=lambda *a, **kw: new_room(123))
+        self.enterContext(patch("cogs.tempvc.user_can_run_tempvc", return_value=True))
+        self.enterContext(patch("core.permissions.is_verified_member", return_value=True))
+        usage = self.enterContext(patch("cogs.tempvc.record_usage", new_callable=AsyncMock))
+        cleanup = self.enterContext(patch("cogs.tempvc.schedule_delete_if_empty", new_callable=AsyncMock))
+
+        def reply(**kwargs):
+            self.assertFalse(shared_async_lock("voice-create", guild.id).locked())
+
+        i.edit_original_response.side_effect = reply
+        return i, new_room, usage, cleanup
+
+    async def assert_plan_creation_race(self, *, plan_first, entry):
+        i, new_room, usage, cleanup = self.room_creation_fixture()
+        plan_i = interaction(user=i.user, guild=i.guild, channel=i.channel)
+        api_entered, api_release, second_waiting = (asyncio.Event() for _ in range(3))
+        lock = shared_async_lock("voice-create", i.guild_id)
+        lock_calls = 0
+
+        @asynccontextmanager
+        async def observed_lock(*key):
+            nonlocal lock_calls
+            self.assertEqual(key, ("voice-create", i.guild_id))
+            lock_calls += 1
+            if lock_calls == 2:
+                self.assertTrue(lock.locked())
+                second_waiting.set()
+            async with shared_async_lock(*key):
+                yield
+
+        async def create(*args, **kwargs):
+            api_entered.set()
+            await api_release.wait()
+            return new_room(122 + i.guild.create_voice_channel.await_count)
+
+        def mark_attempt():
+            self.assertTrue(lock.locked())
+            self.assertFalse(tempvc_storage.owned_ids(i.guild_id, i.user.id))
+            self.assertEqual(i.guild.create_voice_channel.await_count, 0)
+
+        attempt = MagicMock(side_effect=mark_attempt)
+        i.guild.create_voice_channel.side_effect = create
+        if entry == "command":
+            other = TempVC.vc_new.callback(self.cog, i, name="test", limit=8)
+        elif entry == "menu":
+            other = self.cog.menu_entry(i)
+        else:
+            hub = MagicMock(spec=discord.VoiceChannel)
+            hub.id, hub.name, hub.category = 99, "開一個小隊 call", i.channel.category
+            i.user.voice = MagicMock(channel=hub)
+            self.enterContext(patch("cogs.tempvc.get_hub_channel_name", return_value=hub.name))
+            other = self.cog.on_voice_state_update(i.user, MagicMock(channel=None), i.user.voice)
+        plan = self.cog.room_for_plan(plan_i, before_create=attempt)
+        first, second = (plan, other) if plan_first else (other, plan)
+        tasks = []
+        with patch("cogs.tempvc.shared_async_lock", side_effect=observed_lock):
+            try:
+                tasks.append(asyncio.create_task(first))
+                await asyncio.wait_for(api_entered.wait(), timeout=2)
+                self.assertFalse(tempvc_storage.owned_ids(i.guild_id, i.user.id))
+                tasks.append(asyncio.create_task(second))
+                await asyncio.wait_for(second_waiting.wait(), timeout=2)
+                api_release.set()
+                results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
+            finally:
+                api_release.set()
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+        i.guild.create_voice_channel.assert_awaited_once()
+        self.assertIs(i.guild.create_voice_channel.await_args.kwargs["category"], i.channel.category)
+        if entry == "command" and not plan_first:
+            self.assertTrue(i.guild.create_voice_channel.await_args.args[0].endswith("test"))
+            self.assertEqual(i.guild.create_voice_channel.await_args.kwargs["user_limit"], 8)
+        room = results[0 if plan_first else 1]
+        self.assertEqual(room.id, 123)
+        self.assertEqual(tempvc_storage.owned_ids(i.guild_id, i.user.id), [123])
+        self.assertEqual(attempt.call_count, int(plan_first))
+        if entry == "hub":
+            i.user.move_to.assert_awaited_once_with(room, reason=(
+                "Reuse existing small-team room" if plan_first else "Moved to newly auto-created temp VC"))
+        else:
+            self.assertIn(room.mention, i.edit_original_response.await_args.kwargs["content"])
+            self.assertEqual(usage.await_count, int(not plan_first))
+            i.user.move_to.assert_not_awaited()
+        self.assertEqual(cleanup.await_count, int(entry != "hub" or plan_first))
+
+    async def test_plan_then_command_creates_one_owned_room(self):
+        await self.assert_plan_creation_race(plan_first=True, entry="command")
+
+    async def test_command_then_plan_creates_one_owned_room(self):
+        await self.assert_plan_creation_race(plan_first=False, entry="command")
+
+    async def test_plan_then_menu_creates_one_owned_room(self):
+        await self.assert_plan_creation_race(plan_first=True, entry="menu")
+
+    async def test_menu_then_plan_creates_one_owned_room(self):
+        await self.assert_plan_creation_race(plan_first=False, entry="menu")
+
+    async def test_plan_then_hub_creates_one_owned_room(self):
+        await self.assert_plan_creation_race(plan_first=True, entry="hub")
+
+    async def test_hub_then_plan_creates_one_owned_room(self):
+        await self.assert_plan_creation_race(plan_first=False, entry="hub")
+
+    async def test_owned_lookup_failure_does_not_create_or_mark_attempt(self):
+        i, _, usage, _ = self.room_creation_fixture()
+        utils.track_temp_vc(123, guild_id=i.guild_id, creator_id=i.user.id)
+        i.guild.fetch_channel.side_effect = discord.Forbidden(
+            MagicMock(status=403, reason="Forbidden"), "cannot inspect existing room")
+        attempt = MagicMock()
+        await self.cog._create_default_room(i)
+        self.assertIn("稍後再試", i.edit_original_response.await_args.kwargs["content"])
+        with self.assertRaises(discord.Forbidden):
+            await self.cog.room_for_plan(i, before_create=attempt)
+        i.guild.create_voice_channel.assert_not_awaited()
+        attempt.assert_not_called()
+        usage.assert_not_awaited()
+        self.assertEqual(tempvc_storage.owned_ids(i.guild_id, i.user.id), [123])
+
+    async def test_manual_reuses_cross_category_room_but_plan_rejects_it(self):
+        i, new_room, usage, _ = self.room_creation_fixture()
+        room = new_room(123)
+        room.category_id = 30
+        utils.track_temp_vc(room.id, guild_id=i.guild_id, creator_id=i.user.id)
+        attempt = MagicMock()
+        with self.assertRaisesRegex(ValueError, "另一個遊戲區"):
+            await self.cog.room_for_plan(i, before_create=attempt)
+        await self.cog._create_default_room(i)
+        self.assertIn(room.mention, i.edit_original_response.await_args.kwargs["content"])
+        i.guild.create_voice_channel.assert_not_awaited()
+        attempt.assert_not_called()
+        usage.assert_not_awaited()
+
+    async def test_inaccessible_owned_room_is_not_replaced(self):
+        i, new_room, usage, _ = self.room_creation_fixture()
+        room = new_room(123)
+        room.permissions_for.return_value = discord.Permissions.none()
+        utils.track_temp_vc(room.id, guild_id=i.guild_id, creator_id=i.user.id)
+        attempt = MagicMock()
+        with self.assertRaisesRegex(ValueError, "無權加入此語音房"):
+            await self.cog.room_for_plan(i, before_create=attempt)
+        await self.cog._create_default_room(i)
+        self.assertIn("無法存取", i.edit_original_response.await_args.kwargs["content"])
+        i.guild.create_voice_channel.assert_not_awaited()
+        attempt.assert_not_called()
+        usage.assert_not_awaited()
+
+    async def test_owned_room_missing_from_cache_is_fetched_and_reused(self):
+        i, new_room, usage, _ = self.room_creation_fixture()
+        room = new_room(123)
+        utils.track_temp_vc(room.id, guild_id=i.guild_id, creator_id=i.user.id)
+        i.guild.get_channel.side_effect = lambda cid: None
+        attempt = MagicMock()
+        self.assertIs(await self.cog.room_for_plan(i, before_create=attempt), room)
+        await self.cog._create_default_room(i)
+        self.assertEqual(i.guild.fetch_channel.await_count, 2)
+        i.guild.create_voice_channel.assert_not_awaited()
+        attempt.assert_not_called()
+        usage.assert_not_awaited()
+
+    async def test_manual_permission_recheck_blocks_create(self):
+        i, _, usage, _ = self.room_creation_fixture()
+        with patch("cogs.tempvc.user_can_run_tempvc", side_effect=[True, False]):
+            await self.cog._create_default_room(i)
+        self.assertIn("存取權限已改變", i.edit_original_response.await_args.kwargs["content"])
+        i.guild.create_voice_channel.assert_not_awaited()
+        usage.assert_not_awaited()
+
+    async def test_manual_create_failure_replies_after_unlocking(self):
+        i, _, usage, _ = self.room_creation_fixture()
+        i.guild.create_voice_channel.side_effect = discord.Forbidden(
+            MagicMock(status=403, reason="Forbidden"), "cannot create room")
+        with self.assertLogs("con9sole-bartender.tempvc", level="ERROR"):
+            await self.cog._create_default_room(i)
+        self.assertIn("稍後再試", i.edit_original_response.await_args.kwargs["content"])
+        self.assertFalse(tempvc_storage.owned_ids(i.guild_id, i.user.id))
+        usage.assert_not_awaited()
 
     async def test_in_room_quick_entry_opens_controls_instead_of_creating(self):
         i = interaction()
