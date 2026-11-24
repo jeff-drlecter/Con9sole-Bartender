@@ -2,6 +2,7 @@
 import discord
 from core.ui import SafeView, SafeModal
 from features.plan_services import query, fresh_source, AccessError
+from features.plan_community import add_draft_picker, draft_line
 from features.language_preferences import language
 
 
@@ -85,11 +86,12 @@ class InstantDraft(SafeView):
         self.used=False
         self.member=member
         self.host_notices=bool(seed.get('host_notices', True))
+        add_draft_picker(self, self.seed, owner)
     def summary(self):
         s=self.seed
         safe=lambda value:discord.utils.escape_mentions(discord.utils.escape_markdown(str(value)))
         note='只係你嘅招募設定，唔會代其他人報名。' if language(self.member)=='hk' else '只代表你的招募設定，不會代他人報名。'
-        return f"🎮 {safe(s['game']) or '請先修改遊戲'}\n平台／模式：{safe(s['mode']) or '未填'} · 原有 {s['party']} 人 · 尚欠 {s['missing']} 人\n{note}\n有人報名時提醒我：{'開啟' if self.host_notices else '關閉'}（原頻道短訊息，其他有權限成員可見）。\n現在玩不建立活動；原有隊友不用重複報名。"
+        return f"🎮 {safe(s['game']) or '請先修改遊戲'}\n平台／模式：{safe(s['mode']) or '未填'} · 原有 {s['party']} 人 · 尚欠 {s['missing']} 人\n{note}\n有人報名時提醒我：{'開啟' if self.host_notices else '關閉'}（原頻道短訊息，其他有權限成員可見）。\n現在玩不建立活動；原有隊友不用重複報名。" + draft_line(self.cog, s)
     async def interaction_check(self,i):
         if i.user.id==self.owner and not self.used:return True
         await i.response.send_message(words(i,'此草稿已關閉，請重新開啟。','呢份草稿已關閉，請重新開啟。'),ephemeral=True);return False
@@ -110,6 +112,7 @@ class InstantDraft(SafeView):
         from features.squad_plans import counts
         party,capacity=counts(self.seed['party'],self.seed['missing'])
         form=PlanForm(self.cog,ch,instant=True,seed=self.seed,confirmed=True,
+            community_key=self.seed.get('community_key'),
             delivery_options=options(party,capacity,instant=True,notices=self.host_notices))
         await form.on_submit(i)
     @discord.ui.button(label='切換報名提醒',row=1)
@@ -144,6 +147,10 @@ def draft_form(cog,channel,owner,seed):
             except ValueError as e:
                 await i.response.send_message(str(e),ephemeral=True);return
             data=dict(game=game,mode=self.mode.value.strip(),party=party,missing='' if capacity is None else capacity-party)
+            if seed.get('community_key'):
+                data['community_key'] = seed['community_key']
+            if 'host_notices' in seed:
+                data['host_notices'] = seed['host_notices']
             view=InstantDraft(cog,channel,owner,data,i.user)
             await i.response.send_message(view.summary(),view=view,ephemeral=True)
     return EditDraft(cog,channel,instant=True,seed=seed)

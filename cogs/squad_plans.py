@@ -19,6 +19,8 @@ from features.community_outcomes import test_channel
 from features.member_names import member_label, plain_name
 from features.plan_assembly_ui import (AssemblyView, add_assembly_buttons, add_preference_button,
                                       authorize_assembly, voice_link)
+from features.plan_community import edit_plan_community, sync_community_rooms
+from features.squad_community import active_community, add_community_details, add_community_field
 from features.squad_plans import ACTIVE, HK, PlanBook, confirmed, counts, deadline, parse_start
 
 log = logging.getLogger(__name__)
@@ -116,7 +118,7 @@ def owner_text(plan, guild):
     return plain_name(label)
 
 
-def card(plan, guild=None):
+def card(plan, guild=None, *, community=None):
     accepted = confirmed(plan)
     total = plan['party'] + len(accepted)
     state = {'open': '預約中', 'due': '招募中' if plan.get('instant') else '待開局',
@@ -136,6 +138,8 @@ def card(plan, guild=None):
                     + (f"\n待重新確認 {len(plan.get('unconfirmed', []))} 人" if plan.get('unconfirmed') else ''), inline=False)
     # Keep the participant roster behind the private list button.
     embed.add_field(name='發起人', value=owner_text(plan, guild), inline=True)
+    if community is not None and plan['status'] in ACTIVE:
+        add_community_field(embed, community)
     if plan.get('voice') and plan['status'] in {'gathering', 'live'}:
         embed.add_field(name='本局語音', value=f"<#{plan['voice']}>", inline=False)
     if plan.get('footprint'):
@@ -159,12 +163,13 @@ def card(plan, guild=None):
 
 class PlanForm(SafeModal):
     def __init__(self, cog, channel, plan=None, *, instant=False, seed=None, confirmed=False,
-                 delivery_options=None, assembly_host=None):
+                 delivery_options=None, assembly_host=None, community_key=None):
         super().__init__(title='約一局' if plan is None else '修改約局')
         self.cog, self.channel_id, self.plan_id = cog, channel.id, plan and plan['id']
         self.instant = instant or bool(plan and plan.get('instant'))
         self.confirmed, self.delivery_options = confirmed, delivery_options
         self.assembly_host = assembly_host
+        self.community_key = community_key
         self.game = discord.ui.TextInput(label='遊戲', default=plan['game'] if plan else (seed or {}).get('game', game_hint(channel)), max_length=80)
         self.start = discord.ui.TextInput(label='開始時間（24小時制）', placeholder='今晚22:00／明天22:00',
             default=datetime.fromtimestamp(plan['start'], HK).strftime('%Y-%m-%d %H:%M') if plan else (seed or {}).get('start'), max_length=30)
@@ -229,14 +234,17 @@ class PlanForm(SafeModal):
                     if self.instant and teams and any(s.leader_id == interaction.user.id and not s.cancelled
                             and not teams.is_state_expired(s) for s in teams.states.values()):
                         raise ValueError('你仍有舊版即時招募，請先完成該局；原有卡片仍可使用。')
+                    community = active_community(getattr(self.cog, 'bot', None), self.community_key)
+                    if self.community_key and community is None:
+                        raise ValueError('所選公會已無法查閱，請重新開啟草稿選擇公會。')
                     p = self.cog.book.create(guild=interaction.guild_id, channel=channel.id,
                         owner=interaction.user.id, owner_label=member_label(member), instant=self.instant,
                         analytics_test=test_channel(channel), delivery_options=self.delivery_options,
-                        assembly_host=self.assembly_host, **changes)
+                        assembly_host=self.assembly_host, community_key=self.community_key, **changes)
                     # Persist the posting attempt first. An ambiguous send is never replayed.
                     posted = dict(p, status='due' if self.instant else 'open')
                     view = PlanView(self.cog, posted)
-                    message = await channel.send(embed=card(posted, interaction.guild), view=view, allowed_mentions=NONE)
+                    message = await channel.send(embed=card(posted, interaction.guild, community=community), view=view, allowed_mentions=NONE)
                     self.cog.book.publish(p['id'], message.id)
                     refreshed = True
             except ValueError as exc:
@@ -285,6 +293,9 @@ class PlanView(SafeView):
             reminder = discord.ui.Button(label='本局提醒', custom_id=f'plan:{self.key}:reminder', row=1)
             reminder.callback = lambda interaction: self.handle(interaction, 'reminder')
             self.add_item(reminder)
+            if plan.get('community_key'):
+                add_community_details(self, cog.bot, plan['community_key'],
+                                      custom_id=f"plan:{self.key}:community:{plan['community_key']}", row=1)
         if plan.get('voice') and plan['status'] in {'gathering', 'live'}:
             self.add_item(voice_link(plan, row=0))
         if assembly:
@@ -410,6 +421,7 @@ class ManageView(SafeView):
         self.cancel.disabled = not (owner or admin)
         self.start.disabled = not owner
         self.delivery.disabled = not owner
+        self.community.disabled = not owner
 
     async def interaction_check(self, interaction):
         p = self.cog.book.get(self.key)
@@ -423,6 +435,10 @@ class ManageView(SafeView):
             await interaction.response.send_message('只有發起人可以修改。', ephemeral=True)
             return
         await interaction.response.send_modal(wording_modal(interaction.user, PlanForm(self.cog, interaction.channel, p)))
+
+    @discord.ui.button(label='選擇／移除公會', row=1)
+    async def community(self, interaction, button):
+        await edit_plan_community(self.cog, interaction, self.key)
 
     @discord.ui.button(label='開局／連接語音', style=discord.ButtonStyle.primary)
     async def start(self, interaction, button):
@@ -497,9 +513,11 @@ async def prepare_plan_voice(cog, interaction, p):
             raise ValueError('上一局仍在整理足跡，請稍後重新開局。')
         p = cog.book.link_voice(key, owner, room.id)
         room_id = room.id
+    names_synced = await sync_community_rooms(cog, p)
     await cog.refresh(p)
     url = f'https://discord.com/channels/{p["guild"]}/{room_id}'
-    return f'本局語音已備妥：[加入語音]({url})。有人加入後才開始記錄實際場次。'
+    message = f'本局語音已備妥：[加入語音]({url})。有人加入後才開始記錄實際場次。'
+    return message if names_synced else message + '\n公會房名仍待同步。'
 
 
 class StartView(SafeView):
@@ -665,7 +683,8 @@ class SquadPlans(commands.Cog):
             if p['status'] not in {'gathering', 'live'}:
                 from features.voice_invites import content
                 kwargs['content'] = content(getattr(message, 'content', ''), {}, ended=True)
-            await message.edit(embed=card(p, channel.guild), view=PlanView(self, p), allowed_mentions=NONE, **kwargs)
+            community = active_community(self.bot, p.get('community_key'))
+            await message.edit(embed=card(p, channel.guild, community=community), view=PlanView(self, p), allowed_mentions=NONE, **kwargs)
             self.book.availability(p['id'],'available')
             self.book.clean(p['id'], p.get('revision', 0))
             return True
@@ -692,6 +711,8 @@ class SquadPlans(commands.Cog):
             async with self.lock:
                 self.book.expire()
                 for p in self.book.all():
+                    if p.get('community_rooms_pending'):
+                        await sync_community_rooms(self, p)
                     if p['status'] == 'gathering' and not self.bot.get_channel(p.get('voice')):
                         missing = True
                         if p.get('assembly'):
