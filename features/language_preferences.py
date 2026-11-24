@@ -1,6 +1,7 @@
 """Deterministic, role-backed wording preferences; never infer location."""
 from __future__ import annotations
 
+import aiohttp
 import discord
 
 from features.role_audit_reason import encode_role_audit_reason
@@ -17,13 +18,61 @@ def language(member) -> str:
     return selected[0] if len(selected) == 1 else "neutral"
 
 
-def preference_roles(roles, channels=()):
+async def fetch_language_role_overwrites(guild):
+    """Inspect every fresh raw channel, including types discord.py cannot build."""
+    try:
+        rows = await guild._state.http.get_all_guild_channels(guild.id)
+    except (discord.HTTPException, OSError, aiohttp.ClientError) as exc:
+        raise ValueError("未能讀取頻道權限；請稍後再試。") from exc
+
+    def number(value, minimum=0):
+        if not (type(value) is int or isinstance(value, str) and value.isascii() and value.isdecimal()):
+            raise ValueError
+        value = int(value)
+        if value < minimum:
+            raise ValueError
+        return value
+
+    try:
+        # These entry points run in a guild channel, so an empty list is suspect.
+        if not isinstance(rows, list) or not rows:
+            raise ValueError
+        seen, role_ids = set(), set()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError
+            channel_id = number(row['id'], 1)
+            if (channel_id in seen or number(row.get('guild_id', guild.id), 1) != guild.id
+                    or type(row['type']) is not int or row['type'] < 0):
+                raise ValueError
+            seen.add(channel_id)
+            # Discord may omit overwrites; discord.py likewise treats this as [].
+            overwrites = row.get('permission_overwrites', [])
+            if not isinstance(overwrites, list):
+                raise ValueError
+            for overwrite in overwrites:
+                if not isinstance(overwrite, dict):
+                    raise ValueError
+                target_id = number(overwrite['id'], 1)
+                if type(overwrite['type']) is not int or overwrite['type'] not in (0, 1):
+                    raise ValueError
+                # Match discord.py's zero defaults, but reject explicit bad values.
+                number(overwrite.get('allow', 0))
+                number(overwrite.get('deny', 0))
+                if overwrite['type'] == 0:
+                    role_ids.add(target_id)
+        return role_ids
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("未能確認頻道權限資料；請管理員檢查。") from exc
+
+
+def preference_roles(roles, role_overwrite_ids):
     result = {}
     for code, name in ROLE_NAMES.items():
         found = [r for r in roles if r.name == name]
         if len(found) != 1 or found[0].managed or found[0].permissions.value:
             raise ValueError("語境角色缺少、重複或含有權限；請管理員先檢查。")
-        if any(found[0] in channel.overwrites for channel in channels):
+        if found[0].id in role_overwrite_ids:
             raise ValueError("語境角色含有頻道權限覆寫；請管理員檢查，未派發角色。")
         result[code] = found[0]
     return result
@@ -135,7 +184,7 @@ class LanguageView(discord.ui.View):
                 import config
                 if interaction.guild_id != config.GUILD_ID:
                     raise ValueError("只限指定社群使用。")
-                roles = preference_roles(await interaction.guild.fetch_roles(), await interaction.guild.fetch_channels())
+                roles = preference_roles(await interaction.guild.fetch_roles(), await fetch_language_role_overwrites(interaction.guild))
                 member = await interaction.guild.fetch_member(interaction.user.id)
                 me = await interaction.guild.fetch_member(interaction.client.user.id)
                 if any(r >= me.top_role for r in roles.values()):

@@ -7,7 +7,7 @@ from discord.ext import commands
 import config
 from core.permissions import is_server_admin
 from features.onboarding_wording import neutralize_prompts
-from features.language_preferences import LanguageView, ROLE_NAMES, PROMPT_TITLE, preference_roles, serialize_prompts, make_room_for_language
+from features.language_preferences import LanguageView, ROLE_NAMES, PROMPT_TITLE, preference_roles, serialize_prompts, make_room_for_language, fetch_language_role_overwrites
 
 
 class LanguagePreferences(commands.Cog):
@@ -39,19 +39,27 @@ class LanguagePreferences(commands.Cog):
             try:
                 guild = interaction.guild
                 roles = await guild.fetch_roles()
+                # Check inventory before creating even a missing preference role.
+                role_overwrite_ids = await fetch_language_role_overwrites(guild)
                 # Never reuse a privileged or ambiguous role with the same name.
                 for name in ROLE_NAMES.values():
                     matches = [r for r in roles if r.name == name]
                     if len(matches) > 1 or any(r.managed or r.permissions.value for r in matches):
                         raise ValueError("同名語境角色有衝突；未更改 onboarding。")
+                    if any(r.id in role_overwrite_ids for r in matches):
+                        raise ValueError("語境角色含有頻道權限覆寫；請管理員檢查，未更改 onboarding。")
                 if not is_server_admin(await guild.fetch_member(interaction.user.id)):
                     raise ValueError("管理權限已變更。")
+                created_role = False
                 for name in ROLE_NAMES.values():
                     if not any(r.name == name for r in roles):
                         if not is_server_admin(await guild.fetch_member(interaction.user.id)):
                             raise ValueError("管理權限已變更。")
                         roles.append(await guild.create_role(name=name, permissions=discord.Permissions.none(), mentionable=False, hoist=False, reason="Wording preference only"))
-                chosen = preference_roles(roles, await guild.fetch_channels())
+                        created_role = True
+                if created_role:
+                    role_overwrite_ids = await fetch_language_role_overwrites(guild)
+                chosen = preference_roles(roles, role_overwrite_ids)
                 current = await guild.onboarding()
                 prompts = neutralize_prompts(serialize_prompts(current))
                 matches = [p for p in prompts if p["title"] == PROMPT_TITLE]
