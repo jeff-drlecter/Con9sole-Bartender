@@ -28,7 +28,7 @@ GUIDE_NAMES = {'bartender使用指南', '組隊與語音指南', '如何加入�
 def game_entry_moves(guild):
     targets = []
     for category in guild.categories:
-        if category.id == config.TEMPLATE_CATEGORY_ID or category.name in {'封存', 'sample-template'}:
+        if category.id == config.TEMPLATE_CATEGORY_ID or plain_channel_name(category.name) in {'封存', 'sample-template'}:
             continue
         chats = [c for c in category.text_channels if is_squad_chat_name(c.name)]
         if len(chats) != 1:
