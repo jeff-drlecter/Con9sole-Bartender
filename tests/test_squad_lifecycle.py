@@ -309,8 +309,8 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         cog = types.SimpleNamespace(bot=types.SimpleNamespace(get_channel=lambda _: channel))
         for profile in ('fc', '2k', '2k27', 'other'):
             view = scope['RecruitmentChoices'](cog, '10', {'profile': profile})
-            self.assertEqual(len(view.children), 7)
-            self.assertEqual([item.row for item in view.children], [0, 1, 2, 2, 2, 2, 2])
+            self.assertEqual(len(view.children), 8)
+            self.assertEqual([item.row for item in view.children], [0, 1, 2, 2, 2, 2, 2, 3])
             self.assertEqual(len(view.children[1].options),
                              len(scope['MODE_PRESETS'].get(profile, ())) + 2)
             chosen = []

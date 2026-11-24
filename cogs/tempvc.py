@@ -4,6 +4,7 @@ from features.wording import text as wording_text, view_copy as wording_view, mo
 import asyncio
 import logging
 import re
+import sqlite3
 import time
 from typing import Dict, Optional, Union
 
@@ -364,6 +365,9 @@ class RenameRoomModal(SafeModal, title="改小隊房名"):
         if member.id != tempvc_storage.creator_id(channel.id) and not user_can_admin_teardown(member):
             await send_or_followup(interaction, content="改名只限開房者或管理員。", ephemeral=True)
             return
+        if channel.id in getattr(self.cog, '_community_names', {}):
+            await send_or_followup(interaction, content="此房正在使用公會名稱，請先從召集設定清除公會。", ephemeral=True)
+            return
         name = self.name.value.strip()
         if not name:
             await send_or_followup(interaction, content="請填一個房名。", ephemeral=True)
@@ -622,10 +626,46 @@ class TempVC(commands.Cog):
         self._unloading = False
         self._mode_names: dict[int, str] = {}
         self._mode_tasks: dict[int, asyncio.Task] = {}
+        self._community_names: dict[int, dict] = {}
+
+    async def set_community_name(self, channel, name, *, owner_id, source) -> bool:
+        """True means the durable rename intent was accepted, not that REST finished.
+
+        Callers authorize the actor/source before calling. The actual room owner is
+        checked here and again by the delayed worker; None restores the original name.
+        """
+        if (self._unloading or not isinstance(channel, discord.VoiceChannel)
+                or channel.guild.id != config.GUILD_ID or not is_temp_vc_id(channel.id)
+                or type(owner_id) is not int or owner_id <= 0 or _is_hub_channel(channel)):
+            return False
+        if name is not None:
+            from features.community_directory import public_text
+            name = public_text(name, '公會名稱', 80)
+            if name == get_hub_channel_name():
+                name = f'公會 · {name}'  # Never turn an owned room into the creation hub.
+        if not isinstance(source, str) or not re.fullmatch(r'(plan|session):[A-Za-z0-9_-]{1,100}', source):
+            raise ValueError('Invalid community naming source')
+        lock = shared_async_lock('tempvc-name', channel.id)
+        if lock.locked():
+            return False  # Do not let caller authorization go stale behind a REST edit.
+        async with lock:
+            if tempvc_storage.creator_id(channel.id) != owner_id:
+                return False
+            previous = self._community_names.get(channel.id)
+            if name is None and (not previous or previous['source'] != source):
+                return True  # A stale source must never clear another round's name.
+            intent = tempvc_storage.set_community_name(channel.id, channel.guild.id, owner_id, channel.name, name, source)
+            if intent is None:
+                return False
+            self._community_names[channel.id] = intent
+            self._mode_names[channel.id] = name if name is not None else intent['original_name']
+            if channel.id not in self._mode_tasks:
+                self._mode_tasks[channel.id] = asyncio.create_task(self._apply_mode_name(channel))
+        return True
 
     def queue_mode_name(self, channel: discord.VoiceChannel, mode: str) -> None:
         """Coalesce mode changes outside the squad lock and interaction lifetime."""
-        if self._unloading or not is_temp_vc_id(channel.id):
+        if self._unloading or not is_temp_vc_id(channel.id) or channel.id in self._community_names:
             return
         number = temp_channel_number(channel.name)
         if number is None:
@@ -651,15 +691,58 @@ class TempVC(commands.Cog):
         try:
             while channel.id in self._mode_names:
                 await asyncio.sleep(MODE_NAME_DEBOUNCE_SECONDS)
-                name = self._mode_names[channel.id]
-                current = channel.guild.get_channel(channel.id)
-                if current is None or not is_temp_vc_id(channel.id) or temp_channel_number(current.name) is None:
-                    return
-                if current.name != name:
-                    channel = await current.edit(name=name, reason="Sync small-team call game mode")
-                if self._mode_names.get(channel.id) == name:
-                    self._mode_names.pop(channel.id, None)
-        except discord.HTTPException:
+                async with shared_async_lock('tempvc-name', channel.id):
+                    name = self._mode_names.get(channel.id)
+                    if name is None:
+                        return
+                    intent = self._community_names.get(channel.id)
+                    current = channel.guild.get_channel(channel.id)
+                    if intent:
+                        retry = get_vc_limit_channel_cooldown_seconds() - (time.time() - VC_LIMIT_CHANNEL_COOLDOWNS.get(channel.id, 0.0))
+                        if retry > 0:
+                            # Leave the lock between retries so newer selections can replace this one.
+                            continue
+                        try:
+                            current = await channel.guild.fetch_channel(channel.id)
+                        except discord.NotFound:
+                            return
+                        except (discord.HTTPException, OSError, TimeoutError):
+                            VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = time.time()
+                            continue
+                        try:
+                            owner = tempvc_storage.creator_id(channel.id)
+                        except sqlite3.Error:
+                            VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = time.time()
+                            continue
+                        if (not isinstance(current, discord.VoiceChannel) or current.guild.id != config.GUILD_ID
+                                or not is_temp_vc_id(channel.id) or _is_hub_channel(current)
+                                or owner != intent['owner_id']):
+                            return
+                    elif current is None or not is_temp_vc_id(channel.id) or temp_channel_number(current.name) is None:
+                        return
+                    with claim_action('vc-edit', channel.id) as claimed:
+                        if not claimed:
+                            continue
+                        if current.name != name:
+                            try:
+                                channel = await current.edit(name=name, reason='Sync small-team call community' if intent else 'Sync small-team call game mode')
+                            except (discord.HTTPException, OSError, TimeoutError):
+                                if not intent:
+                                    raise
+                                VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = time.time()
+                                continue
+                            if intent:
+                                VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = time.time()
+                        if self._mode_names.get(channel.id) == name:
+                            if intent and intent['community_name'] is None:
+                                try:
+                                    tempvc_storage.finish_community_clear(channel.id, intent['owner_id'], intent['source'])
+                                except sqlite3.Error:
+                                    VC_LIMIT_CHANNEL_COOLDOWNS[channel.id] = time.time()
+                                    continue
+                                self._community_names.pop(channel.id, None)
+                            self._mode_names.pop(channel.id, None)
+        except (discord.HTTPException, OSError, TimeoutError):
             log.exception("Could not sync temp VC mode: channel=%s", channel.id)
         finally:
             self._mode_names.pop(channel.id, None)
@@ -667,6 +750,7 @@ class TempVC(commands.Cog):
 
     async def cog_load(self) -> None:
         tempvc_storage.init_tempvc_db()
+        self._community_names = tempvc_storage.community_names(config.GUILD_ID)
         self._startup_task = asyncio.create_task(self._start_after_ready())
 
     async def _start_after_ready(self) -> None:
@@ -1090,6 +1174,10 @@ class TempVC(commands.Cog):
                             continue
 
                     if isinstance(ch, discord.VoiceChannel) and is_temp_vc_id(ch.id):
+                        intent = self._community_names.get(ch.id)
+                        if intent and ch.id not in self._mode_tasks:
+                            self._mode_names[ch.id] = intent['community_name'] if intent['community_name'] is not None else intent['original_name']
+                            self._mode_tasks[ch.id] = asyncio.create_task(self._apply_mode_name(ch))
                         await schedule_delete_if_empty(ch, force=True)
             except Exception:
                 log.exception("Temp VC bootstrap failed: guild=%s", guild.id)
