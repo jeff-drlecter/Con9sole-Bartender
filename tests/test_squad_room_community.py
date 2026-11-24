@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import discord
 
-from cogs.squad_cards import RecruitmentChoices, SquadCards, sync_mode_name
+from cogs.squad_cards import Details, GamePicker, ModePicker, RecruitmentChoices, SquadCards, sync_mode_name
 from cogs.tempvc import TempVC
 from core.action_guard import shared_async_lock
 from features import tempvc_storage
@@ -53,8 +53,8 @@ class _RoomFixture(unittest.IsolatedAsyncioTestCase):
             await self.squad.retry_community_names()
         await asyncio.wait_for(asyncio.gather(*self.cog._mode_tasks.values()), timeout=2)
 
-    async def select(self, name, *, source='session:s', owner=5):
-        return await self.cog.set_community_name(self.channel, name, owner_id=owner, source=source)
+    async def select(self, name, *, source='session:s', owner=5, mode=''):
+        return await self.cog.set_community_name(self.channel, name, owner_id=owner, source=source, mode=mode)
 
 
 class CommunityRoomTests(_RoomFixture):
@@ -120,7 +120,7 @@ class CommunityRoomTests(_RoomFixture):
         self.assertEqual(tempvc_storage.community_names(1), {})
 
     async def test_restart_resumes_intent_and_clear(self):
-        await self.select('重啟後公會名稱')
+        await self.select('Entry Level', mode='Clubs 球會')
         await self.cog.cog_unload()
         self.cog = TempVC(self.bot)
         with patch('cogs.tempvc.bootstrap_track_temp_vcs', AsyncMock(return_value=[42])), \
@@ -129,7 +129,7 @@ class CommunityRoomTests(_RoomFixture):
             await self.cog.cog_load()
             await self.cog._startup_task
             await self.drain()
-        self.assertEqual(self.channel.name, '重啟後公會名稱')
+        self.assertEqual(self.channel.name, 'Clubs 球會．Entry Level')
         await self.select(None)
         await self.drain()
         self.assertEqual(self.channel.name, '原有完整房名')
@@ -147,7 +147,7 @@ class CommunityRoomTests(_RoomFixture):
         self.assertEqual(self.channel.edit.await_count, 2)
 
     async def test_reserved_hub_name_is_disambiguated(self):
-        with patch('cogs.tempvc.get_hub_channel_name', return_value='開房入口'):
+        with patch('config.TEMP_VC_HUB_NAME', '開房入口', create=True):
             await self.select('開房入口')
             await self.drain()
         self.assertEqual(self.channel.name, '公會 · 開房入口')
@@ -344,6 +344,71 @@ class RecruitmentCommunityTests(_RoomFixture):
         self.squad.save.assert_not_called()
         self.assertNotIn('community_key', self.session)
         self.assertEqual(tempvc_storage.community_names(1), {})
+
+    async def test_live_mode_callbacks_custom_clear_and_game_reset_keep_community(self):
+        self.member.id = 6  # An ordinary participant may edit mode, but cannot choose the community.
+        self.session.update(community_key='team', community_owner=5, profile='fc')
+        self.directory.directory.get.return_value['name'] = 'Entry Level'
+        self.squad.render = types.MethodType(SquadCards.render, self.squad)
+        message = types.SimpleNamespace(id=99, author=self.bot.user, content='', edit=AsyncMock())
+        self.destination.fetch_message.return_value = message
+        with patch('cogs.squad_cards.interest_topic', return_value=None), \
+                patch('cogs.squad_cards.run_stats', AsyncMock(return_value=None)):
+            picker = ModePicker(self.squad, '42', self.session, 'fc')
+            picker._values = ['Clubs 球會']
+            await picker.callback(self.interaction())
+            await self.drain()
+            self.assertEqual(self.channel.name, 'Clubs 球會．Entry Level')
+            self.assertEqual(self.session['community_owner'], 5)
+            self.assertEqual(self.session['community_key'], 'team')
+            custom = Details(self.squad, '42', self.session)
+            custom.game._value, custom.mode._value, custom.missing._value = '合成遊戲', ' 自訂 模式． ', '2'
+            await custom.on_submit(self.interaction())
+            await self.drain()
+            self.assertEqual(self.channel.name, '自訂 模式．Entry Level')
+            picker._values = ['__none__']
+            await picker.callback(self.interaction())
+            await self.drain()
+            self.assertEqual(self.channel.name, 'Entry Level')
+            picker._values = ['Clubs 球會']
+            await picker.callback(self.interaction())
+            await self.drain()
+            game = GamePicker(self.squad, '42', self.session, 'fc')
+            game._values = ['other']
+            await game.callback(self.interaction())
+            await self.drain()
+            self.assertEqual(self.channel.name, 'Entry Level')
+            self.assertEqual(self.session['community_key'], 'team')
+
+    async def test_mode_retry_uses_persisted_latest_mode_and_never_takes_new_plan_source(self):
+        self.session.update(community_key='team', community_owner=5, mode='Clubs 球會')
+        self.directory.directory.get.return_value['name'] = 'Entry Level'
+        await self.squad.sync_community_room(self.channel, self.session)
+        with patch.object(self.cog, 'set_community_name', AsyncMock(return_value=False)):
+            await self.squad.retry_community_names()
+        self.session['mode'] = 'REC'
+        await self.squad.sync_community_room(self.channel, self.session)
+        restarted = SquadCards.__new__(SquadCards)
+        restarted.bot, restarted.state = self.bot, json.loads(json.dumps(self.squad.state))
+        restarted.save = Mock()
+        await restarted.retry_community_names()
+        await asyncio.gather(*self.cog._mode_tasks.values())
+        self.assertEqual(self.channel.name, 'REC．Entry Level')
+        self.session['mode'] = '其他模式'
+        await self.squad.sync_community_room(self.channel, self.session)
+        from features.squad_plans import PlanBook
+        book = PlanBook(Path(self.temp.name) / 'new-plan.json', clock=lambda: 1000)
+        plan = book.create(guild=1, channel=30, owner=5, game='合成遊戲', mode='REC', start=1100, party=1, capacity=3)
+        book.publish(plan['id'], 100)
+        book.link_voice(plan['id'], 5, 42)
+        previous = self.bot.get_cog.side_effect
+        self.bot.get_cog.side_effect = lambda name: types.SimpleNamespace(book=book) if name == 'SquadPlans' else previous(name)
+        await self.select('新場次公會', source=f"plan:{plan['id']}", mode='REC')
+        await asyncio.gather(*self.cog._mode_tasks.values())
+        self.squad._community_retry_after = {}
+        await self.squad.retry_community_names()
+        self.assertEqual(self.channel.name, 'REC．新場次公會')
+        self.assertFalse(self.squad.state['community_name_updates'])
 
     async def test_optional_faults_do_not_gate_card_notices_or_refresh_on_recovery(self):
         from features.community_directory import DirectoryUnavailable

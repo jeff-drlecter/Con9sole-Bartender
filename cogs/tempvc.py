@@ -20,6 +20,7 @@ from core.ui import SafeModal, SafeView
 from features import tempvc_storage
 from features.menu_stats import record_usage
 from features.tempvc_settings import (
+    community_room_name,
     format_seconds,
     get_auto_vc_user_limit,
     get_hub_channel_name,
@@ -628,7 +629,7 @@ class TempVC(commands.Cog):
         self._mode_tasks: dict[int, asyncio.Task] = {}
         self._community_names: dict[int, dict] = {}
 
-    async def set_community_name(self, channel, name, *, owner_id, source) -> bool:
+    async def set_community_name(self, channel, name, *, owner_id, source, mode='') -> bool:
         """True means the durable rename intent was accepted, not that REST finished.
 
         Callers authorize the actor/source before calling. The actual room owner is
@@ -641,8 +642,7 @@ class TempVC(commands.Cog):
         if name is not None:
             from features.community_directory import public_text
             name = public_text(name, '公會名稱', 80)
-            if name == get_hub_channel_name():
-                name = f'公會 · {name}'  # Never turn an owned room into the creation hub.
+            name = community_room_name(name, mode)
         if not isinstance(source, str) or not re.fullmatch(r'(plan|session):[A-Za-z0-9_-]{1,100}', source):
             raise ValueError('Invalid community naming source')
         lock = shared_async_lock('tempvc-name', channel.id)

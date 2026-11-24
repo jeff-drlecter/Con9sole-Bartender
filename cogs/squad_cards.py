@@ -604,7 +604,8 @@ class SquadCards(commands.Cog):
             return True
         source = f"session:{session['id']}"
         update = dict(voice=voice, owner=session['community_owner'],
-                      key=None if clear else session.get('community_key'), clear=clear)
+                      key=None if clear else session.get('community_key'), clear=clear,
+                      mode='' if clear else session.get('mode', ''))
         pending = self.state.setdefault('community_name_updates', {})
         if pending.get(source) != update:
             pending[source] = update
@@ -660,7 +661,8 @@ class SquadCards(commands.Cog):
                         if pending.get(source) is not update:
                             continue
                         if not await tempvc.set_community_name(channel, card['name'] if card else None,
-                                                              owner_id=owner, source=source):
+                                                              owner_id=owner, source=source,
+                                                              mode=session.get('mode', '') if active else ''):
                             continue
                 if pending.get(source) is update:
                     pending.pop(source)
