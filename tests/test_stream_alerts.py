@@ -147,10 +147,17 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
         view = StreamAdmin(self.cog)
         self.assertLessEqual(len(view.children), 25)
         self.assertTrue(all(sum(x.row == row for x in view.children if not isinstance(x, __import__('discord').ui.Select)) <= 5 for row in range(5)))
-        self.assertTrue(StreamPanel(self.cog).is_persistent())
+        self.assertTrue(StreamPanel().is_persistent())
         inter = SimpleNamespace(guild_id=123, user=SimpleNamespace(), response=SimpleNamespace(
             is_done=lambda:False, send_message=AsyncMock()))
         self.assertFalse(await authorized(inter))
+
+    async def test_panel_reports_unloaded_extension_privately(self):
+        inter = SimpleNamespace(client=SimpleNamespace(get_cog=lambda name: None),
+                                response=SimpleNamespace(send_message=AsyncMock()))
+        await StreamPanel().open.callback(inter)
+        inter.response.send_message.assert_awaited_once()
+        self.assertTrue(inter.response.send_message.await_args.kwargs['ephemeral'])
 
     async def test_offline_card_has_no_live_image_and_reports_detection_time(self):
         embed, view = self.cog.card('alice', STREAM, ended=True)

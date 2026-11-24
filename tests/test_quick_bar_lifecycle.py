@@ -16,6 +16,7 @@ class OfflineLifecycleTests(unittest.TestCase):
     def test_all_extensions_routes_and_ready_reload(self):
         script = """
 import asyncio, json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import discord
 import config
@@ -45,6 +46,23 @@ async def run():
                     missing.append(item.id)
         bot._ready.set()
         await asyncio.sleep(0)
+        previous_alerts = bot.get_cog("StreamAlerts")
+        previous_poll = previous_alerts.poll.get_task()
+        # Discord retains a separate view for each posted /stream_panel message.
+        from cogs.stream_alerts import StreamPanel
+        posted_panel = StreamPanel()
+        bot.add_view(posted_panel, message_id=202)
+        await bot.reload_extension("cogs.stream_alerts")
+        alerts = bot.get_cog("StreamAlerts")
+        assert previous_poll.cancelled(), "old Twitch alerts poll survived reload"
+        assert previous_alerts.session.closed, "old Twitch HTTP session survived reload"
+        assert previous_alerts.panel_view.is_finished()
+        assert alerts.poll.is_running() and not alerts.session.closed
+        assert alerts.panel_view in bot.persistent_views
+        alerts.menu_entry = AsyncMock()
+        inter = SimpleNamespace(client=bot)
+        await posted_panel.open.callback(inter)
+        alerts.menu_entry.assert_awaited_once_with(inter)
         maintenance_before = bot.get_cog("Maintenance").poll.get_task()
         await bot.reload_extension("cogs.maintenance")
         maintenance_after = bot.get_cog("Maintenance").poll.get_task()

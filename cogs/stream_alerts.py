@@ -284,13 +284,16 @@ class StreamAdmin(AdminView):
 
 
 class StreamPanel(AdminView):
-    def __init__(self, cog):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.cog = cog
 
     @discord.ui.button(label='管理直播名單', emoji='📺', custom_id='stream:admin:open')
     async def open(self, inter, button):
-        await self.cog.menu_entry(inter)
+        cog = inter.client.get_cog('StreamAlerts')
+        if cog is None:
+            await inter.response.send_message('直播通知暫時未能使用，請稍後再試。', ephemeral=True)
+            return
+        await cog.menu_entry(inter)
 
 
 class StreamAlerts(commands.Cog):
@@ -306,12 +309,12 @@ class StreamAlerts(commands.Cog):
         client, secret = os.getenv('TWITCH_CLIENT_ID', ''), os.getenv('TWITCH_CLIENT_SECRET', '')
         if client and secret:
             self.api = TwitchAPI(self.session, client, secret)
-        self.panel_view = StreamPanel(self)
+        self.panel_view = StreamPanel()
         self.bot.add_view(self.panel_view)
         self.poll.start()
 
     async def cog_unload(self):
-        self.bot.remove_view(self.panel_view)
+        self.panel_view.stop()
         task = self.poll.get_task()
         self.poll.cancel()
         if task:
@@ -592,7 +595,7 @@ class StreamAlerts(commands.Cog):
             return await inter.response.send_message('請選擇管理員專用頻道。', ephemeral=True)
         await inter.response.defer(ephemeral=True)
         message = await channel.send('📺 **直播通知管理**\n成員 5 分鐘／友台 30 分鐘起；每場一張卡，收台更新原卡。\n按鈕只限管理員；名單及設定只會向操作者顯示。',
-                                     view=StreamPanel(self), allowed_mentions=NONE)
+                                     view=StreamPanel(), allowed_mentions=NONE)
         await inter.followup.send(message.jump_url, ephemeral=True)
 
 
