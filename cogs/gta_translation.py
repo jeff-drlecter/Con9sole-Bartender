@@ -14,7 +14,7 @@ import discord
 from discord.ext import commands, tasks
 
 import config
-from core.gta_translation import GTA_CHANNEL_ID, HONG_KONG, Job, TranslationQueue, source_text
+from core.gta_translation import GTA_CHANNEL_ID, HONG_KONG, Job, TranslationQueue, source_text, translation_input
 from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
@@ -33,9 +33,10 @@ class TranslationLimit(Exception):
 
 
 async def translate(session: aiohttp.ClientSession, url: str, token: str, text: str) -> str:
-    source, protected = text, 0
-    if VEHICLE_MARKER.casefold() not in text.casefold():
-        source, protected = GENERIC_VEHICLE.subn(VEHICLE_MARKER, text)
+    source, links = translation_input(text)
+    protected = 0
+    if VEHICLE_MARKER.casefold() not in source.casefold():
+        source, protected = GENERIC_VEHICLE.subn(VEHICLE_MARKER, source)
     async with session.post(url, json={"text": source, "token": token},
                             allow_redirects=False) as response:
         if response.status in (302, 303):
@@ -63,6 +64,11 @@ async def translate(session: aiohttp.ClientSession, url: str, token: str, text: 
         if translated.count(VEHICLE_MARKER) != protected:
             raise ValueError("Apps Script changed a protected GTA term")
         translated = translated.replace(VEHICLE_MARKER, "一輛載具")
+    if links:
+        if any(translated.count(marker) != 1 for marker in links):
+            raise ValueError("Apps Script changed a protected GTA link")
+        # One pass: literal text in one original URL cannot expand into another URL.
+        translated = re.sub("|".join(links), lambda m: links[m[0]], translated)
     return translated
 
 
