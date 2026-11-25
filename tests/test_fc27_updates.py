@@ -69,6 +69,27 @@ class FC27PreviewTest(unittest.TestCase):
         other = replace(self.pitch, title="Clubs in v1.3.0", url=NEWS + "clubs-in-v1-3")
         self.assertEqual(self.store.ingest([other], [self.old_hub]), 1)
 
+    def test_same_forum_article_survives_changing_title_canonical_and_slug_in_either_order(self):
+        explicit = replace(self.mirror, title="November developer notes")
+        typed = replace(self.mirror, canonical="", url=HUB + "new-pitch-notes-slug/13897390")
+        for first, later in ((explicit, typed), (typed, explicit)):
+            with self.subTest(first=first.title), TemporaryDirectory() as tmp:
+                path = Path(tmp) / "preview.sqlite3"
+                ledger = PreviewLedger(path)
+                ledger.ingest([self.old], [self.old_hub])
+                self.assertEqual(ledger.ingest([self.old], [first]), 1)
+                job, brief = ledger.claim(NOW)
+                ledger.finish(job, "已翻譯")
+                reopened = PreviewLedger(path)
+                self.assertEqual(reopened.ingest([self.old], [later]), 0)
+                self.assertEqual(reopened.ingest([self.pitch], [first, later]), 0)
+                self.assertIsNone(reopened.claim(NOW))
+                self.assertEqual(len(reopened.cards()), 1)
+                self.assertIn(self.pitch.url, reopened.cards()[0])
+                self.assertTrue(reopened.cards()[0].startswith(self.pitch.title))
+                with connect_sqlite(path) as db:
+                    self.assertEqual(db.execute("SELECT characters FROM usage").fetchone()[0], len(brief))
+
     def test_shared_last_characters_are_atomic_and_quota_fallback_keeps_source(self):
         queue = TranslationQueue(self.path)
         queue.add(1, 11, "a" * (MONTHLY_LIMIT - len(self.pitch.brief)), channel_id=GTA_CHANNEL_ID)

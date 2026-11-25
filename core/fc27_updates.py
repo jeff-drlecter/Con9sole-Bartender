@@ -71,6 +71,9 @@ class PreviewLedger:
                 demo_text TEXT NOT NULL, state TEXT NOT NULL, claimed REAL, summary TEXT
             )""")
 
+            db.execute("""CREATE TABLE IF NOT EXISTS fc27_alias (
+                alias TEXT PRIMARY KEY, identity TEXT NOT NULL REFERENCES fc27_preview(identity)
+            )""")
             db.execute("CREATE TABLE IF NOT EXISTS fc27_poll (slot INTEGER PRIMARY KEY, next_poll REAL NOT NULL)")
 
     def reserve_poll(self, now: float) -> bool:
@@ -95,15 +98,28 @@ class PreviewLedger:
             added = 0
             for identity, article, source in items:
                 url = article.canonical or article.url
-                added += db.execute(
-                    "INSERT OR IGNORE INTO fc27_preview(identity,url,title,brief,demo_text,state) VALUES (?,?,?,?,?,?)",
-                    (identity, url, article.title, article.brief, article.demo_text, "baseline" if baseline else "pending"),
-                ).rowcount
+                source_id = "hub/" + article.url.rsplit("/", 1)[1] if source == "hub" else article.url
+                aliases = (identity, article.url, source_id, url)
+                owners = db.execute("SELECT DISTINCT identity FROM fc27_alias WHERE alias IN (?,?,?,?)",
+                                    aliases).fetchall()
+                if len(owners) > 1:
+                    raise ValueError("Conflicting historical FC 27 receipts require source review")
+                if owners:
+                    identity = owners[0][0]
+                else:
+                    db.execute("INSERT INTO fc27_preview(identity,url,title,brief,demo_text,state) "
+                               "VALUES (?,?,?,?,?,?)", (identity, url, article.title, article.brief,
+                                                        article.demo_text, "baseline" if baseline else "pending"))
+                    added += 1
+                db.executemany("INSERT OR IGNORE INTO fc27_alias(alias,identity) VALUES (?,?)",
+                               ((alias, identity) for alias in aliases))
                 if source == "news":
-                    # A later website mirror improves the stored source without
-                    # resetting its receipt or changing the translated brief.
-                    db.execute("UPDATE fc27_preview SET url=?,demo_text=? WHERE url=? OR (identity=? AND url LIKE ?)",
-                               (url, article.demo_text, url, identity, HUB + "%"))
+                    # Promote the link and demonstration without renewing the receipt.
+                    db.execute("UPDATE fc27_preview SET url=?,title=?,demo_text=? WHERE identity=?",
+                               (url, article.title, article.demo_text, identity))
+                elif article.canonical:
+                    db.execute("UPDATE fc27_preview SET url=? WHERE identity=? AND url LIKE ?",
+                               (url, identity, HUB + "%"))
             return 0 if baseline else added
 
     def claim(self, now: float) -> tuple[str, str] | None:
