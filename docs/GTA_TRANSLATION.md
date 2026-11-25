@@ -27,4 +27,4 @@ SELECT stage, COUNT(*) FROM posts GROUP BY stage;
 SELECT message_id, stage, attempt FROM posts WHERE stage IN ('posting', 'failed');
 ```
 
-持續停在 `posting` 的訊息要先查看原帖所在頻道，確認是否已有 Bot 回覆；`failed` 表示該階段已耗盡嘗試次數。診斷日誌只列訊息 ID、階段、次數、錯誤類型及可得的狀態碼。
+持續停在 `posting` 的訊息要先查看原帖所在頻道，確認是否已有 Bot 回覆。若屬升級前的 GTA 工作，亦要查看原帖原有的討論串，舊版可能已在串內送達。`failed` 表示該階段已耗盡嘗試次數。診斷日誌只列訊息 ID、階段、次數、錯誤類型及可得的狀態碼。
