@@ -11,7 +11,7 @@
 | 香港／台灣語言及中性預設 | `features/language_preferences.py` 從 Discord 身份組讀取偏好，`features/notification_words.py` 管理通知文案 | `locale` |
 | 日誌私隱、備份、部署前檢查 | `core/audit_privacy.py`、`core/storage_paths.py`、`scripts/backup_runtime.py`、`scripts/inspect_round_readiness.py` | `runtime` |
 | 背景工作、外部 API 及啟動 | `bot.py` 建立 Bot 時傳入已設定嘅 intents，`setup_hook` 載入 cogs 及同步指令。RSS 的 429／退避分別見 `cogs/rss_delivery.py` 及 `core/rss_delivery.py`，直播通知另見 `cogs/stream_alerts.py` | `all`，可先搜尋對應 `tests/test_rss*` 或 `tests/test_stream*` |
-| GTA 官方更新繁中討論串 | `cogs/gta_translation.py` 辨認 Discord 公告轉發並送出譯文；`core/gta_translation.py` 管理原帖收據、翻譯佇列及每月上限。[試行操作](GTA_TRANSLATION.md) | `python -m unittest discover -s tests -p test_gta_translation.py` |
+| 遊戲官方更新繁中討論串 | `cogs/gta_translation.py` 將公告譯文送回原頻道。允許的頻道 ID、共用收據及每月額度見 `core/gta_translation.py`。[操作說明](GTA_TRANSLATION.md) | `python -m unittest discover -s tests -p test_gta_translation.py` |
 
 ## 本機與 CI
 
