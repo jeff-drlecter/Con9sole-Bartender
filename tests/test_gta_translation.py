@@ -224,6 +224,17 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
                 self.store.advance(resumed, "failed")
                 self.message.create_thread.assert_not_awaited()
 
+    async def test_generic_vehicle_reward_does_not_acquire_a_racing_class(self):
+        source = "Win a vehicle and 2 prizes. Visit a vehicle warehouse or buy a race car."
+        self.response.json.return_value = {"translation": "贏得GTA0V和2份獎品。可前往載具倉庫或購買賽車。"}
+        translated = await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source)
+        self.assertEqual(translated, "贏得一輛載具和2份獎品。可前往載具倉庫或購買賽車。")
+        self.assertEqual(self.http.post.call_args.kwargs["json"]["text"],
+                         "Win GTA0V and 2 prizes. Visit a vehicle warehouse or buy a race car.")
+        self.response.json.return_value = {"translation": "贏得2份獎品。"}
+        with self.assertRaisesRegex(ValueError, "protected GTA term"):
+            await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source)
+
 
 class AppsScriptTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js required for the Apps Script service fixture")

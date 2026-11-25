@@ -20,6 +20,10 @@ from core.storage_paths import DATA_DIR
 log = logging.getLogger(__name__)
 SCRIPT_URL = re.compile(r"https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec")
 RESULT_URL = re.compile(r"https://script\.googleusercontent\.com/macros/echo\?[^#\s]+")
+# A complete, generic noun phrase. Leave named models and compounds such as
+# "a vehicle warehouse" to the translator.
+GENERIC_VEHICLE = re.compile(r"\ba vehicle\b(?=\s*(?:$|[,.!?:;)]|\b(?:and|or)\b))", re.I)
+VEHICLE_MARKER = "GTA0V"
 
 
 class TranslationLimit(Exception):
@@ -27,7 +31,10 @@ class TranslationLimit(Exception):
 
 
 async def translate(session: aiohttp.ClientSession, url: str, token: str, text: str) -> str:
-    async with session.post(url, json={"text": text, "token": token},
+    source, protected = text, 0
+    if VEHICLE_MARKER.casefold() not in text.casefold():
+        source, protected = GENERIC_VEHICLE.subn(VEHICLE_MARKER, text)
+    async with session.post(url, json={"text": source, "token": token},
                             allow_redirects=False) as response:
         if response.status in (302, 303):
             location = response.headers.get("Location", "")
@@ -50,6 +57,10 @@ async def translate(session: aiohttp.ClientSession, url: str, token: str, text: 
     translated = result.get("translation")
     if not isinstance(translated, str) or not translated.strip():
         raise ValueError("Apps Script returned no translation")
+    if protected:
+        if translated.count(VEHICLE_MARKER) != protected:
+            raise ValueError("Apps Script changed a protected GTA term")
+        translated = translated.replace(VEHICLE_MARKER, "一輛載具")
     return translated
 
 
