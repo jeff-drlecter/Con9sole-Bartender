@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-from html import unescape
 import io
 import logging
 import os
+import re
 import sqlite3
 import time
 
@@ -18,20 +18,39 @@ from core.gta_translation import GTA_CHANNEL_ID, HONG_KONG, Job, TranslationQueu
 from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
-ENDPOINT = "https://translation.googleapis.com/language/translate/v2"
+SCRIPT_URL = re.compile(r"https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec")
+RESULT_URL = re.compile(r"https://script\.googleusercontent\.com/macros/echo\?[^#\s]+")
 
 
-async def translate(session: aiohttp.ClientSession, text: str) -> str:
-    async with session.post(ENDPOINT, json={"q": text, "target": "zh-TW", "format": "text"},
+class TranslationLimit(Exception):
+    pass
+
+
+async def translate(session: aiohttp.ClientSession, url: str, token: str, text: str) -> str:
+    async with session.post(url, json={"text": text, "token": token},
                             allow_redirects=False) as response:
-        if response.status != 200:
+        if response.status in (302, 303):
+            location = response.headers.get("Location", "")
+            if not RESULT_URL.fullmatch(location):
+                raise ValueError("Unexpected Apps Script result location")
+            # ContentService redirects to a one-use result URL. No POST body or credentials on GET.
+            async with session.get(location, allow_redirects=False) as output:
+                if output.status != 200:
+                    raise ValueError("Apps Script result unavailable")
+                result = await output.json()
+        elif response.status == 200:
+            result = await response.json()
+        else:
             response.raise_for_status()
-            raise ValueError(f"Google Translation HTTP {response.status}")
-        result = await response.json()
-        translated = result["data"]["translations"][0]["translatedText"]
-        if not isinstance(translated, str) or not translated.strip():
-            raise ValueError("Google Translation returned empty text")
-        return unescape(translated)
+            raise ValueError("Unexpected Apps Script response")
+    if not isinstance(result, dict):
+        raise ValueError("Unexpected Apps Script result")
+    if result.get("error") in ("daily_limit", "month_full"):
+        raise TranslationLimit(result["error"])
+    translated = result.get("translation")
+    if not isinstance(translated, str) or not translated.strip():
+        raise ValueError("Apps Script returned no translation")
+    return translated
 
 
 async def thread_for(message):
@@ -63,10 +82,12 @@ async def send_translation(thread, job: Job) -> None:
 
 
 class GTATranslation(commands.Cog):
-    def __init__(self, bot, store, session):
+    def __init__(self, bot, store, session, url, token):
         self.bot = bot
         self.store = store
         self.session = session
+        self.url = url
+        self.token = token
 
     async def cog_load(self):
         self.process.start()
@@ -88,7 +109,11 @@ class GTATranslation(commands.Cog):
 
     async def process_job(self, job):
         if job.stage == "translate":
-            translated = await translate(self.session, job.text)
+            try:
+                translated = await translate(self.session, self.url, self.token, job.text)
+            except TranslationLimit as exc:
+                await asyncio.to_thread(self.store.defer_quota, job, str(exc), time.time())
+                return
             await asyncio.to_thread(self.store.advance, job, "deliver", translated)
             return
         channel = self.bot.get_channel(GTA_CHANNEL_ID)
@@ -132,13 +157,15 @@ class GTATranslation(commands.Cog):
 
 
 async def setup(bot):
-    key = os.getenv("GTA_TRANSLATION_API_KEY")
-    if key:
+    url = os.getenv("GTA_TRANSLATION_SCRIPT_URL")
+    token = os.getenv("GTA_TRANSLATION_TOKEN")
+    if url or token:
+        if not SCRIPT_URL.fullmatch(url or "") or not re.fullmatch(r"[a-f0-9]{64}", token or ""):
+            raise ValueError("Incomplete or invalid GTA Apps Script configuration")
         store = await asyncio.to_thread(TranslationQueue, DATA_DIR / "gta_translation.sqlite3")
-        session = aiohttp.ClientSession(headers={"X-Goog-Api-Key": key},
-                                        timeout=aiohttp.ClientTimeout(total=20))
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90))
         try:
-            await bot.add_cog(GTATranslation(bot, store, session))
+            await bot.add_cog(GTATranslation(bot, store, session, url, token))
         except BaseException:
             await session.close()
             raise

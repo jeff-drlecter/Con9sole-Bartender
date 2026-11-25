@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import os
 from pathlib import Path
+import shutil
+import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -17,6 +19,8 @@ from core.sqlite_storage import connect_sqlite
 
 
 NOW = datetime(2026, 12, 31, 23, 59, 59, tzinfo=HONG_KONG).timestamp()
+TEST_URL = "https://script.google.com/macros/s/test/exec"
+TEST_TOKEN = "a" * 64
 
 
 def post(mid=111, origin=88, **changes):
@@ -91,9 +95,8 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.response = self.http.post.return_value.__aenter__.return_value
         self.response.status = 200
         self.response.raise_for_status = MagicMock()
-        self.response.json = AsyncMock(return_value={"data": {"translations": [
-            {"translatedText": "新賽道 &amp; 新車"}]}})
-        self.cog = pilot.GTATranslation(self.bot, self.store, self.http)
+        self.response.json = AsyncMock(return_value={"translation": "新賽道 & 新車"})
+        self.cog = pilot.GTATranslation(self.bot, self.store, self.http, TEST_URL, TEST_TOKEN)
 
     async def test_official_post_to_one_thread_and_one_translation_across_replays(self):
         embed = discord.Embed(title="New race", description="Drive [now](https://example.com/gta)")
@@ -107,8 +110,8 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(text, ("New race", "New race\n\nDrive now\n\nReward\n\n2x XP"))
         self.assertEqual(pilot.source_text(entry), "New race\n\nDrive now\n\nReward\n\n2x XP")
         await self.cog.process_job(key)
-        self.http.post.assert_called_once_with(pilot.ENDPOINT, json={"q": text, "target": "zh-TW",
-                                              "format": "text"}, allow_redirects=False)
+        self.http.post.assert_called_once_with(TEST_URL, json={"text": text, "token": TEST_TOKEN},
+                                               allow_redirects=False)
         delivery = TranslationQueue(self.path).claim(NOW)
         await self.cog.process_job(delivery)
         await self.cog.on_message(entry)
@@ -194,3 +197,35 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
             await pilot.setup(self.bot)
         self.bot.add_cog.assert_not_called()
         session.assert_not_called()
+
+    async def test_content_service_redirect_fetches_result_without_credentials(self):
+        self.response.status = 302
+        target = "https://script.googleusercontent.com/macros/echo?fixture=abc"
+        self.response.headers = {"Location": target}
+        result = self.http.get.return_value.__aenter__.return_value
+        result.status = 200
+        result.json = AsyncMock(return_value={"translation": "新賽道"})
+        self.assertEqual(await pilot.translate(self.http, TEST_URL, TEST_TOKEN, "race"), "新賽道")
+        self.http.get.assert_called_once_with(target, allow_redirects=False)
+        self.response.headers["Location"] = "https://example.org/result"
+        with self.assertRaises(ValueError):
+            await pilot.translate(self.http, TEST_URL, TEST_TOKEN, "race")
+        self.assertEqual(self.http.get.call_count, 1)
+
+    async def test_provider_quota_keeps_job_until_reset(self):
+        for reason, delay in (("month_full", 1), ("daily_limit", 86400)):
+            with self.subTest(reason=reason), patch.object(pilot.time, "time", return_value=NOW):
+                self.store.add(delay, delay, "race")
+                self.response.json.return_value = {"error": reason}
+                await self.cog.process_job(self.store.claim(NOW))
+                self.assertIsNone(self.store.claim(NOW + delay - 1))
+                resumed = self.store.claim(NOW + delay)
+                self.assertEqual(resumed.text, "race")
+                self.store.advance(resumed, "failed")
+                self.message.create_thread.assert_not_awaited()
+
+
+class AppsScriptTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node.js required for the Apps Script service fixture")
+    def test_deployed_source_with_fake_google_services(self):
+        subprocess.run(["node", str(Path(__file__).with_name("gta_translation_script.cjs"))], check=True)

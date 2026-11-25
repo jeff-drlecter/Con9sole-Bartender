@@ -97,7 +97,8 @@ asyncio.run(run())
                 "DISCORD_BOT_TOKEN",
                 "TWITCH_BOT_OAUTH",
                 "TWITCH_BOT_USERNAME",
-                "GTA_TRANSLATION_API_KEY",
+                "GTA_TRANSLATION_SCRIPT_URL",
+                "GTA_TRANSLATION_TOKEN",
             ):
                 env.pop(name, None)
             env.update(

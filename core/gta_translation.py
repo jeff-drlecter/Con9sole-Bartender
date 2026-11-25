@@ -17,6 +17,11 @@ LEASE_SECONDS = 300
 MAX_ATTEMPTS = 3
 
 
+def next_month_start(local: datetime) -> float:
+    return datetime(local.year + (local.month == 12), local.month % 12 + 1,
+                    1, tzinfo=HONG_KONG).timestamp()
+
+
 def source_text(message) -> str:
     """Only visible text on the post. Do not retrieve linked articles or media."""
     parts = [message.content]
@@ -83,14 +88,19 @@ class TranslationQueue:
                                      "WHERE month=? AND characters+?<=?",
                                      (len(body), month, len(body), MONTHLY_LIMIT)).rowcount
                 if not debited:
-                    next_month = datetime(local.year + (local.month == 12), local.month % 12 + 1,
-                                          1, tzinfo=HONG_KONG)
                     db.execute("UPDATE posts SET available=? WHERE message_id=?",
-                               (next_month.timestamp(), message_id))
+                               (next_month_start(local), message_id))
                     return None
             db.execute("UPDATE posts SET attempt=attempt+1,available=? WHERE message_id=?",
                        (now + LEASE_SECONDS, message_id))
             return Job(message_id, stage, attempt + 1, body)
+
+    def defer_quota(self, job: Job, reason: str, now: float) -> None:
+        retry = (next_month_start(datetime.fromtimestamp(now, HONG_KONG))
+                 if reason == "month_full" else now + 86400)
+        with connect_sqlite(self.path) as db:
+            db.execute("UPDATE posts SET available=?,attempt=0 WHERE message_id=? "
+                       "AND stage='translate' AND attempt=?", (retry, job.message_id, job.attempt))
 
     def advance(self, job: Job, stage: str, body: str = "") -> bool:
         # A late reply from an expired attempt cannot publish or overwrite its successor.
