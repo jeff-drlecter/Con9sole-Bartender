@@ -11,9 +11,10 @@ from core.sqlite_storage import connect_sqlite
 
 
 GTA_CHANNEL_ID = 1460576839385743493
+FC_CHANNEL_ID = 1424226055446593556
 OFFICIAL_UPDATE_CHANNELS = {
     GTA_CHANNEL_ID: "GTA",
-    1424226055446593556: "EA SPORTS FC",
+    FC_CHANNEL_ID: "EA SPORTS FC",
     1424320426095415397: "NBA 2K",
     1426660324827857020: "Delta Force",
     1426669343160406056: "Helldivers 2",
@@ -83,6 +84,17 @@ def translation_input(text: str, channel_id: int = GTA_CHANNEL_ID) -> tuple[str,
         if protected:
             replacements[VEHICLE_MARKER] = "一輛載具"
     return source, replacements
+
+
+def reserve_translation(db, now: float, text: str, channel_id: int) -> bool:
+    """Debit the exact provider input inside the caller's receipt transaction."""
+    month = datetime.fromtimestamp(now, HONG_KONG).strftime("%Y-%m")
+    source, _ = translation_input(text, channel_id)
+    length = len(source)
+    db.execute("INSERT OR IGNORE INTO usage VALUES (?,0)", (month,))
+    return bool(db.execute("UPDATE usage SET characters=characters+? "
+                           "WHERE month=? AND characters+?<=?",
+                           (length, month, length, MONTHLY_LIMIT)).rowcount)
 
 
 def next_month_start(local: datetime) -> float:
@@ -156,19 +168,11 @@ class TranslationQueue:
             if row is None:
                 return None
             message_id, stage, attempt, body, channel_id = row
-            if stage == "translate":
+            if stage == "translate" and not reserve_translation(db, now, body, channel_id):
                 local = datetime.fromtimestamp(now, HONG_KONG)
-                month = local.strftime("%Y-%m")
-                db.execute("INSERT OR IGNORE INTO usage VALUES (?,0)", (month,))
-                provider_text, _ = translation_input(body, channel_id)
-                characters = len(provider_text)
-                debited = db.execute("UPDATE usage SET characters=characters+? "
-                                     "WHERE month=? AND characters+?<=?",
-                                     (characters, month, characters, MONTHLY_LIMIT)).rowcount
-                if not debited:
-                    db.execute("UPDATE posts SET available=? WHERE message_id=?",
-                               (next_month_start(local), message_id))
-                    return None
+                db.execute("UPDATE posts SET available=? WHERE message_id=?",
+                           (next_month_start(local), message_id))
+                return None
             db.execute("UPDATE posts SET attempt=attempt+1,available=? WHERE message_id=?",
                        (now + LEASE_SECONDS, message_id))
             return Job(message_id, stage, attempt + 1, body, channel_id)
