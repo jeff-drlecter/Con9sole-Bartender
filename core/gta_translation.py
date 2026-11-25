@@ -1,4 +1,4 @@
-"""Durable queue and character reservations for the single GTA translation pilot."""
+"""Shared delivery receipts and translation quota for official game updates."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +11,17 @@ from core.sqlite_storage import connect_sqlite
 
 
 GTA_CHANNEL_ID = 1460576839385743493
+OFFICIAL_UPDATE_CHANNELS = {
+    GTA_CHANNEL_ID: "GTA",
+    1424226055446593556: "EA SPORTS FC",
+    1424320426095415397: "NBA 2K",
+    1426660324827857020: "Delta Force",
+    1426669343160406056: "Helldivers 2",
+    1426670580714836149: "Monster Hunter",
+    1433362456456990811: "Battlefield 6",
+    1440622034597052526: "Where Winds Meet",
+    1464858693014392924: "Apex Legends",
+}
 MONTHLY_LIMIT = 450_000
 HONG_KONG = ZoneInfo("Asia/Hong_Kong")
 LEASE_SECONDS = 300
@@ -29,6 +40,10 @@ LABEL_METADATA = re.compile(rf"{MENTION}|https?://\S+|(?:[\w-]+\.)+[a-z]{{2,}}\b
 LOCAL_LINK = re.compile(r"<(https?://[^\s<>]+)>", re.I)
 # A music CTA is a single clickable action in the translated post.
 LINK_ACTION = re.compile(r"(?P<listen>\bListen[ \t]+now[ \t]*[:：][ \t]*)?(?P<link><https?://[^\s<>]+>)", re.I)
+GENERIC_VEHICLE = re.compile(
+    r"\ba vehicle(?=\s+and\s+\d+\s+(?:bonus\s+)?(?:prizes?|rewards?)\b)", re.I
+)
+VEHICLE_MARKER = "GTA0V"
 
 
 def _local_token(match: re.Match) -> str:
@@ -49,20 +64,25 @@ def _local_token(match: re.Match) -> str:
     return f"<{url}>{suffix}"
 
 
-def translation_input(text: str) -> tuple[str, dict[str, str]]:
-    """Keep source URLs on the Bot; markers retain their positions during translation."""
+def translation_input(text: str, channel_id: int = GTA_CHANNEL_ID) -> tuple[str, dict[str, str]]:
+    """Build the exact payload for both quota reservation and the provider request."""
     prefix = "GTALINK"
     while prefix.lower() in text.lower():
         prefix += "X"
-    links = {}
+    replacements = {}
 
     def mark(match: re.Match) -> str:
-        marker = f"{prefix}{len(links)}Z"
+        marker = f"{prefix}{len(replacements)}Z"
         link = match["link"]
-        links[marker] = f"[立即收聽]({link})" if match["listen"] else link
+        replacements[marker] = f"[立即收聽]({link})" if match["listen"] else link
         return marker
 
-    return LINK_ACTION.sub(mark, text), links
+    source = LINK_ACTION.sub(mark, text)
+    if channel_id == GTA_CHANNEL_ID and VEHICLE_MARKER.casefold() not in source.casefold():
+        source, protected = GENERIC_VEHICLE.subn(VEHICLE_MARKER, source)
+        if protected:
+            replacements[VEHICLE_MARKER] = "一輛載具"
+    return source, replacements
 
 
 def next_month_start(local: datetime) -> float:
@@ -94,6 +114,7 @@ class Job:
     stage: str
     attempt: int
     text: str
+    channel_id: int
 
 
 class TranslationQueue:
@@ -101,6 +122,7 @@ class TranslationQueue:
         self.path = path
         with connect_sqlite(path) as db:
             db.executescript("""
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS posts (
                     message_id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL UNIQUE,
                     stage TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
@@ -111,11 +133,16 @@ class TranslationQueue:
                     month TEXT PRIMARY KEY, characters INTEGER NOT NULL
                 );
             """)
+            # All receipts predating the channel column came from the GTA pilot.
+            if "channel_id" not in {row[1] for row in db.execute("PRAGMA table_info(posts)")}:
+                db.execute(f"ALTER TABLE posts ADD COLUMN channel_id INTEGER NOT NULL DEFAULT {GTA_CHANNEL_ID}")
 
-    def add(self, message_id: int, source_id: int, body: str) -> None:
+    def add(self, message_id: int, source_id: int, body: str, *, channel_id: int = GTA_CHANNEL_ID) -> None:
+        if channel_id not in OFFICIAL_UPDATE_CHANNELS:
+            raise ValueError("Unknown official update channel")
         with connect_sqlite(self.path) as db:
-            db.execute("INSERT OR IGNORE INTO posts(message_id,source_id,stage,body) "
-                       "VALUES (?,?,'translate',?)", (message_id, source_id, body))
+            db.execute("INSERT OR IGNORE INTO posts(message_id,source_id,stage,body,channel_id) "
+                       "VALUES (?,?,'translate',?,?)", (message_id, source_id, body, channel_id))
 
     def claim(self, now: float) -> Job | None:
         # Single transaction across processes: check the budget and debit BEFORE HTTP.
@@ -123,17 +150,17 @@ class TranslationQueue:
             db.execute("BEGIN IMMEDIATE")
             db.execute("UPDATE posts SET stage='failed',body='' WHERE stage IN ('translate','deliver') "
                        "AND attempt>=? AND available<=?", (MAX_ATTEMPTS, now))
-            row = db.execute("SELECT message_id,stage,attempt,body FROM posts "
+            row = db.execute("SELECT message_id,stage,attempt,body,channel_id FROM posts "
                              "WHERE stage IN ('deliver','translate') AND available<=? "
                              "ORDER BY stage, message_id LIMIT 1", (now,)).fetchone()
             if row is None:
                 return None
-            message_id, stage, attempt, body = row
+            message_id, stage, attempt, body, channel_id = row
             if stage == "translate":
                 local = datetime.fromtimestamp(now, HONG_KONG)
                 month = local.strftime("%Y-%m")
                 db.execute("INSERT OR IGNORE INTO usage VALUES (?,0)", (month,))
-                provider_text, _ = translation_input(body)
+                provider_text, _ = translation_input(body, channel_id)
                 characters = len(provider_text)
                 debited = db.execute("UPDATE usage SET characters=characters+? "
                                      "WHERE month=? AND characters+?<=?",
@@ -144,7 +171,7 @@ class TranslationQueue:
                     return None
             db.execute("UPDATE posts SET attempt=attempt+1,available=? WHERE message_id=?",
                        (now + LEASE_SECONDS, message_id))
-            return Job(message_id, stage, attempt + 1, body)
+            return Job(message_id, stage, attempt + 1, body, channel_id)
 
     def defer_quota(self, job: Job, reason: str, now: float) -> None:
         retry = (next_month_start(datetime.fromtimestamp(now, HONG_KONG))

@@ -14,13 +14,17 @@ import discord
 
 import config
 from cogs import gta_translation as pilot
-from core.gta_translation import GTA_CHANNEL_ID, HONG_KONG, LEASE_SECONDS, MONTHLY_LIMIT, TranslationQueue
+from core.gta_translation import (
+    GTA_CHANNEL_ID, HONG_KONG, LEASE_SECONDS, MONTHLY_LIMIT, OFFICIAL_UPDATE_CHANNELS, TranslationQueue,
+)
 from core.sqlite_storage import connect_sqlite
 
 
 NOW = datetime(2026, 12, 31, 23, 59, 59, tzinfo=HONG_KONG).timestamp()
 TEST_URL = "https://script.google.com/macros/s/test/exec"
 TEST_TOKEN = "a" * 64
+FC_CHANNEL_ID = 1424226055446593556
+NBA_CHANNEL_ID = 1424320426095415397
 
 
 def post(mid=111, origin=88, **changes):
@@ -45,17 +49,52 @@ class QueueTest(unittest.TestCase):
         published = self.store.claim(NOW)
         self.store.start_posting(published)
         self.store.sent(1)
-        self.store.add(2, 11, "🏁a")
-        self.store.add(3, 12, "bc")
+        self.store.add(2, 11, "🏁a", channel_id=FC_CHANNEL_ID)
+        self.store.add(3, 12, "bc", channel_id=NBA_CHANNEL_ID)
         with ThreadPoolExecutor(2) as pool:
             jobs = list(pool.map(lambda _: TranslationQueue(self.path).claim(NOW), range(2)))
         self.assertEqual([j.message_id for j in jobs if j], [2])
         self.assertIsNone(self.store.claim(NOW))
         reopened = TranslationQueue(self.path)
-        self.assertEqual(reopened.claim(NOW + 1).message_id, 3)
+        january = reopened.claim(NOW + 1)
+        self.assertEqual((january.message_id, january.channel_id), (3, NBA_CHANNEL_ID))
         with connect_sqlite(self.path) as db:
             self.assertEqual(dict(db.execute("SELECT * FROM usage")),
                              {"2026-12": MONTHLY_LIMIT, "2027-01": 2})
+
+    def test_upgrade_keeps_gta_receipts_pending_delivery_and_used_quota(self):
+        legacy = self.path.with_name("legacy.db")
+        with connect_sqlite(legacy) as db:
+            db.executescript("""
+                CREATE TABLE posts(message_id INTEGER PRIMARY KEY,source_id INTEGER NOT NULL UNIQUE,
+                    stage TEXT NOT NULL,attempt INTEGER NOT NULL DEFAULT 0,
+                    available REAL NOT NULL DEFAULT 0,body TEXT NOT NULL);
+                CREATE TABLE usage(month TEXT PRIMARY KEY,characters INTEGER NOT NULL);
+                INSERT INTO posts VALUES(1,11,'sent',1,0,''),(2,22,'deliver',0,0,'已翻譯'),
+                    (3,33,'posting',1,0,'待核對');
+                INSERT INTO usage VALUES('2026-12',449999);
+            """)
+        with ThreadPoolExecutor(2) as pool:
+            queue, restarted = list(pool.map(TranslationQueue, (legacy, legacy)))
+        queue.add(41, 11, "replay", channel_id=FC_CHANNEL_ID)
+        queue.add(42, 44, "ab", channel_id=NBA_CHANNEL_ID)
+        delivery = restarted.claim(NOW)
+        self.assertEqual((delivery.message_id, delivery.channel_id, delivery.text), (2, GTA_CHANNEL_ID, "已翻譯"))
+        self.assertIsNone(queue.claim(NOW))
+        with connect_sqlite(legacy) as db:
+            self.assertEqual(db.execute("SELECT message_id,stage,channel_id FROM posts ORDER BY message_id").fetchall(),
+                             [(1, "sent", GTA_CHANNEL_ID), (2, "deliver", GTA_CHANNEL_ID),
+                              (3, "posting", GTA_CHANNEL_ID), (42, "translate", NBA_CHANNEL_ID)])
+            self.assertEqual(db.execute("SELECT characters FROM usage").fetchone(), (449999,))
+
+    def test_quota_counts_exact_provider_text_for_each_game(self):
+        text = "Earn a vehicle and 2 rewards."
+        for message_id, channel_id in enumerate((GTA_CHANNEL_ID, FC_CHANNEL_ID), start=1):
+            self.store.add(message_id, message_id, text, channel_id=channel_id)
+            self.assertEqual(self.store.claim(NOW).channel_id, channel_id)
+        with connect_sqlite(self.path) as db:
+            self.assertEqual(db.execute("SELECT characters FROM usage").fetchone(),
+                             (len("Earn GTA0V and 2 rewards.") + len(text),))
 
     def test_expired_attempt_is_recharged_and_stale_translation_cannot_publish(self):
         self.store.add(1, 9, "test")
@@ -83,12 +122,8 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(tmp.cleanup)
         self.path = Path(tmp.name) / "pilot.db"
         self.store = TranslationQueue(self.path)
-        self.thread = SimpleNamespace(id=111, parent_id=GTA_CHANNEL_ID, send=AsyncMock())
-        self.message = MagicMock(id=111, thread=None)
-        self.message.fetch_thread = AsyncMock(side_effect=discord.NotFound(MagicMock(status=404), "absent"))
-        self.message.create_thread = AsyncMock(return_value=self.thread)
-        self.channel = SimpleNamespace(guild=SimpleNamespace(id=config.GUILD_ID),
-                                       get_partial_message=MagicMock(return_value=self.message))
+        self.channel = SimpleNamespace(id=GTA_CHANNEL_ID, guild=SimpleNamespace(id=config.GUILD_ID),
+                                       send=AsyncMock())
         self.bot = MagicMock()
         self.bot.get_channel.return_value = self.channel
         self.http = MagicMock()
@@ -98,14 +133,13 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.response.json = AsyncMock(return_value={"translation": "新賽道 & 新車"})
         self.cog = pilot.GTATranslation(self.bot, self.store, self.http, TEST_URL, TEST_TOKEN)
 
-    async def test_official_post_to_one_thread_and_one_translation_across_replays(self):
+    async def test_official_post_gets_one_silent_reply_across_replays(self):
         embed = discord.Embed(title="New race", description="Drive [now](https://example.com/gta)")
         embed.add_field(name="Reward", value="2x XP")
         entry = post(content="New race <@&123>", embeds=[embed])
         await asyncio.gather(self.cog.on_message(entry), self.cog.on_message(post(112)))
         # Both messages reference the same original; ordering is unspecified.
         key = self.store.claim(NOW)
-        self.message.id = self.thread.id = key.message_id
         text = key.text
         linked = "New race\n\nDrive now <https://example.com/gta>\n\nReward\n\n2x XP"
         self.assertIn(text, ("New race", linked))
@@ -119,12 +153,15 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         await self.cog.process_job(delivery)
         await self.cog.on_message(entry)
         self.assertIsNone(self.store.claim(NOW + 2 * LEASE_SECONDS))
-        self.message.create_thread.assert_awaited_once()
-        self.thread.send.assert_awaited_once()
-        args, kwargs = self.thread.send.await_args
+        self.channel.send.assert_awaited_once()
+        args, kwargs = self.channel.send.await_args
         self.assertIn("新賽道 & 新車", args[0])
         self.assertEqual(kwargs["allowed_mentions"].to_dict(), {"parse": []})
         self.assertTrue(kwargs["silent"])
+        self.assertFalse(kwargs["mention_author"])
+        self.assertTrue(kwargs["reference"].fail_if_not_exists)
+        self.assertEqual(kwargs["reference"].message_id, key.message_id)
+        self.assertEqual(kwargs["reference"].type, discord.MessageReferenceType.reply)
         with connect_sqlite(self.path) as db:
             self.assertEqual(db.execute("SELECT stage,body FROM posts").fetchall(), [("sent", "")])
 
@@ -143,6 +180,37 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.claim(NOW).message_id, 111)
         self.assertIsNone(self.store.claim(NOW))
 
+    async def test_every_configured_channel_delivers_to_its_own_post_once(self):
+        for i, (channel_id, game) in enumerate(OFFICIAL_UPDATE_CHANNELS.items(), start=1):
+            with self.subTest(game=game):
+                mid = 1000 + i
+                event = post(mid=mid, origin=i, channel=SimpleNamespace(id=channel_id))
+                await self.cog.on_message(event)
+                await self.cog.on_message(event)
+                await self.cog.process_job(self.store.claim(NOW))
+                delivery = TranslationQueue(self.path).claim(NOW)
+                self.assertEqual(delivery.channel_id, channel_id)
+                self.channel.id = channel_id
+                self.channel.send.reset_mock()
+                await self.cog.process_job(delivery)
+                self.bot.get_channel.assert_called_with(channel_id)
+                self.channel.send.assert_awaited_once()
+                reply = self.channel.send.await_args.kwargs["reference"]
+                self.assertEqual((reply.guild_id, reply.channel_id, reply.message_id),
+                                 (config.GUILD_ID, channel_id, mid))
+                await self.cog.on_message(event)
+                self.assertIsNone(self.store.claim(NOW))
+
+    async def test_non_gta_uses_its_own_vocabulary_and_rejects_a_wrong_channel(self):
+        event = post(channel=SimpleNamespace(id=FC_CHANNEL_ID), content="Earn a vehicle and 2 rewards.")
+        await self.cog.on_message(event)
+        await self.cog.process_job(self.store.claim(NOW))
+        self.assertEqual(self.http.post.call_args.kwargs["json"]["text"], event.content)
+        # Simulate an incorrect channel lookup; no send may target another game.
+        with self.assertRaisesRegex(RuntimeError, "official update channel unavailable"):
+            await self.cog.process_job(self.store.claim(NOW))
+        self.channel.send.assert_not_awaited()
+
     async def test_discord_album_link_survives_restart_without_translating_its_url_or_ping(self):
         url = "https://music.example/Deluxe_(Mix)?s=A%2FB&ref=en#Listen"
         entry = post(content="## Album (Deluxe Edition) @Announcements \n23 bonus tracks\n"
@@ -156,8 +224,8 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         with connect_sqlite(self.path) as db:
             self.assertEqual(db.execute("SELECT characters FROM usage").fetchone(), (len(outbound),))
         await self.cog.process_job(TranslationQueue(self.path).claim(NOW))
-        self.assertIn(f"## [立即收聽](<{url}>)", self.thread.send.await_args.args[0])
-        self.assertNotIn("@", self.thread.send.await_args.args[0])
+        self.assertIn(f"## [立即收聽](<{url}>)", self.channel.send.await_args.args[0])
+        self.assertNotIn("@", self.channel.send.await_args.args[0])
 
     async def test_link_mapping_handles_multiple_targets_and_marker_collisions(self):
         source = pilot.source_text(post(content="GTALINK0Z @AnnouncementsHQ @公告 <@&123>\n"
@@ -169,58 +237,66 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
             "<https://b.example/?q=@Announcements> 及 <https://a.example/item_(PS5)>")
         for invalid in (next(iter(links)), "GTALINKX0Z GTALINKX0Z GTALINKX1Z"):
             self.response.json.return_value = {"translation": invalid}
-            with self.assertRaisesRegex(ValueError, "protected GTA link"):
+            with self.assertRaisesRegex(ValueError, "protected translation marker"):
                 await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source)
         self.assertEqual(pilot.source_text(post(content="@Announcements [a.example](<https://a.example/>)")), "")
 
-    async def test_resume_translation_in_existing_thread_with_long_utf16_output(self):
+    async def test_long_translation_replies_to_original_with_one_utf8_attachment(self):
         await self.cog.on_message(post())
         self.store.advance(self.store.claim(NOW), "deliver", "🏁" * 1200)
-        self.message.fetch_thread = AsyncMock(return_value=self.thread)
         async def inspect_upload(content, *, file, **kwargs):
             self.assertEqual(file.fp.read().decode("utf-8"), "🏁" * 1200)
             self.assertEqual(file.filename, "GTA-繁中翻譯.txt")
-        self.thread.send.side_effect = inspect_upload
+            self.assertEqual(kwargs["reference"].message_id, 111)
+            self.assertTrue(kwargs["reference"].fail_if_not_exists)
+            self.assertFalse(kwargs["mention_author"])
+        self.channel.send.side_effect = inspect_upload
         await self.cog.process_job(TranslationQueue(self.path).claim(NOW))
-        self.message.create_thread.assert_not_awaited()
+        self.channel.send.assert_awaited_once()
         self.http.post.assert_not_called()
 
     async def test_ambiguous_send_cannot_be_replayed(self):
         await self.cog.on_message(post())
         self.store.advance(self.store.claim(NOW), "deliver", "測試")
         job = self.store.claim(NOW)
-        self.message.thread = self.thread
-        self.thread.send.side_effect = TimeoutError
+        self.channel.send.side_effect = TimeoutError
         with self.assertRaises(TimeoutError):
             await self.cog.process_job(job)
         await self.cog.process_job(job)
         self.assertIsNone(TranslationQueue(self.path).claim(NOW + 3600))
-        self.thread.send.assert_awaited_once()
+        self.channel.send.assert_awaited_once()
 
-    async def test_recover_thread_creation_race(self):
-        self.message.fetch_thread.side_effect = [discord.NotFound(MagicMock(status=404), "absent"),
-                                                 self.thread]
-        self.message.create_thread.side_effect = discord.HTTPException(MagicMock(status=400),
-                                                          {"code": 160004, "message": "already exists"})
-        self.assertIs(await pilot.thread_for(self.message), self.thread)
+    async def test_deleted_original_never_falls_back_to_an_unreferenced_message(self):
+        await self.cog.on_message(post())
+        self.store.advance(self.store.claim(NOW), "deliver", "譯文")
+        self.channel.send.side_effect = discord.NotFound(MagicMock(status=404), "original missing")
+        for attempt in range(3):
+            with self.assertRaises(discord.NotFound):
+                await self.cog.process_job(self.store.claim(NOW + LEASE_SECONDS * attempt))
+        self.assertIsNone(self.store.claim(NOW + 3 * LEASE_SECONDS))
+        for sent in self.channel.send.await_args_list:
+            self.assertEqual(sent.kwargs["reference"].message_id, 111)
+            self.assertTrue(sent.kwargs["reference"].fail_if_not_exists)
+        with connect_sqlite(self.path) as db:
+            self.assertEqual(db.execute("SELECT stage FROM posts").fetchone(), ("failed",))
 
-    async def test_definite_send_rejection_reuses_translation_and_thread(self):
+    async def test_definite_send_rejection_reuses_translation_and_reply_target(self):
         await self.cog.on_message(post())
         self.store.advance(self.store.claim(NOW), "deliver", "測試")
-        self.message.thread = self.thread
-        self.thread.send.side_effect = [discord.Forbidden(MagicMock(status=403), "permission"), None]
+        self.channel.send.side_effect = [discord.Forbidden(MagicMock(status=403), "permission"), None]
         with self.assertRaises(discord.Forbidden):
             await self.cog.process_job(self.store.claim(NOW))
         await self.cog.process_job(self.store.claim(NOW + LEASE_SECONDS))
         self.assertIsNone(self.store.claim(NOW + 3600))
-        self.message.create_thread.assert_not_awaited()
+        self.assertEqual([call.kwargs["reference"].message_id for call in self.channel.send.await_args_list],
+                         [111, 111])
         self.http.post.assert_not_called()
 
-    async def test_provider_failure_creates_no_thread_and_budget_is_kept(self):
+    async def test_provider_failure_sends_no_reply_and_budget_is_kept(self):
         self.response.status = 503
         await self.cog.on_message(post())
         await self.cog.process.coro(self.cog)
-        self.message.create_thread.assert_not_awaited()
+        self.channel.send.assert_not_awaited()
         with connect_sqlite(self.path) as db:
             self.assertEqual(db.execute("SELECT characters FROM usage").fetchone(), (len("New race"),))
         self.assertIsNone(self.store.claim(0))
@@ -255,7 +331,7 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
                 resumed = self.store.claim(NOW + delay)
                 self.assertEqual(resumed.text, "race")
                 self.store.advance(resumed, "failed")
-                self.message.create_thread.assert_not_awaited()
+                self.channel.send.assert_not_awaited()
 
     async def test_generic_vehicle_reward_does_not_acquire_a_racing_class(self):
         source = "Win a vehicle and 2 prizes. Visit a vehicle warehouse or buy a race car."
@@ -265,7 +341,7 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.http.post.call_args.kwargs["json"]["text"],
                          "Win GTA0V and 2 prizes. Visit a vehicle warehouse or buy a race car.")
         self.response.json.return_value = {"translation": "贏得2份獎品。"}
-        with self.assertRaisesRegex(ValueError, "protected GTA term"):
+        with self.assertRaisesRegex(ValueError, "protected translation marker"):
             await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source)
 
     async def test_vehicle_modifiers_do_not_turn_into_vehicle_rewards(self):
