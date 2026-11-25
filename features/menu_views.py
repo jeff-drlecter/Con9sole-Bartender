@@ -27,24 +27,6 @@ PUBLIC_DISCUSSION_ROLE_NAMES = {
     for name in (getattr(config, "PUBLIC_DISCUSSION_ROLE_NAMES", ["off-topic"]) or [])
     if str(name).strip()
 }
-PUBLIC_DISCUSSION_FORUM_IDS = set(getattr(config, "PUBLIC_DISCUSSION_FORUM_IDS", []) or [])
-PUBLIC_DISCUSSION_FORUM_NAMES = {
-    str(name).strip().casefold()
-    for name in (
-        getattr(
-            config,
-            "PUBLIC_DISCUSSION_FORUM_NAMES",
-            [
-                "（其他）集中討論區",
-                "(其他) 集中討論區",
-                "其他集中討論區",
-                "公海集中討論區",
-            ],
-        )
-        or []
-    )
-    if str(name).strip()
-}
 
 STYLE_MAP: dict[str, discord.ButtonStyle] = {
     "primary": discord.ButtonStyle.primary,
@@ -137,43 +119,15 @@ def _has_public_discussion_role(member: discord.Member) -> bool:
     return False
 
 
-def _find_public_discussion_forum(
-    guild: discord.Guild,
-    member: discord.Member,
-) -> discord.ForumChannel | None:
-    visible_forums = [forum for forum in guild.forums if forum.permissions_for(member).view_channel]
-
-    for forum in visible_forums:
-        if forum.id in PUBLIC_DISCUSSION_FORUM_IDS:
-            return forum
-
-    for forum in visible_forums:
-        if forum.name.strip().casefold() in PUBLIC_DISCUSSION_FORUM_NAMES:
-            return forum
-
-    for forum in visible_forums:
-        forum_name = forum.name.casefold()
-        category_name = forum.category.name.casefold() if forum.category else ""
-        if "集中討論區" in forum_name and (
-            "其他" in forum_name
-            or "公海" in forum_name
-            or "其他" in category_name
-            or "公海" in category_name
-        ):
-            return forum
-
-    return None
-
-
 class PublicDiscussionView(discord.ui.View):
-    def __init__(self, forum: discord.ForumChannel) -> None:
+    def __init__(self, channel: discord.TextChannel) -> None:
         super().__init__(timeout=180)
         self.add_item(
             discord.ui.Button(
-                label="前往公海集中討論區",
+                label="前往公海吹水",
                 emoji="🌊",
                 style=discord.ButtonStyle.link,
-                url=forum.jump_url,
+                url=channel.jump_url,
             )
         )
 
@@ -191,7 +145,8 @@ class PublicExploreButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction) -> None:
         from features.language_preferences import language
         hk = language(interaction.user) == "hk"
-        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+        if (interaction.guild is None or interaction.guild.id != config.GUILD_ID
+                or not isinstance(interaction.user, discord.Member)):
             await send_or_followup(
                 interaction,
                 content="❌ 此功能只可在伺服器內使用。",
@@ -202,19 +157,20 @@ class PublicExploreButton(discord.ui.Button):
         if not _has_public_discussion_role(interaction.user):
             await send_or_followup(
                 interaction,
-                content=("🌊 **公海討論區**\n\n"
+                content=("🌊 **公海吹水**\n\n"
                     + ("請到 <id:customize> 揀選綜合閒聊區，再返回呢個入口。"
                        if hk else "請到 <id:customize> 選擇綜合閒聊區，再返回這個入口。")),
                 ephemeral=True,
             )
             return
 
-        forum = _find_public_discussion_forum(interaction.guild, interaction.user)
-        if forum is None:
+        channel = interaction.guild.get_channel(config.PUBLIC_CHAT_CHANNEL_ID)
+        if (not isinstance(channel, discord.TextChannel)
+                or not channel.permissions_for(interaction.user).view_channel):
             await send_or_followup(
                 interaction,
-                content=("🌊 暫時搵唔到你可以睇嘅公海討論區，請向 Helper 查詢。" if hk
-                    else "🌊 暫時找不到你可查看的公海討論區，請向 Helper 查詢。"),
+                content=("🌊 暫時搵唔到你可以睇嘅公海吹水，請向 Helper 查詢。" if hk
+                    else "🌊 暫時找不到你可查看的公海吹水，請向 Helper 查詢。"),
                 ephemeral=True,
             )
             return
@@ -222,12 +178,12 @@ class PublicExploreButton(discord.ui.Button):
         await send_or_followup(
             interaction,
             content=(
-                "🌊 **公海討論區**\n\n"
+                "🌊 **公海吹水**\n\n"
                 + ("除咗遊戲，亦可以傾寵物、飲食、音樂同電影。\n\n" if hk
                    else "除了遊戲，也可以聊寵物、飲食、音樂與電影。\n\n")
-                + f"前往 {forum.mention}。"
+                + f"前往 {channel.mention}。"
             ),
-            view=wording_view(interaction.user, PublicDiscussionView(forum)),
+            view=wording_view(interaction.user, PublicDiscussionView(channel)),
             ephemeral=True,
         )
 
