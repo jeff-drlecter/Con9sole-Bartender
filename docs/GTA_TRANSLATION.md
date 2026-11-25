@@ -4,7 +4,7 @@
 
 ## 啟用範圍
 
-- 只接收本伺服器 `#官方更新-gta📢`（`1460576839385743493`）透過 Discord「追蹤公告頻道」收到的新轉發。翻譯帖內文字及預覽的標題、描述、欄位；純連結及純媒體會略過。網址、附件及會員留言不會送往翻譯服務。
+- 只接收本伺服器 `#官方更新-gta📢`（`1460576839385743493`）透過 Discord「追蹤公告頻道」收到的新轉發。翻譯帖內文字及預覽的標題、描述、欄位；純連結及純媒體會略過。Bot 會先移除公告標記，將原帖連結換成代號才送出翻譯，再將原網址放回相應位置。「立即收聽」可直接點擊。網址、附件及會員留言不會送往翻譯服務。
 - 在獨立 Apps Script 專案部署 [Code.gs](../apps-script/gta-translation/Code.gs) 為 web app，以擁有者執行，允許任何人連線。用密碼學隨機數產生 32 bytes 的小寫 hex token；將其 64 字元 ASCII 字串的 SHA-256 hex 存入 Script Property `GTA_TOKEN_SHA256`。只有通過驗證的請求會使用翻譯配額。
 - 將版本化部署的 `https://script.google.com/macros/s/…/exec` 及原 token 分別存入 Fly secrets `GTA_TRANSLATION_SCRIPT_URL`、`GTA_TRANSLATION_TOKEN`。兩項均未配置時模組停用。只向原端點 POST，Google 結果轉址只以無憑證 GET 讀取。Discord Bot 需要檢視頻道、讀歷史、開公開討論串、串內發文及附件權限。
 - 只處理啟用後 Bot 實際收到的 Discord 新帖事件。已入列的工作在重啟後繼續；離線期間完全收不到的訊息及既有歷史不會掃描。

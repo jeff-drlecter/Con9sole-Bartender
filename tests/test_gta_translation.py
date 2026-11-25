@@ -107,10 +107,13 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         key = self.store.claim(NOW)
         self.message.id = self.thread.id = key.message_id
         text = key.text
-        self.assertIn(text, ("New race", "New race\n\nDrive now\n\nReward\n\n2x XP"))
-        self.assertEqual(pilot.source_text(entry), "New race\n\nDrive now\n\nReward\n\n2x XP")
+        linked = "New race\n\nDrive now <https://example.com/gta>\n\nReward\n\n2x XP"
+        self.assertIn(text, ("New race", linked))
+        self.assertEqual(pilot.source_text(entry), linked)
+        outbound, links = pilot.translation_input(text)
+        self.response.json.return_value = {"translation": "新賽道 & 新車 " + " ".join(links)}
         await self.cog.process_job(key)
-        self.http.post.assert_called_once_with(TEST_URL, json={"text": text, "token": TEST_TOKEN},
+        self.http.post.assert_called_once_with(TEST_URL, json={"text": outbound, "token": TEST_TOKEN},
                                                allow_redirects=False)
         delivery = TranslationQueue(self.path).claim(NOW)
         await self.cog.process_job(delivery)
@@ -134,11 +137,41 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
             await self.cog.on_message(msg)
         self.assertIsNone(self.store.claim(NOW))
         self.assertEqual(pilot.source_text(post(content="[Newswire](hTtPs://example.com/post)")),
-                         "Newswire")
+                         "Newswire <hTtPs://example.com/post>")
         await self.cog.on_message(post(reference=None))
         await self.cog.on_message(post(reference=None))
         self.assertEqual(self.store.claim(NOW).message_id, 111)
         self.assertIsNone(self.store.claim(NOW))
+
+    async def test_discord_album_link_survives_restart_without_translating_its_url_or_ping(self):
+        url = "https://music.example/Deluxe_(Mix)?s=A%2FB&ref=en#Listen"
+        entry = post(content="## Album (Deluxe Edition) @Announcements \n23 bonus tracks\n"
+                     f"## Listen now: [music.example/Deluxe](<{url}>)")
+        await self.cog.on_message(entry)
+        job = TranslationQueue(self.path).claim(NOW)
+        outbound = "## Album (Deluxe Edition)\n23 bonus tracks\n## GTALINK0Z"
+        self.response.json.return_value = {"translation": "豪華版，23 首額外曲目\n## GTALINK0Z"}
+        await self.cog.process_job(job)
+        self.assertEqual(self.http.post.call_args.kwargs["json"]["text"], outbound)
+        with connect_sqlite(self.path) as db:
+            self.assertEqual(db.execute("SELECT characters FROM usage").fetchone(), (len(outbound),))
+        await self.cog.process_job(TranslationQueue(self.path).claim(NOW))
+        self.assertIn(f"## [立即收聽](<{url}>)", self.thread.send.await_args.args[0])
+        self.assertNotIn("@", self.thread.send.await_args.args[0])
+
+    async def test_link_mapping_handles_multiple_targets_and_marker_collisions(self):
+        source = pilot.source_text(post(content="GTALINK0Z @AnnouncementsHQ @公告 <@&123>\n"
+            "[Get it](https://a.example/item_(PS5)) and (https://b.example/?q=@Announcements)."))
+        outbound, links = pilot.translation_input(source)
+        self.assertEqual(outbound, "GTALINK0Z @AnnouncementsHQ\nGet it GTALINKX0Z and (GTALINKX1Z).")
+        self.response.json.return_value = {"translation": "GTALINKX1Z 及 GTALINKX0Z"}
+        self.assertEqual(await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source),
+            "<https://b.example/?q=@Announcements> 及 <https://a.example/item_(PS5)>")
+        for invalid in (next(iter(links)), "GTALINKX0Z GTALINKX0Z GTALINKX1Z"):
+            self.response.json.return_value = {"translation": invalid}
+            with self.assertRaisesRegex(ValueError, "protected GTA link"):
+                await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source)
+        self.assertEqual(pilot.source_text(post(content="@Announcements [a.example](<https://a.example/>)")), "")
 
     async def test_resume_translation_in_existing_thread_with_long_utf16_output(self):
         await self.cog.on_message(post())
