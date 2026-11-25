@@ -30,6 +30,7 @@ async def run():
         bot.http.bulk_upsert_global_commands = AsyncMock(return_value=[])
         bot.http.bulk_upsert_guild_commands = AsyncMock(return_value=[])
         await bot.setup_hook()
+        assert "cogs.gta_translation" in bot.extensions and bot.get_cog("GTATranslation") is None
         bot.http.bulk_upsert_global_commands.assert_awaited_once_with(101, payload=[])
         bot.http.bulk_upsert_guild_commands.assert_awaited_once()
         guild = discord.Object(config.GUILD_ID)
@@ -96,6 +97,8 @@ asyncio.run(run())
                 "DISCORD_BOT_TOKEN",
                 "TWITCH_BOT_OAUTH",
                 "TWITCH_BOT_USERNAME",
+                "GTA_TRANSLATION_SCRIPT_URL",
+                "GTA_TRANSLATION_TOKEN",
             ):
                 env.pop(name, None)
             env.update(
@@ -124,7 +127,7 @@ asyncio.run(run())
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(report["extensions"], 37, result.stderr)
+        self.assertEqual(report["extensions"], 38, result.stderr)
         self.assertEqual(report["missing"], [])
         self.assertTrue(report["plans_loaded"])
         self.assertTrue(report["sweeper_restarted"])
