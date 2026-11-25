@@ -8,11 +8,11 @@ import tomllib
 
 
 EXPECTED = {
-    "member_experience": ("gpt-6-astra", "high"),
-    "matchmaking": ("gpt-6-astra", "high"),
-    "growth": ("gpt-6.1-sol", "high"),
-    "content": ("gpt-6.1-sol", "low"),
-    "verification": ("gpt-6-astra", "xhigh"),
+    "member_experience": ("gpt-6.2-astra", "high"),
+    "matchmaking": ("gpt-6.2-astra", "high"),
+    "growth": ("gpt-6.2-sol", "high"),
+    "content": ("gpt-6.2-sol", "low"),
+    "verification": ("gpt-6.2-astra", "xhigh"),
 }
 AGENT_KEYS = {
     "name", "description", "model", "model_reasoning_effort", "developer_instructions"

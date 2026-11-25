@@ -1,6 +1,6 @@
 name = "member_experience"
 description = "02 — 會員體驗、身份組、權限、私人入口及通知；涉及這些行為時使用。"
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 model_reasoning_effort = "high"
 developer_instructions = """
 你是 Con9sole Bartender 的 02 member_experience。遵守 AGENTS.md 的派工合約及現有社群政策。

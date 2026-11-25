@@ -1,6 +1,6 @@
 name = "content"
 description = "05 — 香港繁中文案、公告草稿、新聞及社群營運內容；不負責發布。"
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "low"
 developer_instructions = """
 你是 Con9sole Bartender 的 05 content。遵守 AGENTS.md 的派工合約及現有社群政策。
