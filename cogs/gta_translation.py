@@ -15,7 +15,7 @@ from discord.ext import commands, tasks
 
 import config
 from core.gta_translation import (
-    GTA_CHANNEL_ID, HONG_KONG, OFFICIAL_UPDATE_CHANNELS, Job, TranslationQueue, source_text, translation_input,
+    GTA_CHANNEL_ID, OFFICIAL_UPDATE_CHANNELS, Job, TranslationQueue, source_text, translation_input,
 )
 from core.storage_paths import DATA_DIR
 
@@ -62,33 +62,19 @@ async def translate(session: aiohttp.ClientSession, url: str, token: str, text: 
     return translated
 
 
-async def thread_for(message, game: str):
-    if message.thread is not None:
-        return message.thread
-    try:
-        return await message.fetch_thread()
-    except discord.NotFound:
-        pass
-    date = discord.utils.snowflake_time(message.id).astimezone(HONG_KONG).strftime("%d/%m")
-    try:
-        return await message.create_thread(name=f"{game} 官方更新｜{date} 繁中翻譯")
-    except discord.HTTPException as exc:
-        if exc.code != 160004:  # A member or an overlapping worker created the thread first.
-            raise
-        return await message.fetch_thread()
-
-
-async def send_translation(thread, job: Job) -> None:
+async def reply_with_translation(channel, job: Job) -> None:
     heading = "**繁體中文｜自動翻譯** · [Google Translate](https://translate.google.com/)"
     content = f"{heading}\n{job.text}"
-    options = dict(allowed_mentions=discord.AllowedMentions.none(), silent=True,
+    reference = discord.MessageReference(message_id=job.message_id, channel_id=job.channel_id,
+                                         guild_id=channel.guild.id, fail_if_not_exists=True)
+    options = dict(reference=reference, mention_author=False, allowed_mentions=discord.AllowedMentions.none(), silent=True,
                    suppress_embeds=True, nonce=job.message_id)
     if len(content.encode("utf-16-le")) <= 4000:
-        await thread.send(content, **options)
+        await channel.send(content, **options)
     else:
         with io.BytesIO(job.text.encode("utf-8")) as data:
             game = OFFICIAL_UPDATE_CHANNELS[job.channel_id]
-            await thread.send(heading, file=discord.File(data, filename=f"{game}-繁中翻譯.txt"), **options)
+            await channel.send(heading, file=discord.File(data, filename=f"{game}-繁中翻譯.txt"), **options)
 
 
 class GTATranslation(commands.Cog):
@@ -119,8 +105,7 @@ class GTATranslation(commands.Cog):
                                     channel_id=message.channel.id)
 
     async def process_job(self, job):
-        game = OFFICIAL_UPDATE_CHANNELS.get(job.channel_id)
-        if game is None:
+        if job.channel_id not in OFFICIAL_UPDATE_CHANNELS:
             raise ValueError("Unknown official update channel")
         if job.stage == "translate":
             try:
@@ -133,15 +118,12 @@ class GTATranslation(commands.Cog):
         channel = self.bot.get_channel(job.channel_id)
         if channel is None or channel.id != job.channel_id or channel.guild.id != config.GUILD_ID:
             raise RuntimeError("Configured official update channel unavailable")
-        thread = await thread_for(channel.get_partial_message(job.message_id), game)
-        if thread.id != job.message_id or thread.parent_id != job.channel_id:
-            raise RuntimeError("Unexpected official update thread")
         # Discord may have accepted a timed-out send. Claim it durably before posting;
         # do not auto-send an ambiguous result, even after a restart.
         if not await asyncio.to_thread(self.store.start_posting, job):
             return
         try:
-            await send_translation(thread, job)
+            await reply_with_translation(channel, job)
         except discord.HTTPException as exc:
             if 400 <= exc.status < 500:
                 await asyncio.to_thread(self.store.rejected, job)
