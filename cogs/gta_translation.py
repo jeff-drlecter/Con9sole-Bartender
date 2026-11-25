@@ -20,9 +20,11 @@ from core.storage_paths import DATA_DIR
 log = logging.getLogger(__name__)
 SCRIPT_URL = re.compile(r"https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec")
 RESULT_URL = re.compile(r"https://script\.googleusercontent\.com/macros/echo\?[^#\s]+")
-# A complete, generic noun phrase. Leave named models and compounds such as
-# "a vehicle warehouse" to the translator.
-GENERIC_VEHICLE = re.compile(r"\ba vehicle\b(?=\s*(?:$|[,.!?:;)]|\b(?:and|or)\b))", re.I)
+# Protect the generic vehicle in a quantified reward list. In other contexts
+# "vehicle" can modify a following noun, including across commas or "and".
+GENERIC_VEHICLE = re.compile(
+    r"\ba vehicle(?=\s+and\s+\d+\s+(?:bonus\s+)?(?:prizes?|rewards?)\b)", re.I
+)
 VEHICLE_MARKER = "GTA0V"
 
 

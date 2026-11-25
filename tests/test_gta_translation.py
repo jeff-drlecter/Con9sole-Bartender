@@ -235,6 +235,14 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "protected GTA term"):
             await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source)
 
+    async def test_vehicle_modifiers_do_not_turn_into_vehicle_rewards(self):
+        for source in ("Install a vehicle and weapon workshop.",
+                       "Get a vehicle, weapon, or property discount."):
+            with self.subTest(source=source):
+                self.response.json.return_value = {"translation": "譯文"}
+                self.assertEqual(await pilot.translate(self.http, TEST_URL, TEST_TOKEN, source), "譯文")
+                self.assertEqual(self.http.post.call_args.kwargs["json"]["text"], source)
+
 
 class AppsScriptTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js required for the Apps Script service fixture")
