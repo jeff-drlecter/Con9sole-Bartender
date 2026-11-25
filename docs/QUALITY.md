@@ -12,6 +12,7 @@
 | 日誌私隱、備份、部署前檢查 | `core/audit_privacy.py`、`core/storage_paths.py`、`scripts/backup_runtime.py`、`scripts/inspect_round_readiness.py` | `runtime` |
 | 背景工作、外部 API 及啟動 | `bot.py` 建立 Bot 時傳入已設定嘅 intents，`setup_hook` 載入 cogs 及同步指令。RSS 的 429／退避分別見 `cogs/rss_delivery.py` 及 `core/rss_delivery.py`，直播通知另見 `cogs/stream_alerts.py` | `all`，可先搜尋對應 `tests/test_rss*` 或 `tests/test_stream*` |
 | 遊戲官方更新繁中回覆 | `cogs/gta_translation.py` 以原生回覆將公告譯文連回原帖。允許的頻道 ID、共用收據及每月額度見 `core/gta_translation.py`。[操作說明](GTA_TRANSLATION.md) | `python -m unittest discover -s tests -p test_gta_translation.py` |
+| FC27 官方直收私人預覽 | [來源限制及驗證](FC27_UPDATES.md)。以 fixture 核對基線、跨站收據、額度及降級 | `python scripts/preview_fc27_updates.py --metrics` |
 
 ## 本機與 CI
 
