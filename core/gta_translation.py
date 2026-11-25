@@ -27,8 +27,8 @@ def source_text(message) -> str:
     distinct = {}
     for part in parts:
         if part:
-            plain = re.sub(r"\[([^\]\n]+)\]\(https?://[^)\s]+\)", r"\1", part)
-            plain = re.sub(r"<?https?://[^\s<>]+>?|<[@#][!&]?\d+>", "", plain).strip()
+            plain = re.sub(r"\[([^\]\n]+)\]\(https?://[^)\s]+\)", r"\1", part, flags=re.I)
+            plain = re.sub(r"<?https?://[^\s<>]+>?|<[@#][!&]?\d+>", "", plain, flags=re.I).strip()
             if any(ch.isalpha() or ch.isdigit() for ch in plain):
                 distinct[plain] = None
     return "\n\n".join(distinct)

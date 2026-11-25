@@ -126,9 +126,12 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         for msg in (post(guild=None), post(guild=SimpleNamespace(id=1)),
                     post(channel=SimpleNamespace(id=2)), post(webhook_id=None),
                     post(flags=discord.MessageFlags()), post(type=discord.MessageType.reply),
-                    post(content="<@&123> https://example.com/post")):
+                    post(content="<@&123> https://example.com/post"),
+                    post(content="<HTTPS://example.com/post>")):
             await self.cog.on_message(msg)
         self.assertIsNone(self.store.claim(NOW))
+        self.assertEqual(pilot.source_text(post(content="[Newswire](hTtPs://example.com/post)")),
+                         "Newswire")
         await self.cog.on_message(post(reference=None))
         await self.cog.on_message(post(reference=None))
         self.assertEqual(self.store.claim(NOW).message_id, 111)
