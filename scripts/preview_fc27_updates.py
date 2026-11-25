@@ -1,4 +1,4 @@
-"""Replay reviewed public FC 27 examples offline. No credentials, URLs fetched or messages sent."""
+"""Preview a full bilingual FC27 post offline, or replay historical receipt fixtures."""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.fc27_layout import full_layout, units
+from scripts.fc27_layout_fixture import PITCH, illustrated_table_fixture, pitch_notes_fixture
 from core.fc27_updates import Article, HUB, NEWS, PreviewLedger, poll_indexes
 from core.sqlite_storage import connect_sqlite
 
@@ -72,22 +74,57 @@ def preview(path, *, source_only=False):
     return ledger.cards(), calls, reserved
 
 
+def markdown_preview(plan):
+    lines = ["# FC27 私人排版預覽", "正文為自撰雙語示例，只對照原文章節及篇幅。"]
+
+    def append_message(label, payload):
+        lines.append("## " + label)
+        for embed in payload["embeds"]:
+            lines.append(embed["description"])
+        if "text_attachment" in payload:
+            file = payload["text_attachment"]
+            lines.extend([payload["content"], f"### 附件 {file['filename']}", file["text"]])
+
+    append_message("🟦 主帖 · 繁體中文全文", plan["parent"])
+    for index, payload in enumerate(plan["thread"]["messages"], 1):
+        append_message(f"🟪 主帖的討論串 · English Original · {index}", payload)
+    return "\n\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-only", action="store_true", help="simulate translation provider unavailable")
-    parser.add_argument("--metrics", action="store_true", help="also print local measurements")
+    parser.add_argument("--case", choices=("pitch-notes", "illustrated-table"), default="pitch-notes")
+    parser.add_argument("--receipt-demo", action="store_true", help="run the older short-text receipt/cost diagnostic")
+    parser.add_argument("--source-only", action="store_true", help="simulate unavailable translation")
+    parser.add_argument("--json", action="store_true", help="inspect parent and thread embed payloads")
+    parser.add_argument("--metrics", action="store_true", help="print local measurements to stderr")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="fc27-preview-") as tmp:
-        tracemalloc.start()
-        started = time.perf_counter()
-        cards, calls, reserved = preview(Path(tmp) / "translation.sqlite3", source_only=args.source_only)
+    if args.source_only and not args.receipt_demo:
+        source = f" 英文來源：{PITCH}" if args.case == "pitch-notes" else ""
+        parser.exit(2, f"繁中全文未備妥，已暫停主帖及討論串預覽。{source}\n")
+    tracemalloc.start()
+    started = time.perf_counter()
+    if args.receipt_demo:
+        if args.json or args.case != "pitch-notes":
+            parser.error("--json and --case are for the full-text layout")
+        with tempfile.TemporaryDirectory(prefix="fc27-preview-") as tmp:
+            cards, calls, reserved = preview(Path(tmp) / "translation.sqlite3", source_only=args.source_only)
+        print("收據測試專用 · 短摘要樣本\n")
+        print("\n\n".join(cards))
+        counts = f"{len(cards)} receipt cards, {calls} stand-in calls, {reserved} reserved characters"
+    else:
+        blocks = pitch_notes_fixture() if args.case == "pitch-notes" else illustrated_table_fixture()
+        plan = full_layout(blocks)
+        print(json.dumps(plan, ensure_ascii=False, indent=2) if args.json else markdown_preview(plan))
+        en_units = units("\n\n".join(b.render("en") for b in blocks))
+        zh_units = units("\n\n".join(b.render("zh") for b in blocks))
+        counts = (f"{len(blocks)} blocks, {zh_units} zh / {en_units} en UTF-16 units, "
+                  f"{len(plan['parent']['embeds'])} parent embeds, {len(plan['thread']['messages'])} thread messages")
+    if args.metrics:
         elapsed = time.perf_counter() - started
         _, peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-    print("\n\n".join(cards))
-    if args.metrics:
-        print(f"\nOffline: {len(cards)} cards, {calls} translator stand-in calls, {reserved} reserved characters, "
-              f"0 HTTP bytes, {elapsed * 1000:.1f} ms, {peak:,} peak traced Python bytes.")
+        print(f"Offline: {counts}, 0 HTTP bytes, {elapsed * 1000:.1f} ms, {peak:,} peak traced bytes.", file=sys.stderr)
+    tracemalloc.stop()
 
 
 if __name__ == "__main__":

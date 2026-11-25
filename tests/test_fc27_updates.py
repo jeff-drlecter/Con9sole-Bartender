@@ -166,3 +166,125 @@ class FC27PollingTest(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(db.execute("SELECT 1 FROM fc27_preview").fetchall())
             mode = "ok"
             self.assertEqual(await poll_indexes(ledger, NOW + 7200, open_stream, parse), 0)
+
+
+class FullLayoutTest(unittest.TestCase):
+    @staticmethod
+    def cli(*args):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parents[1] / "scripts" / "preview_fc27_updates.py"
+        return subprocess.run([sys.executable, str(script), *args], capture_output=True, text=True, timeout=10)
+
+    def assert_full_output(self, plan, blocks):
+        import discord
+        from core.fc27_layout import BLUE, PURPLE, units
+        self.assertEqual(plan["thread"]["parent"], "parent")
+        self.assertIn("English Original", plan["thread"]["name"])
+        for lang, color, messages in (("chinese", BLUE, [plan["parent"]]),
+                                      ("english", PURPLE, plan["thread"]["messages"])):
+            recovered = []
+            for msg in messages:
+                embeds = [discord.Embed.from_dict(payload) for payload in msg["embeds"]]
+                self.assertLessEqual(len(embeds), 10)
+                self.assertLessEqual(sum(units(e.title) + units(e.description) for e in embeds), 6000)
+                self.assertEqual(msg["allowed_mentions"]["parse"], [])
+                for e in embeds:
+                    self.assertEqual(e.colour.value, color)
+                    self.assertLessEqual(units(e.description), 4096)
+                    self.assertEqual(e.title, "繁體中文｜全文" if lang == "chinese" else "English Original")
+                    self.assertFalse(e.to_dict().get("image") or e.to_dict().get("video"))
+                if "text_attachment" in msg:
+                    recovered.append(msg["text_attachment"]["text"])
+                else:
+                    recovered.extend(e.description for e in embeds)
+            # Independent reconstruction from fixture input. Check every character
+            # and link, not just heading counts, a prefix, or one end marker.
+            expected = []
+            for block in blocks:
+                text = getattr(block, lang)
+                for pos, url in enumerate(block.links):
+                    text = text.replace("{ref" + str(pos) + "}", f"<{url}>")
+                expected.append(text)
+            self.assertEqual("".join(recovered), "\n\n".join(expected))
+
+    def test_latest_pitch_notes_topology_media_and_full_cli_output(self):
+        import json
+        from scripts.fc27_layout_fixture import pitch_notes_fixture
+        result = self.cli("--json", "--metrics")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        blocks = pitch_notes_fixture()
+        self.assert_full_output(plan, blocks)
+        self.assertNotIn("text_attachment", plan["parent"])
+        self.assertGreater(len(plan["parent"]["embeds"]), 1)
+        self.assertGreater(len(plan["thread"]["messages"]), 1)
+        headings = [b.key for b in blocks if b.key.endswith(".heading")]
+        self.assertEqual([b.section for b in blocks if b.english.startswith("# ") and b.key != "title"],
+                         ["gameplay", "grounds", "career", "tribute", "feedback"])
+        self.assertEqual(len(headings), 5 + 19)
+        toc = next(b for b in blocks if b.key == "contents")
+        self.assertEqual([len(line) - len(line.lstrip()) for line in toc.english.splitlines()[1:]],
+                         [0] + [2] * 13 + [0] + [2] * 3 + [0] + [2] * 3 + [0, 0])
+        keys = [b.key for b in blocks]
+        self.assertEqual(keys[:7], ["title", "cover", "opening.p1", "opening.p2", "opening.p3", "opening.p4", "contents"])
+        expected_counts = {
+            "opening": 4, "gameplay": 1, "dribbling": 2, "near-post": 2, "physicality": 1, "shoulder": 1,
+            "flick": 1, "fouls": 2, "tackling": 1, "loose-ball": 1, "reach": 1, "recovery": 1, "midfield": 1,
+            "clipping": 1, "fullbacks": 1, "grounds": 1, "matchmaking": 1, "amps": 1, "facilities": 1,
+            "career": 1, "general": 3, "transfers": 5, "management": 1, "tribute": 3, "feedback": 2,
+        }
+        self.assertEqual([k for k in keys if ".p" in k],
+                         [f"{topic}.p{i}" for topic, count in expected_counts.items() for i in range(1, count + 1)])
+        self.assertEqual([b.section for b in blocks if b.key.endswith(".figure")],
+                         ["dribbling", "near-post", "physicality", "reach"])
+        self.assertEqual([b.section for b in blocks if b.key.endswith(".caption")], ["dribbling", "reach"])
+        self.assertEqual(keys[-1], "signature")
+        self.assertNotIn("13897645", result.stdout)
+        for msg_lang, embeds in (("zh", plan["parent"]["embeds"]),
+                                 ("en", [e for m in plan["thread"]["messages"] for e in m["embeds"]])):
+            for key in ("dribbling", "near-post", "physicality", "reach"):
+                group = [b for b in blocks if b.section == key]
+                self.assertTrue(any(all(b.render(msg_lang) in e["description"] for b in group) for e in embeds))
+
+    def test_large_table_long_paragraph_overflow_and_media_links(self):
+        import json
+        from scripts.fc27_layout_fixture import illustrated_table_fixture
+        result = self.cli("--case", "illustrated-table", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertIn("完整", plan["parent"]["content"])
+        self.assertTrue(plan["parent"]["text_attachment"]["filename"].endswith(".md"))
+        self.assert_full_output(plan, illustrated_table_fixture())
+        pages = [m["embeds"][0]["description"] for m in plan["thread"]["messages"]]
+        for n in range(1, 151):
+            row = f"| Drill {n} | Marker {n} on the left | Marker {n + 1} on the right |"
+            self.assertTrue(any(row in page for page in pages))
+
+    def test_missing_translation_structure_or_reference_blocks_publication(self):
+        from core.fc27_layout import Block, full_layout
+        for en, zh, urls in [("Long paragraph", "", ()), ("one\n\ntwo", "一段", ()),
+                             ("[article](https://a.invalid)", "文章", ()),
+                             ("|a|b|\n|1|2|", "|甲|乙|\n|一||", ()),
+                             ("- outer\n  - inner", "- 外\n- 內", ()),
+                             ("a {ref0} b {ref1}", "乙 {ref1} 甲 {ref0}", ("https://a.invalid", "https://b.invalid"))]:
+            with self.subTest(en=en), self.assertRaises(ValueError):
+                full_layout([Block("case", "section", en, zh, urls)])
+        result = self.cli("--source-only", "--json")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("全文未備妥", result.stderr)
+
+    def test_link_at_unicode_split_and_unbreakable_link(self):
+        from core.fc27_layout import Block, full_layout
+        for path_size in (100, 4200):
+            url = "https://example.invalid/" + "x" * path_size
+            text = "🏟" * 2000 + " [original link]({ref0}) end"
+            block = Block("one", "fixture", text, text, (url,))
+            plan = full_layout([block])
+            self.assert_full_output(plan, [block])
+            if path_size == 100:
+                self.assertTrue(any(f"[original link](<{url}>)" in m["embeds"][0]["description"]
+                                    for m in plan["thread"]["messages"]))
+            else:
+                self.assertIn("text_attachment", plan["parent"])
