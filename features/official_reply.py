@@ -121,11 +121,12 @@ def receipt(queue, msg, keys, claim=False):
         db.execute("BEGIN IMMEDIATE")
         if db.execute("SELECT 1 FROM posts WHERE message_id=? OR source_id=?", (msg.id, source)).fetchone():
             raise ReviewError("此原帖已有翻譯或送達紀錄，請先核對，避免重複回覆。")
-        if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=?", (key,)).fetchone()
+        if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner!='observed'", (key,)).fetchone()
                for key in keys):
             raise ReviewError("同一更新已有發布或轉發處理紀錄，請先核對。")
         if claim:
-            db.executemany("INSERT INTO fc27_delivery_owner VALUES (?,?)",
+            db.executemany("INSERT INTO fc27_delivery_owner VALUES (?,?) ON CONFLICT(version) "
+                           "DO UPDATE SET owner=excluded.owner WHERE owner='observed'",
                            [(key, f"reply:{msg.id}") for key in keys])
             db.execute("INSERT INTO posts(message_id,source_id,channel_id,stage,body) VALUES (?,?,?,'posting','')",
                        (msg.id, source, msg.channel.id))
@@ -134,7 +135,7 @@ def receipt(queue, msg, keys, claim=False):
 def release_rejection(queue, message_id):
     # Only the confirmer that won the insert may release a definitive rejection.
     with connect_sqlite(queue.path) as db:
-        db.execute("DELETE FROM fc27_delivery_owner WHERE owner=?", (f"reply:{message_id}",))
+        db.execute("UPDATE fc27_delivery_owner SET owner='observed' WHERE owner=?", (f"reply:{message_id}",))
         db.execute("DELETE FROM posts WHERE message_id=? AND stage='posting' AND attempt=0", (message_id,))
 
 

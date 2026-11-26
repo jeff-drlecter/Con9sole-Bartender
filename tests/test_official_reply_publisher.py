@@ -141,3 +141,20 @@ class OfficialReplyTests(IsolatedAsyncioTestCase):
         self.assertTrue(version_marker(fc).search("FC27 v1.3｜繁中整理"))
         with self.assertRaisesRegex(ReviewError, "來源"):
             release_keys(replace(fc, sources=(NEWS + "update-v1-2-pitch-notes",)), "FC27 v1.3")
+
+    def test_observed_follow_allows_manual_reply_but_cannot_hide_queued_work(self):
+        from core.gta_translation import APEX_CHANNEL_ID, FC_CHANNEL_ID
+        for channel, key in ((FC_CHANNEL_ID, "1.3.0"), (APEX_CHANNEL_ID, "apex:1.3.0")):
+            with self.subTest(channel=channel):
+                msg = MagicMock(id=channel, reference=None)
+                msg.channel.id = channel
+                paused = TranslationQueue(self.q.path, paused_follow_channels=[channel])
+                paused.add(msg.id, msg.id, "Native", channel_id=channel, review_keys=(key,))
+                receipt(self.q, msg, {key}, True)
+                self.q.add(msg.id + 1, msg.id + 1, "Native", channel_id=channel, review_keys=(key,))
+                self.assertIsNone(self.q.claim(1))
+        self.q.add(123, 321, "Native", channel_id=FC_CHANNEL_ID, review_keys=("2.4.0",))
+        paused = TranslationQueue(self.q.path, paused_follow_channels=[FC_CHANNEL_ID])
+        paused.add(456, 654, "Native", channel_id=FC_CHANNEL_ID, review_keys=("2.4.0",))
+        with self.assertRaisesRegex(ReviewError, "同一更新"):
+            receipt(self.q, MagicMock(id=456, reference=None), {"2.4.0"}, True)

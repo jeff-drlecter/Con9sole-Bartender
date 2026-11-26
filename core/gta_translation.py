@@ -169,11 +169,13 @@ class TranslationQueue:
         with connect_sqlite(self.path) as db:
             if review_keys:
                 db.execute("BEGIN IMMEDIATE")
-                if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner!='relay'",
+                if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner NOT IN ('relay','observed')",
                                   (key,)).fetchone() for key in review_keys):
                     return
-                db.executemany("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'relay')",
-                               [(key,) for key in review_keys])
+                owner = "relay" if body and channel_id not in self.paused_follow_channels else "observed"
+                db.executemany("INSERT INTO fc27_delivery_owner VALUES (?,?) ON CONFLICT(version) "
+                               "DO UPDATE SET owner=excluded.owner WHERE owner='observed'",
+                               [(key, owner) for key in review_keys])
             # Retain identifiable native originals for the private publisher's duplicate check.
             if channel_id in self.paused_follow_channels:
                 return
