@@ -8,7 +8,7 @@ import json
 import re
 
 from core import apex_updates, reviewed_games
-from core.fc27_publication import VERSION, mentioned_versions, normalized
+from core.fc27_publication import VERSION, mentioned_versions, normalized, source_version
 from core.gta_translation import HONG_KONG, OFFICIAL_UPDATE_CHANNELS
 
 # GetNewsForApp can also include journalism. Only accept the app's own announcements.
@@ -35,23 +35,47 @@ class Notice:
     published: float
 
 
+def fc_editions(title):
+    versions = mentioned_versions(title)
+    for value in re.findall(r"\bFC[™®]?\s*27\s+(?:\|\s*)?(?:Title Update\s+)?v(?:ersion\s+|\.\s*)?(" + VERSION + r")(?![\d.])", title, re.I):
+        versions.add(normalized(value))
+    return versions
+
+
+def current_article(name, title, url):
+    if not URL.fullmatch(url):
+        return ""
+    if name == "EA SPORTS FC":
+        edition = source_version(url)
+        versions = fc_editions(title)
+        return url if edition and (not versions or versions == {edition}) else ""
+    if name == "Apex Legends" and apex_updates.article_key(url):
+        day = apex_updates.dated_hotfix(url)
+        editions = apex_updates.relay_keys(title, VERSION)
+        return url if not day or not editions or "apex:" + day in editions else ""
+    app = APPS.get(name)
+    if app and re.fullmatch(rf"https://(?:store\.steampowered\.com/news/app/{app}/view/|steamcommunity\.com/(?:app|games|ogg)/{app}/announcements/detail/)\d+/?", url):
+        return url
+    for game, route in reviewed_games.ROUTES.items():
+        item = reviewed_games.source(game, url) if route.channel == name else None
+        if item:
+            editions = set(re.findall(r"(?<![\d.])" + NUMBER + r"(?![\d.])", title))
+            if item.edition and not re.fullmatch(reviewed_games.DAY, item.edition) and editions and item.edition not in editions:
+                return ""
+            return url
+    return ""
+
+
 def identities(name, title, article="", *, steam=False):
     game = next((g for g, r in reviewed_games.ROUTES.items() if r.channel == name), None)
     # The body may mention releases superseded by this one. Only the headline and
     # its linked publisher article identify the release being announced.
-    article = article if URL.fullmatch(article) else ""
-    if name == "EA SPORTS FC" and article:
-        article_version = mentioned_versions(article)
-        title_versions = mentioned_versions(title)
-        if article_version and title_versions and article_version != title_versions:
-            article = ""
+    article = current_article(name, title, article)
     combined = title + "\n" + article
     if name == "Apex Legends":
         keys = apex_updates.relay_keys(combined, VERSION)
     elif name == "EA SPORTS FC":
-        keys = mentioned_versions(combined)
-        for v in re.findall(r"\bFC[™®]?\s*27\s+(?:\|\s*)?(?:Title Update\s+)?v(?:ersion\s+|\.\s*)?(" + VERSION + r")(?![\d.])", combined, re.I):
-            keys.add(normalized(v))
+        keys = fc_editions(title) | mentioned_versions(article)
     else:
         keys = reviewed_games.relay_keys(game, combined, combined.splitlines())
         if name == "GTA":

@@ -120,6 +120,18 @@ class AutomaticFlow(unittest.IsolatedAsyncioTestCase):
                 store.observe(new, now=NOW+1)
                 self.assertIn("1.4.0", store.next(NOW+901)[3])
 
+    def test_follow_source_uses_current_article_or_original_jump(self):
+        from features.automatic_updates import from_follow
+        old = "https://www.ea.com/games/ea-sports-fc/fc-27/news/update-v1-3-pitch-notes"
+        current = old.replace("v1-3", "v1-4")
+        msg = self.original(f"FC 27 v1.4.0 Title Update\nFor comparison see {old}\n{current}")
+        msg.channel = SimpleNamespace(id=DESTINATIONS["EA SPORTS FC"])
+        self.assertEqual(from_follow(msg, NOW).url, current)
+        msg.content = f"FC 27 v.1.4.0 Title Update\n{old}"
+        result = from_follow(msg, NOW)
+        self.assertEqual(result.url, msg.jump_url)
+        self.assertNotIn("1.3.0", result.keys)
+
     async def test_platform_specific_follow_releases_stay_separate(self):
         from features.automatic_updates import from_follow
         channel = SimpleNamespace(id=DESTINATIONS["Helldivers 2"])

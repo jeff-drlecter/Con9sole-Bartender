@@ -10,10 +10,9 @@ import discord
 
 import config
 from core.automatic_updates import (
-    APPS, HMT, HMT_URL, STEAM_NEWS, UPDATE, Notice, dated_keys, excerpt, hmt_notices, identities, steam_notices,
+    APPS, HMT, HMT_URL, STEAM_NEWS, UPDATE, Notice, current_article, dated_keys, excerpt, hmt_notices, identities, steam_notices,
 )
-from core import apex_updates, reviewed_games
-from core.fc27_publication import BOT_ID, ReviewError, source_version
+from core.fc27_publication import BOT_ID, ReviewError
 from core.gta_translation import HONG_KONG, OFFICIAL_UPDATE_CHANNELS
 from features.fc27_publisher import message_text
 
@@ -69,15 +68,16 @@ def describe(msg, name):
         links = [line.strip(" <>") for line in (msg.content or "").splitlines()
                  if re.fullmatch(r"<?https://[^\s<>]+>?", line.strip())]
     link = links[0] if len(set(links)) == 1 else ""
-    keys = dated_keys(identities(name, title, link), msg.created_at.timestamp())
-    return text, [title] if title else [], set(keys)
+    source = current_article(name, title, link)
+    keys = dated_keys(identities(name, title, source), msg.created_at.timestamp())
+    return text, [title] if title else [], set(keys), source
 
 
 def from_follow(msg, now):
     if not native(msg):
         return None
     name = OFFICIAL_UPDATE_CHANNELS[msg.channel.id]
-    text, titles, keys = describe(msg, name)
+    text, titles, keys, source = describe(msg, name)
     strong = any(not k.startswith("auto:") for k in keys)
     # Unidentified Follow messages can still match a publisher headline in history.
     if not strong or (all(k.startswith(("auto:", "steam:", "wilds:article:")) for k in keys)
@@ -92,15 +92,7 @@ def from_follow(msg, now):
     title = next((t for t in titles if "://" not in t and len(t) <= 180), None)
     if not title:
         return None
-    url = msg.jump_url
-    for candidate in re.findall(r"https://[^\s<>\[\]()]+", text):
-        candidate = candidate.rstrip(".,")
-        if ((name == "Apex Legends" and apex_updates.article_key(candidate))
-                or (name == "EA SPORTS FC" and source_version(candidate))
-                or any(r.channel == name and reviewed_games.source(g, candidate) for g, r in reviewed_games.ROUTES.items())):
-            url = candidate
-            break
-    return Notice(msg.channel.id, tuple(sorted(keys)), title, excerpt(text), url, published)
+    return Notice(msg.channel.id, tuple(sorted(keys)), title, excerpt(text), source or msg.jump_url, published)
 
 
 def comparable_editions(left, right):
@@ -123,7 +115,7 @@ async def destination(channel, item, aliases, parent, since):
         count += 1
         if count > 1000:
             raise ReviewError("Incomplete history")
-        text, titles, keys = describe(msg, name)
+        text, titles, keys, _ = describe(msg, name)
         if msg.reference and msg.type == discord.MessageType.reply and re.search(r"[\u3400-\u9fff]", text):
             references.add(msg.reference.message_id)
         if msg.id != parent and not aliases.intersection(keys) and item.url not in text:
