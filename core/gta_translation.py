@@ -167,7 +167,7 @@ class TranslationQueue:
         if channel_id not in OFFICIAL_UPDATE_CHANNELS:
             raise ValueError("Unknown official update channel")
         with connect_sqlite(self.path) as db:
-            if channel_id in (FC_CHANNEL_ID, APEX_CHANNEL_ID) and review_keys:
+            if review_keys:
                 db.execute("BEGIN IMMEDIATE")
                 if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner='reviewed'",
                                   (key,)).fetchone() for key in review_keys):
@@ -178,7 +178,7 @@ class TranslationQueue:
             if channel_id in self.paused_follow_channels:
                 return
             db.execute("INSERT OR IGNORE INTO posts(message_id,source_id,stage,body,channel_id) "
-                       "VALUES (?,?,'translate',?,?)", (message_id, source_id, body, channel_id))
+                       "SELECT ?,?,'translate',?,? WHERE ?", (message_id, source_id, body, channel_id, bool(body)))
 
     def claim(self, now: float) -> Job | None:
         # Single transaction across processes: check the budget and debit BEFORE HTTP.

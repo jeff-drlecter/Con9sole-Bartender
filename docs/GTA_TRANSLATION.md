@@ -55,3 +55,24 @@ SELECT message_id, stage, attempt FROM posts WHERE stage IN ('posting', 'failed'
 私人校訂、確認、靜音主帖及雙語來源串沿用上節流程。目的地固定為現有 Apex 官方更新頻道 `1464858693014392924`。已有同版或同一官方文章的可辨識轉發會阻止重發，反向次序則略過相符轉發的翻譯。可辨識資料包括官方連結（論壇按文章 ID）、明示 Apex 的版本或不含歧義的日期。混合版本、無識別資料或不完整的舊帖需人工核對。助手掃描目的地歷史最多 1,000 則，超限或權限不足會停止發布。
 
 沿用同一個香港月份 450,000 字元總額、每篇主要來源每月 6,000 字元上限及原有快取。每次全新預覽最多送譯兩段（自撰摘要和短引），未提交時零次。程式不輪詢 EA 或 Trello。離線使用 `python -m unittest discover -s tests -p 'test_*publisher.py' -v` 驗證兩款遊戲的入口、拒絕、重啟及續傳。
+
+## 其他遊戲的人工發布
+
+在管理工具的 Update Publisher 選「其他遊戲官方更新」，再揀遊戲。輸入官方版本或日期、原文標題、文章連結、自撰摘要及短引。先在官方文章核對平台、時間、模式、地區及例外。只有開啟面板且仍有管理權限的人可以確認。目的地取自現行官方更新頻道表。這個入口不會輪詢網站或自動發布。
+
+| 選項及既有目的地 | 識別碼示例 | 官方來源及核對範圍 |
+| --- | --- | --- |
+| Battlefield 6 / REDSEC · 官方更新-bf6 | `2.1.2.5` | [Battlefield Game Update](https://www.ea.com/games/battlefield/battlefield-6/news/battlefield-6-game-update-2-1-2-5)。同一次更新一帖，在摘要分清 BF6 共通及 REDSEC 專屬項目。 |
+| Helldivers 2 · 官方更新-hd2 | `7.2.0 / 原文範圍` | [Arrowhead Patch Notes](https://arrowhead.zendesk.com/hc/en-us/articles/31176395885596-Devoid-of-Liberty-7-2-0)。識別碼保留原版號及範圍。同一篇涵蓋多平台時一帖列明；只為個別平台另發的文章可分開。 |
+| GTA Online 更新 · 官方更新-gta | `1.73` | [Rockstar Support](https://support.rockstargames.com/articles/4vRqEDvjUs9h7nqRUgc8YO/gtav-title-update-1-73-notes-ps5-ps4-xbox-series-x-or-s-xbox-one-pc-enhanced-legacy)。只摘錄 GTA Online 適用的平台和項目。 |
+| GTA Online 每週活動 · 官方更新-gta | `2026-11-05 / 4k17a844oakk5o` | [Rockstar Newswire](https://www.rockstargames.com/newswire/article/4k17a844oakk5o/take-down-the-kortz-center-and-more-high-value-targets-in-this-week-s)。按文章發布日期及 ID 建立活動收據。摘要分清每週和整段活動的獎勵時間。 |
+| Delta Force · 官方更新-df | `2026-11-10 / 跨平台` | [全球服 Season Aurora 改版](https://www.playdeltaforce.com/en/detail/news-major-update-season-aurora-is-coming.html)。核對生效日期，分別寫出 PC、主機、手機時段。 |
+| Monster Hunter Wilds · 官方更新-mh | `1.042.00.03 / Steam` | [CAPCOM 官方 Steam 公告](https://store.steampowered.com/news/app/2246340/view/668380665149915562?l=english)。只收 App 2246340 的發行商 Update Summary，須輸入含對應版號的原標題。 |
+| 燕雲十六聲（港澳台）· 官方更新-wwm | `2026-11-26` | [港澳台版更新](https://www.wherewindsmeetgame.com/hmt/news/official/1126update.html)。直接填寫人工繁中摘要及最多 60 字官方繁中短引。兩張卡均使用繁中，這條人工路徑的翻譯用量為零。 |
+| NBA 2K27 · 官方更新-2k | `3.0` | [2K27 官方修正說明](https://nba.2k.com/2k27/patch-updates/)。官方會重用同一網址。核對頁內的版本標題和各平台推出日期，例如 v3.0 的 PS5／Xbox Series X\|S 為 18/11，Switch 2／PC 為 27/11。將兩批日期列在同一帖。 |
+
+合規連結只識別來源，操作者仍須閱讀實際正文。若連結不屬已核實格式或目的地無法唯一識別，助手會停止。對沒有明示遊戲的 Newswire 網址、Delta Force 不透明文章 ID 等，需先由維護者在 `core/reviewed_games.py` 核對並登記；新宣傳頁、玩家討論、其他 Steam App、GTA VI 或其他地區不會因同一網域而獲准。
+
+保留原生 Follow 的頻道，人工帖及可辨識轉發共用同一組送達收據。只有網址而沒有可譯文字的轉發也會記錄可辨識來源。舊版已送出的訊息另由目的地歷史檢查。Discord 自行送入的原生貼文仍然可見。純短網址、無標題或多項更新混合時，自動辨識有限；確認前須核對目的地。NBA 的共用頁連結本身無法識別哪一版。已確認稿沿用原來選單輸入相同識別碼即可載入或處理中斷的送達。每篇主要來源及所有遊戲仍共享既有翻譯服務的限制。
+
+離線入口測試可用 `python -m unittest discover -s tests -p test_reviewed_games_publisher.py -v`。以 `python scripts/verify.py all` 完整驗證。回退前核對未完成收據，保留 SQLite；舊版不會辨識新遊戲的收據。
