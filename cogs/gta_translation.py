@@ -19,6 +19,9 @@ from core.gta_translation import (
     source_text, translation_input,
 )
 from core import apex_updates, reviewed_games
+from core.automatic_receipts import AutomaticReceipts
+from core.automatic_updates import DESTINATIONS
+from features import automatic_updates
 from core.fc27_publication import VERSION, mentioned_versions
 from core.storage_paths import DATA_DIR
 
@@ -83,15 +86,22 @@ class GTATranslation(commands.Cog):
         self.session = session
         self.url = url
         self.token = token
+        self.automatic = None
 
     async def cog_load(self):
-        self.process.start()
+        if self.automatic is not None:
+            self.poll_publishers.start()
+            self.publish_notices.start()
+        else:
+            self.process.start()
 
     async def translate_reviewed(self, text, *, channel_id):
         return await translate(self.session, self.url, self.token, text, channel_id=channel_id)
 
     async def cog_unload(self):
         self.process.cancel()
+        self.poll_publishers.cancel()
+        self.publish_notices.cancel()
         await self.session.close()
 
     @commands.Cog.listener()
@@ -99,6 +109,12 @@ class GTATranslation(commands.Cog):
         if (message.guild is None or message.guild.id != config.GUILD_ID
                 or message.channel.id not in OFFICIAL_UPDATE_CHANNELS or not message.webhook_id
                 or not message.flags.is_crossposted or message.type != discord.MessageType.default):
+            return
+        if self.automatic is not None:
+            now = time.time()
+            item = automatic_updates.from_follow(message, now)
+            if item is not None:
+                await asyncio.to_thread(self.automatic.observe, item, message.id, now=now)
             return
         body = source_text(message)
         channel_id = message.channel.id
@@ -151,6 +167,38 @@ class GTATranslation(commands.Cog):
             raise
         await asyncio.to_thread(self.store.sent, job.message_id)
 
+    @tasks.loop(hours=1)
+    async def poll_publishers(self):
+        for name in DESTINATIONS:
+            try:
+                items = await automatic_updates.fetch(self.session, name, self.automatic)
+                now = time.time()
+                for item in items:
+                    if item.published <= now:
+                        await asyncio.to_thread(self.automatic.observe, item, now=now)
+            except (aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+                log.warning("Official update poll failed game=%s error=%s", name, type(exc).__name__)
+
+    @tasks.loop(minutes=1)
+    async def publish_notices(self):
+        for _ in range(8):
+            job = None
+            try:
+                job = await asyncio.to_thread(self.automatic.next, time.time())
+                if job is None:
+                    return
+                await automatic_updates.deliver(self, job)
+            except (aiohttp.ClientError, TimeoutError, discord.DiscordException, ValueError, RuntimeError,
+                    sqlite3.Error, TranslationLimit) as exc:
+                log.warning("Official recap unavailable job=%s error=%s", job[0] if job else None, type(exc).__name__)
+                if job is None:
+                    return
+
+    @poll_publishers.before_loop
+    @publish_notices.before_loop
+    async def before_automatic(self):
+        await self.bot.wait_until_ready()
+
     @tasks.loop(seconds=10)
     async def process(self):
         for _ in range(8):
@@ -183,7 +231,10 @@ async def setup(bot):
                                         paused_follow_channels=(FC_CHANNEL_ID, APEX_CHANNEL_ID))
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90))
         try:
-            await bot.add_cog(GTATranslation(bot, store, session, url, token))
+            cog = GTATranslation(bot, store, session, url, token)
+            if os.getenv("AUTOMATIC_OFFICIAL_UPDATES") == "1":
+                cog.automatic = await asyncio.to_thread(AutomaticReceipts, store.path, time.time())
+            await bot.add_cog(cog)
         except BaseException:
             await session.close()
             raise
