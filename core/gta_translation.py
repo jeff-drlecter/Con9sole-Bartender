@@ -11,9 +11,10 @@ from core.sqlite_storage import connect_sqlite
 
 
 GTA_CHANNEL_ID = 1460576839385743493
+FC_CHANNEL_ID = 1424226055446593556
 OFFICIAL_UPDATE_CHANNELS = {
     GTA_CHANNEL_ID: "GTA",
-    1424226055446593556: "EA SPORTS FC",
+    FC_CHANNEL_ID: "EA SPORTS FC",
     1424320426095415397: "NBA 2K",
     1426660324827857020: "Delta Force",
     1426669343160406056: "Helldivers 2",
@@ -23,6 +24,12 @@ OFFICIAL_UPDATE_CHANNELS = {
     1464858693014392924: "Apex Legends",
 }
 MONTHLY_LIMIT = 450_000
+
+
+class TranslationLimit(Exception):
+    """The shared provider refused this request under its usage quota."""
+
+
 HONG_KONG = ZoneInfo("Asia/Hong_Kong")
 LEASE_SECONDS = 300
 MAX_ATTEMPTS = 3
@@ -85,6 +92,17 @@ def translation_input(text: str, channel_id: int = GTA_CHANNEL_ID) -> tuple[str,
     return source, replacements
 
 
+def reserve_translation(db, now: float, text: str, channel_id: int) -> bool:
+    """Debit the exact provider input inside the caller's receipt transaction."""
+    month = datetime.fromtimestamp(now, HONG_KONG).strftime("%Y-%m")
+    source, _ = translation_input(text, channel_id)
+    length = len(source)
+    db.execute("INSERT OR IGNORE INTO usage VALUES (?,0)", (month,))
+    return bool(db.execute("UPDATE usage SET characters=characters+? "
+                           "WHERE month=? AND characters+?<=?",
+                           (length, month, length, MONTHLY_LIMIT)).rowcount)
+
+
 def next_month_start(local: datetime) -> float:
     return datetime(local.year + (local.month == 12), local.month % 12 + 1,
                     1, tzinfo=HONG_KONG).timestamp()
@@ -132,15 +150,25 @@ class TranslationQueue:
                 CREATE TABLE IF NOT EXISTS usage (
                     month TEXT PRIMARY KEY, characters INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS fc27_delivery_owner (
+                    version TEXT PRIMARY KEY, owner TEXT NOT NULL
+                );
             """)
             # All receipts predating the channel column came from the GTA pilot.
             if "channel_id" not in {row[1] for row in db.execute("PRAGMA table_info(posts)")}:
                 db.execute(f"ALTER TABLE posts ADD COLUMN channel_id INTEGER NOT NULL DEFAULT {GTA_CHANNEL_ID}")
 
-    def add(self, message_id: int, source_id: int, body: str, *, channel_id: int = GTA_CHANNEL_ID) -> None:
+    def add(self, message_id: int, source_id: int, body: str, *, channel_id: int = GTA_CHANNEL_ID,
+            fc27_version: str | None = None) -> None:
         if channel_id not in OFFICIAL_UPDATE_CHANNELS:
             raise ValueError("Unknown official update channel")
         with connect_sqlite(self.path) as db:
+            if channel_id == FC_CHANNEL_ID and fc27_version:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'relay')", (fc27_version,))
+                if db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?",
+                              (fc27_version,)).fetchone()[0] == "reviewed":
+                    return
             db.execute("INSERT OR IGNORE INTO posts(message_id,source_id,stage,body,channel_id) "
                        "VALUES (?,?,'translate',?,?)", (message_id, source_id, body, channel_id))
 
@@ -156,19 +184,11 @@ class TranslationQueue:
             if row is None:
                 return None
             message_id, stage, attempt, body, channel_id = row
-            if stage == "translate":
+            if stage == "translate" and not reserve_translation(db, now, body, channel_id):
                 local = datetime.fromtimestamp(now, HONG_KONG)
-                month = local.strftime("%Y-%m")
-                db.execute("INSERT OR IGNORE INTO usage VALUES (?,0)", (month,))
-                provider_text, _ = translation_input(body, channel_id)
-                characters = len(provider_text)
-                debited = db.execute("UPDATE usage SET characters=characters+? "
-                                     "WHERE month=? AND characters+?<=?",
-                                     (characters, month, characters, MONTHLY_LIMIT)).rowcount
-                if not debited:
-                    db.execute("UPDATE posts SET available=? WHERE message_id=?",
-                               (next_month_start(local), message_id))
-                    return None
+                db.execute("UPDATE posts SET available=? WHERE message_id=?",
+                           (next_month_start(local), message_id))
+                return None
             db.execute("UPDATE posts SET attempt=attempt+1,available=? WHERE message_id=?",
                        (now + LEASE_SECONDS, message_id))
             return Job(message_id, stage, attempt + 1, body, channel_id)

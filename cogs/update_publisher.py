@@ -11,6 +11,7 @@ from discord.ext import commands
 import config
 from core.permissions import is_server_admin
 from core.safe_send import send_or_followup
+from features.fc27_review_ui import Intake as FC27Intake, allowed as fc27_allowed
 from features.update_publisher import (
     AnnouncementDraft,
     MAX_PENDING_GAMES,
@@ -69,6 +70,11 @@ class PublisherStartView(discord.ui.View):
             await interaction.response.send_message("❌ 需要 Administrator 或 Manage Server 權限。", ephemeral=True)
             return False
         return True
+
+    @discord.ui.button(label="FC27 官方更新", emoji="⚽")
+    async def fc27(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if await fc27_allowed(interaction, self.owner_id):
+            await interaction.response.send_modal(FC27Intake(self.owner_id))
 
     @discord.ui.button(label="功能更新", emoji="✨", style=discord.ButtonStyle.primary)
     async def feature_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
