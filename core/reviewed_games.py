@@ -178,6 +178,8 @@ def relay_keys(game, text, titles=()):
         "bf6": r"\bBattlefield\s+6\s+game\s+update\s+",
         "gtao": r"\bGTAV\s+title\s+update\s+",
     }
+    if game == "nba27" and re.search(r"NBA\s*2K27", text, re.I):
+        patterns[game] = r"(?:\bNBA\s*2K27\s*(?:patch\s+|update\s+)?v|\bPATCH NOTES\s+v)"
     if game in patterns:
         versions = {m[1] for m in re.finditer(patterns[game] + "(" + NUMERIC + r")(?!\w|\.\d)", text, re.I)}
         if len(versions) > 1:

@@ -81,7 +81,7 @@ class OfficialReplyTests(IsolatedAsyncioTestCase):
         self.ui.messages[self.channel.id].pop()
         self.q.add(self.msg.id, self.msg.id, "already queued", channel_id=self.channel.id)
         with self.assertRaises(ReviewError):
-            receipt(self.q, self.msg, True)
+            receipt(self.q, self.msg, {"nba27:3.0"}, True)
 
     async def test_revoke_delete_or_change_after_preview(self):
         self.i.user.guild_permissions = discord.Permissions.none()
@@ -121,3 +121,23 @@ class OfficialReplyTests(IsolatedAsyncioTestCase):
         self.ui.bot.fetch_channel = AsyncMock(return_value=thread)
         with self.assertRaisesRegex(ReviewError, "討論串"):
             await inspect_original(self.i, self.draft, self.q)
+
+    async def test_distinct_follow_origins_share_version_with_manual_confirm(self):
+        from core.reviewed_games import relay_keys
+        text = ":NBA2K27_Neon_1: PATCH NOTES v3.0"
+        keys = tuple(relay_keys("nba27", text))
+        self.assertIn("nba27:3.0", keys)
+        self.q.add(self.msg.id + 1, self.msg.id + 99, text, channel_id=self.channel.id, review_keys=keys)
+        with self.assertRaisesRegex(ReviewError, "同一更新"):
+            await inspect_original(self.i, self.draft, self.q)
+
+    def test_fc_source_and_history_use_normalized_version(self):
+        from dataclasses import replace
+        from core.fc27_publication import NEWS
+        from core.gta_translation import FC_CHANNEL_ID
+        from features.official_reply import version_marker, release_keys
+        fc = replace(self.draft, channel=FC_CHANNEL_ID, identifier="v1.3.0", sources=(NEWS + "update-v1-3-pitch-notes",))
+        self.assertIn("1.3.0", release_keys(fc, "FC27 v1.3"))
+        self.assertTrue(version_marker(fc).search("FC27 v1.3｜繁中整理"))
+        with self.assertRaisesRegex(ReviewError, "來源"):
+            release_keys(replace(fc, sources=(NEWS + "update-v1-2-pitch-notes",)), "FC27 v1.3")

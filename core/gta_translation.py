@@ -169,7 +169,7 @@ class TranslationQueue:
         with connect_sqlite(self.path) as db:
             if review_keys:
                 db.execute("BEGIN IMMEDIATE")
-                if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner='reviewed'",
+                if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner!='relay'",
                                   (key,)).fetchone() for key in review_keys):
                     return
                 db.executemany("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'relay')",
