@@ -15,17 +15,15 @@ from discord.ext import commands, tasks
 
 import config
 from core.gta_translation import (
-    GTA_CHANNEL_ID, OFFICIAL_UPDATE_CHANNELS, Job, TranslationQueue, source_text, translation_input,
+    FC_CHANNEL_ID, GTA_CHANNEL_ID, OFFICIAL_UPDATE_CHANNELS, Job, TranslationLimit, TranslationQueue,
+    source_text, translation_input,
 )
+from core.fc27_publication import mentioned_versions
 from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
 SCRIPT_URL = re.compile(r"https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec")
 RESULT_URL = re.compile(r"https://script\.googleusercontent\.com/macros/echo\?[^#\s]+")
-
-
-class TranslationLimit(Exception):
-    pass
 
 
 async def translate(session: aiohttp.ClientSession, url: str, token: str, text: str,
@@ -88,6 +86,9 @@ class GTATranslation(commands.Cog):
     async def cog_load(self):
         self.process.start()
 
+    async def translate_fc27(self, text):
+        return await translate(self.session, self.url, self.token, text, channel_id=FC_CHANNEL_ID)
+
     async def cog_unload(self):
         self.process.cancel()
         await self.session.close()
@@ -101,8 +102,13 @@ class GTATranslation(commands.Cog):
         body = source_text(message)
         if body:
             origin = message.reference.message_id if message.reference else None
+            options = {}
+            if message.channel.id == FC_CHANNEL_ID:
+                versions = mentioned_versions("\n".join([body, *(e.url or "" for e in message.embeds)]))
+                if len(versions) == 1:
+                    options["fc27_version"] = versions.pop()
             await asyncio.to_thread(self.store.add, message.id, origin or message.id, body,
-                                    channel_id=message.channel.id)
+                                    channel_id=message.channel.id, **options)
 
     async def process_job(self, job):
         if job.channel_id not in OFFICIAL_UPDATE_CHANNELS:
