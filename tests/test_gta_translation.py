@@ -133,6 +133,33 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
         self.response.json = AsyncMock(return_value={"translation": "新賽道 & 新車"})
         self.cog = pilot.GTATranslation(self.bot, self.store, self.http, TEST_URL, TEST_TOKEN)
 
+    async def test_configured_follow_cutover_keeps_native_and_reviewed_paths_separate(self):
+        old_path = self.path.parent / "gta_translation.sqlite3"
+        prior = TranslationQueue(old_path)
+        prior.add(1, 1, "Pending translation", channel_id=pilot.APEX_CHANNEL_ID)
+        prior.add(2, 2, "Pending delivery", channel_id=FC_CHANNEL_ID)
+        with connect_sqlite(old_path) as db:
+            db.execute("UPDATE posts SET stage='deliver' WHERE message_id=2")
+        bot = SimpleNamespace(add_cog=AsyncMock())
+        with (patch.dict(os.environ, {"GTA_TRANSLATION_SCRIPT_URL": TEST_URL, "GTA_TRANSLATION_TOKEN": TEST_TOKEN}),
+              patch.object(pilot, "DATA_DIR", self.path.parent), patch.object(pilot.aiohttp, "ClientSession", return_value=self.http)):
+            await pilot.setup(bot)
+        cog = bot.add_cog.await_args.args[0]
+        for mid, channel_id, body in ((3, FC_CHANNEL_ID, "FC27 v1.3.0"), (4, pilot.APEX_CHANNEL_ID, "Apex Legends 2026-11-25")):
+            await cog.on_message(post(mid, mid, channel=SimpleNamespace(id=channel_id), content=body))
+        self.assertIsNone(cog.store.claim(NOW))
+        with connect_sqlite(old_path) as db:
+            self.assertEqual(db.execute("SELECT message_id,stage,attempt FROM posts ORDER BY message_id").fetchall(),
+                             [(1, "translate", 0), (2, "deliver", 0)])
+            self.assertEqual(db.execute("SELECT count(*) FROM usage").fetchone()[0], 0)
+            self.assertEqual(dict(db.execute("SELECT version,owner FROM fc27_delivery_owner")),
+                             {"1.3.0": "relay", "apex:2026-11-25": "relay"})
+        await cog.on_message(post(5, 5, channel=SimpleNamespace(id=NBA_CHANNEL_ID)))
+        self.assertEqual(cog.store.claim(NOW).channel_id, NBA_CHANNEL_ID)
+        with patch.object(pilot, "translate", new_callable=AsyncMock, return_value="摘要") as translator:
+            self.assertEqual(await cog.translate_reviewed("Example", channel_id=FC_CHANNEL_ID), "摘要")
+            translator.assert_awaited_once()
+
     async def test_official_post_gets_one_silent_reply_across_replays(self):
         embed = discord.Embed(title="New race", description="Drive [now](https://example.com/gta)")
         embed.add_field(name="Reward", value="2x XP")

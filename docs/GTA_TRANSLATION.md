@@ -2,6 +2,8 @@
 
 俱樂部助手以 [Apps Script 內置 LanguageApp](https://developers.google.com/apps-script/reference/language/language-app) 將官方更新譯成繁體中文。使用個人 Google 帳戶的 Apps Script 配額，毋須開通 Cloud Billing。Bot 直接在相同頻道回覆官方原帖，讀者可以從回覆跳回原文。一般長度直接顯示，超過 Discord 單則訊息長度的全文附為 UTF-8 文字檔。譯文靜音送出並停用提及。
 
+FC 及 Apex 的官方 Discord Follow 繼續接收原生訊息，包括 FUT、FC Pro、電競、活動及路線圖。這兩個目的地停用舊 Follow 自動翻譯，已排隊的翻譯及回覆保留在 SQLite，暫停期間不再扣額或送出。可辨識的轉發仍參與人工發布查重。私人 Update Publisher 繼續使用同一翻譯服務和額度，其餘遊戲的 Follow 翻譯照常。若要回復自動翻譯，先核對積存工作，重新啟用可能送出舊回覆。
+
 ## 啟用範圍
 
 - 接收本伺服器九個遊戲官方更新頻道透過 Discord「追蹤公告頻道」收到的新轉發，涵蓋 GTA、EA SPORTS FC、NBA 2K、Delta Force、Helldivers 2、Monster Hunter、Battlefield 6、Where Winds Meet 及 Apex Legends。以 [頻道 ID 清單](../core/gta_translation.py) 判斷。翻譯帖內文字及預覽的標題、描述、欄位；純連結及純媒體會略過。Bot 會先移除公告標記，將原帖連結換成代號才送出翻譯，再將原網址放回相應位置。「立即收聽」可直接點擊。網址、附件及會員留言不會送往翻譯服務。
@@ -40,7 +42,7 @@ SELECT message_id, stage, attempt FROM posts WHERE stage IN ('posting', 'failed'
 
 **用量。** 採用原有服務及同一個香港月份 450,000 字元帳本。每次送譯前先扣額，每篇主要來源每月最多 6,000 字元，同一來源的一段相同英文每月最多嘗試兩次，相隔至少 120 秒。成功譯文按來源及英文內容雜湊持久保存。重開預覽、校訂及續傳已確認稿均可重用譯文。無新付費服務，實際新增用量視提交次數而定。
 
-**去重範圍。** SQLite 在送出前記錄每個 FC27 版本和兩個送出階段，確認稿包含其各篇來源。附屬討論串與主帖共用 Discord ID。可辨識的同版 Discord 轉發與人工入口以同一交易裁定由哪條路徑翻譯。轉發先到時保留原有原生回覆行為。人工稿先確認時，後來帶明確 FC27 版本或合規 EA 文章連結的轉發略過自動翻譯。Discord 自行顯示的轉發仍可見。無法識別版本、多版本混合或歷史帳本未記版本的轉發，不能保證跨路徑去重。Apex 的人工及轉發規則見下節，其餘七款遊戲沿用原有流程。
+**去重範圍。** SQLite 在送出前記錄每個 FC27 版本和兩個送出階段，確認稿包含其各篇來源。附屬討論串與主帖共用 Discord ID。可辨識的同版 Discord 轉發與人工入口以同一交易裁定由哪條路徑翻譯。轉發先到時保留 Discord 原文，助手不再自動回覆。人工稿先確認時，後來帶明確 FC27 版本或合規 EA 文章連結的轉發略過自動翻譯。Discord 自行顯示的轉發仍可見。無法識別版本、多版本混合或歷史帳本未記版本的轉發，不能保證跨路徑去重。Apex 的人工及轉發規則見下節，其餘七款遊戲沿用原有流程。
 
 離線驗證執行 `python -m unittest discover -s tests -p test_fc27_publisher.py -v`。正式發布流程只接受 main。部署後可先用原有管理選單核對私人預覽和權限，真實試發另行授權。回退時先停止確認新稿，核對未完成或結果未明的收據，保留現有 SQLite 和備份。以 revert PR 經 main 的正常部署流程還原。舊版會忽略新增資料表，回退後需人工核對遲到的 FC 轉發。
 
