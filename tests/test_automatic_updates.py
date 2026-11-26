@@ -12,7 +12,7 @@ import discord
 import config
 from cogs import gta_translation as pilot
 from core.automatic_receipts import AutomaticReceipts
-from core.automatic_updates import APPS, DESTINATIONS, HMT, hmt_notices, steam_notices
+from core.automatic_updates import APPS, DESTINATIONS, HMT, excerpt, hmt_notices, steam_notices
 from core.fc27_publication import BOT_ID
 from core.gta_translation import OFFICIAL_UPDATE_CHANNELS, TranslationQueue
 from core.sqlite_storage import connect_sqlite
@@ -99,6 +99,45 @@ class AutomaticFlow(unittest.IsolatedAsyncioTestCase):
     async def send(self):
         with patch("cogs.gta_translation.time.time", return_value=NOW + 610):
             await self.cog.publish_notices.coro(self.cog)
+
+    async def test_previous_version_in_patch_body_does_not_claim_the_new_version(self):
+        for history in ("baseline", "sent"):
+            with self.subTest(history=history):
+                store = AutomaticReceipts(self.path.parent / (history + ".db"), NOW-1)
+                old_feed = payload("EA SPORTS FC", "FC 27 v1.3.0 Patch Notes")
+                old = steam_notices("EA SPORTS FC", json.dumps(old_feed))[0]
+                store.observe(replace(old, published=NOW-2 if history == "baseline" else NOW), now=NOW)
+                if history == "sent":
+                    old_key = store.next(NOW+900)[0]
+                    store.claim_send(old_key, None)
+                    store.finish(old_key, "sent", from_stage="posting", message=12)
+                new_feed = payload("EA SPORTS FC", "FC 27 v1.4.0 Patch Notes")
+                row = new_feed["appnews"]["newsitems"][0]
+                row.update(gid="222222222", contents="Fixed an issue introduced in FC 27 v1.3.0.")
+                row["url"] = row["url"].replace("123456789", row["gid"])
+                new = steam_notices("EA SPORTS FC", json.dumps(new_feed))[0]
+                self.assertNotIn("1.3.0", new.keys)
+                store.observe(new, now=NOW+1)
+                self.assertIn("1.4.0", store.next(NOW+901)[3])
+
+    async def test_platform_specific_follow_releases_stay_separate(self):
+        from features.automatic_updates import from_follow
+        channel = SimpleNamespace(id=DESTINATIONS["Helldivers 2"])
+        for platform in ("PC", "PS5"):
+            msg = self.original("Helldivers 2 Patch 7.2.0 for " + platform)
+            msg.channel = channel
+            item = from_follow(msg, NOW)
+            self.assertIn("hd2:platform:7.2.0:" + platform, item.keys)
+            self.store.observe(item, now=NOW)
+        first = self.store.next(NOW+900)
+        second = self.store.next(NOW+900)
+        self.assertNotEqual(first[0], second[0])
+        self.assertFalse(first[3] & second[3])
+
+    def test_selecting_an_excerpt_keeps_platform_and_condition_headings(self):
+        part = excerpt("[h2]PC only[/h2]\n[b]While aiming[/b]\nDamage increased by 2.5 percent. Reload speed improved.")
+        self.assertIn("PC only\nWhile aiming\nDamage increased by 2.5 percent.", part)
+        self.assertEqual(excerpt("Only when " + "x" * 480 + ":\nDamage increased by 2.5 percent."), "")
 
     async def test_steam_gid_resolves_to_official_article_only_for_new_items(self):
         http = MagicMock()

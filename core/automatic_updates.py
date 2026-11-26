@@ -35,9 +35,17 @@ class Notice:
     published: float
 
 
-def identities(name, title, text):
+def identities(name, title, article="", *, steam=False):
     game = next((g for g, r in reviewed_games.ROUTES.items() if r.channel == name), None)
-    combined = title + "\n" + text
+    # The body may mention releases superseded by this one. Only the headline and
+    # its linked publisher article identify the release being announced.
+    article = article if URL.fullmatch(article) else ""
+    if name == "EA SPORTS FC" and article:
+        article_version = mentioned_versions(article)
+        title_versions = mentioned_versions(title)
+        if article_version and title_versions and article_version != title_versions:
+            article = ""
+    combined = title + "\n" + article
     if name == "Apex Legends":
         keys = apex_updates.relay_keys(combined, VERSION)
     elif name == "EA SPORTS FC":
@@ -54,15 +62,24 @@ def identities(name, title, text):
         match = re.fullmatch(rf"https://(?:store\.steampowered\.com/news/app/{app}/view/|steamcommunity\.com/(?:app|games|ogg)/{app}/announcements/detail/)(\d+)/?(?:\?[^ ]*)?", url.rstrip(".,"))
         if app and match:
             keys.add(f"steam:{app}:{match[1]}")
-    for group, pattern, scope in (
-            ("nba27", r"(?:patch notes|NBA\s*2K27)\s*v", ""),
-            ("hd2", r"(?:patch|hotfix|liberty:)\s*v?", ""),
-            ("wilds", r"\bver\.\s*", " / Steam")):
-        if game == group:
-            for version in re.findall(pattern + "(" + NUMBER + r")(?!\w|\.\d)", combined, re.I):
-                keys.add(f"{group}:{version}{scope}")
-                if group == "hd2":
-                    keys.add(f"hd2:platform:{version}:PC")
+    patterns = {"nba27": r"(?:patch notes|NBA\s*2K27)\s*v", "hd2": r"(?:patch|hotfix|liberty:)\s*v?",
+                "wilds": r"\bver\.\s*"}
+    if game in patterns:
+        versions = re.findall(patterns[game] + "(" + NUMBER + r")(?!\w|\.\d)", title, re.I)
+        if len(set(versions)) == 1:
+            version = versions[0]
+            if game == "nba27":
+                keys.add(f"nba27:{version}")
+            else:
+                platforms = {platform for platform, regex in (
+                    ("PC", r"\b(?:PC|Steam)\b"), ("PS5", r"\b(?:PS5|PlayStation 5)\b"),
+                    ("Xbox", r"\bXbox\b")) if re.search(regex, title, re.I)}
+                if steam and not platforms:
+                    platforms.add("PC")
+                if game == "hd2":
+                    keys.update(f"hd2:platform:{version}:{p}" for p in platforms)
+                elif platforms == {"PC"}:
+                    keys.add(f"wilds:{version} / Steam")
     # Connect cross-platform operator receipts to numbered or dated feed headings.
     if game == "delta":
         date_match = re.search(r"\b(" + "|".join(month_name[1:]) + r") (\d{1,2}) Update\b", title, re.I)
@@ -74,7 +91,7 @@ def identities(name, title, text):
             if route.channel != name:
                 continue
             item = reviewed_games.source(g, url.rstrip(".,"))
-            if item and item.edition and g in {"bf6", "gtao", "hd2", "nba27"}:
+            if item and item.edition and g in {"bf6", "gtao", "nba27"}:
                 keys.add(f"{g}:{item.edition}")
             if g == "delta" and item and item.edition:
                 keys.add("delta:day:" + item.edition)
@@ -106,21 +123,29 @@ def dated_keys(keys, stamp):
 
 
 def excerpt(text):
-    # Keep complete statements. Never finish a recap halfway through a qualifier or number.
-    text = unescape(re.sub(r"<[^>]{1,250}>|\[(?:/?[a-z*][^\]]{0,220})\]", " ", text, flags=re.I))
+    # Preserve the contiguous opening, including platform/condition headings.
+    # Never skip an overlong clause to extract an apparently unconditional change below it.
+    text = re.sub(r"\[(?:img|previewyoutube|previewogg)\b[^\]]*\].*?\[/(?:img|previewyoutube|previewogg)\]", "", text, flags=re.I | re.S)
+    text = re.sub(r"\[/(?:p|h[1-6]|list)\]|\[\*\]|</(?:p|h[1-6]|li)>|<br\s*/?>", "\n", text, flags=re.I)
+    text = unescape(re.sub(r"<[^>]{1,250}>|\[(?:/?[a-z*][^\]]{0,220})\]", "", text, flags=re.I))
     text = re.sub(r"https?://\S+|<[@#][!&]?\d+>|@\w+", "", text)
-    # Decimal/version numbers must remain intact: split at sentence boundaries instead.
     pieces = re.split(r"(?<=[.!?。！？])(?:\s+|(?=[A-Z\u3400-\u9fff]))|\n+", text)
     picked = []
+    statements = 0
     for part in pieces:
         part = " ".join(part.split()).strip()
-        if (12 <= len(part) <= 350 and not part.endswith(("...", "…"))
-                and part.endswith((".", "!", "?", "。", "！", "？"))
-                and not re.search(r"join.{0,12}discord|click here|subscribe|^hello|^greetings", part, re.I)):
-            picked.append(part)
-            if len(picked) == 2:
-                break
-    return "\n".join(picked)
+        if not part:
+            continue
+        if sum(map(len, picked)) + len(part) > 450 or part.endswith(("...", "…")):
+            break
+        if re.search(r"join.{0,12}discord|click here|subscribe", part, re.I):
+            break
+        picked.append(part)
+        if part.endswith((".", "!", "?", "。", "！", "？")):
+            statements += 1
+        if statements == 2 or len(picked) >= 5:
+            break
+    return "\n".join(picked) if statements or len(picked) > 1 else ""
 
 
 def steam_notices(name, raw):
@@ -143,7 +168,7 @@ def steam_notices(name, raw):
         url = f"https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/{gid}"
         if row.get("url") != url:
             continue
-        keys = set(dated_keys(identities(name, title, body), int(row["date"])))
+        keys = set(dated_keys(identities(name, title, steam=True), int(row["date"])))
         keys.add(f"steam:feed:{app}:{gid}")
         result.append(Notice(DESTINATIONS[name], tuple(sorted(keys)),
                              title, excerpt(body), url, int(row["date"])))

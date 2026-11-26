@@ -21,14 +21,14 @@ from features.fc27_publisher import message_text
 async def fetch(session, name, store):
     url = HMT_URL if name == HMT else STEAM_NEWS
     params = None if name == HMT else {"appid": str(APPS[name]), "count": "50",
-                                       "feeds": "steam_community_announcements", "maxlength": "2200"}
+                                       "feeds": "steam_community_announcements", "maxlength": "0"}
     async with session.get(url, params=params, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=20)) as response:
         if response.status != 200:
             raise ValueError(f"publisher HTTP {response.status}")
         body = bytearray()
         async for block in response.content.iter_chunked(32768):
             body.extend(block)
-            if len(body) > 512_000:
+            if len(body) > 2_000_000:
                 raise ValueError("Oversized publisher index")
     if name == HMT:
         return hmt_notices(body)
@@ -61,11 +61,16 @@ def native(msg):
 def describe(msg, name):
     text = message_text(msg)
     titles = [e.title for e in msg.embeds if e.title]
-    titles.extend(line.strip(" #*") for line in (msg.content or "").splitlines() if line.strip(" #*"))
-    keys = set()
-    for title in titles[:4] or [""]:
-        keys.update(dated_keys(identities(name, title, text), msg.created_at.timestamp()))
-    return text, titles, keys
+    first_line = next((line.strip(" #*") for line in (msg.content or "").splitlines() if line.strip(" #*")), "")
+    title = next((t for t in titles if t and "://" not in t), first_line)
+    links = [e.url for e in msg.embeds if e.url]
+    if not links:
+        # A standalone link line is a source; inline historical citations are not.
+        links = [line.strip(" <>") for line in (msg.content or "").splitlines()
+                 if re.fullmatch(r"<?https://[^\s<>]+>?", line.strip())]
+    link = links[0] if len(set(links)) == 1 else ""
+    keys = dated_keys(identities(name, title, link), msg.created_at.timestamp())
+    return text, [title] if title else [], set(keys)
 
 
 def from_follow(msg, now):
@@ -102,6 +107,8 @@ def comparable_editions(left, right):
     def families(keys):
         return {k.rsplit(":", 1)[0] if ":" in k else "fc27" for k in keys
                 if re.fullmatch(r"(?:[a-z0-9]+:)?(?:[0-9]+(?:\.[0-9]+)+|[0-9]{4}-[0-9]{2}-[0-9]{2})", k)}
+    if any(k.startswith("hd2:platform:") for k in left) and any(k.startswith("hd2:platform:") for k in right):
+        return True
     return bool(families(left) & families(right))
 
 
@@ -125,9 +132,8 @@ async def destination(channel, item, aliases, parent, since):
             if native(msg) and abs(msg.created_at.timestamp() - item.published) < 2 * 86400:
                 if not any(not k.startswith("auto:") for k in keys):
                     uncertain = True
-                elif any(UPDATE.search(t) for t in titles[:2]):
-                    if not comparable_editions(aliases, keys):
-                        uncertain = True
+                elif any(UPDATE.search(t) for t in titles[:2]) and not comparable_editions(aliases, keys):
+                    uncertain = True
             continue
         if native(msg):
             if msg.flags.has_thread or re.search(r"[\u3400-\u9fff]{5}", text):
