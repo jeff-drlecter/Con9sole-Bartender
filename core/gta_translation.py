@@ -137,8 +137,11 @@ class Job:
 
 
 class TranslationQueue:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, paused_follow_channels=()):
         self.path = path
+        self.paused_follow_channels = frozenset(paused_follow_channels)
+        if not self.paused_follow_channels.issubset(OFFICIAL_UPDATE_CHANNELS):
+            raise ValueError("Unknown paused Follow channel")
         with connect_sqlite(path) as db:
             db.executescript("""
                 BEGIN IMMEDIATE;
@@ -171,6 +174,9 @@ class TranslationQueue:
                     return
                 db.executemany("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'relay')",
                                [(key,) for key in review_keys])
+            # Retain identifiable native originals for the private publisher's duplicate check.
+            if channel_id in self.paused_follow_channels:
+                return
             db.execute("INSERT OR IGNORE INTO posts(message_id,source_id,stage,body,channel_id) "
                        "SELECT ?,?,'translate',?,? WHERE ?", (message_id, source_id, body, channel_id, bool(body)))
 
@@ -178,11 +184,13 @@ class TranslationQueue:
         # Single transaction across processes: check the budget and debit BEFORE HTTP.
         with connect_sqlite(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
+            channels = tuple(OFFICIAL_UPDATE_CHANNELS.keys() - self.paused_follow_channels)
+            eligible = "channel_id IN (" + ",".join("?" for _ in channels) + ")"
             db.execute("UPDATE posts SET stage='failed',body='' WHERE stage IN ('translate','deliver') "
-                       "AND attempt>=? AND available<=?", (MAX_ATTEMPTS, now))
+                       f"AND attempt>=? AND available<=? AND {eligible}", (MAX_ATTEMPTS, now, *channels))
             row = db.execute("SELECT message_id,stage,attempt,body,channel_id FROM posts "
-                             "WHERE stage IN ('deliver','translate') AND available<=? "
-                             "ORDER BY stage, message_id LIMIT 1", (now,)).fetchone()
+                             f"WHERE stage IN ('deliver','translate') AND available<=? AND {eligible} "
+                             "ORDER BY stage, message_id LIMIT 1", (now, *channels)).fetchone()
             if row is None:
                 return None
             message_id, stage, attempt, body, channel_id = row

@@ -179,7 +179,8 @@ async def setup(bot):
     if url or token:
         if not SCRIPT_URL.fullmatch(url or "") or not re.fullmatch(r"[a-f0-9]{64}", token or ""):
             raise ValueError("Incomplete or invalid GTA Apps Script configuration")
-        store = await asyncio.to_thread(TranslationQueue, DATA_DIR / "gta_translation.sqlite3")
+        store = await asyncio.to_thread(TranslationQueue, DATA_DIR / "gta_translation.sqlite3",
+                                        paused_follow_channels=(FC_CHANNEL_ID, APEX_CHANNEL_ID))
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90))
         try:
             await bot.add_cog(GTATranslation(bot, store, session, url, token))
