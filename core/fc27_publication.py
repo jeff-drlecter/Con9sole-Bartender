@@ -251,7 +251,7 @@ class Receipts:
         owner_keys = draft.owner_keys
         for key in owner_keys:
             owner = db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?", (key,)).fetchone()
-            if owner and owner[0] == "relay":
+            if owner and owner[0] != "reviewed":
                 raise ReviewError("此更新已有官方轉發，請核對原帖。")
         articles = (owner_keys - {draft.key} if draft.game != "fc27"
                     else {self.article(url) for url in draft.urls})

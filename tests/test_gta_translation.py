@@ -153,7 +153,7 @@ class PilotTest(unittest.IsolatedAsyncioTestCase):
                              [(1, "translate", 0), (2, "deliver", 0)])
             self.assertEqual(db.execute("SELECT count(*) FROM usage").fetchone()[0], 0)
             self.assertEqual(dict(db.execute("SELECT version,owner FROM fc27_delivery_owner")),
-                             {"1.3.0": "relay", "apex:2026-11-25": "relay"})
+                             {"1.3.0": "observed", "apex:2026-11-25": "observed"})
         await cog.on_message(post(5, 5, channel=SimpleNamespace(id=NBA_CHANNEL_ID)))
         self.assertEqual(cog.store.claim(NOW).channel_id, NBA_CHANNEL_ID)
         with patch.object(pilot, "translate", new_callable=AsyncMock, return_value="摘要") as translator:

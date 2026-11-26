@@ -12,6 +12,7 @@ import config
 from core.reviewed_games import ROUTES
 from core.permissions import is_server_admin
 from core.safe_send import send_or_followup
+from features.official_reply import ReplyIntake
 from features.fc27_review_ui import Intake as UpdateIntake, NativeIntake, allowed as review_allowed
 from features.update_publisher import (
     AnnouncementDraft,
@@ -81,6 +82,11 @@ class PublisherStartView(discord.ui.View):
     async def apex(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if await review_allowed(interaction, self.owner_id):
             await interaction.response.send_modal(UpdateIntake(self.owner_id, game="apex"))
+
+    @discord.ui.button(label="回覆現有官方帖", row=2)
+    async def existing_reply(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if await review_allowed(interaction, self.owner_id):
+            await interaction.response.send_modal(ReplyIntake(self.owner_id))
 
     @discord.ui.select(placeholder="其他遊戲官方更新", row=3,
                        options=[discord.SelectOption(label=route.name, value=game) for game, route in ROUTES.items()])
