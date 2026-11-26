@@ -15,10 +15,11 @@ from discord.ext import commands, tasks
 
 import config
 from core.gta_translation import (
-    FC_CHANNEL_ID, GTA_CHANNEL_ID, OFFICIAL_UPDATE_CHANNELS, Job, TranslationLimit, TranslationQueue,
+    APEX_CHANNEL_ID, FC_CHANNEL_ID, GTA_CHANNEL_ID, OFFICIAL_UPDATE_CHANNELS, Job, TranslationLimit, TranslationQueue,
     source_text, translation_input,
 )
-from core.fc27_publication import mentioned_versions
+from core import apex_updates
+from core.fc27_publication import VERSION, mentioned_versions
 from core.storage_paths import DATA_DIR
 
 log = logging.getLogger(__name__)
@@ -86,8 +87,8 @@ class GTATranslation(commands.Cog):
     async def cog_load(self):
         self.process.start()
 
-    async def translate_fc27(self, text):
-        return await translate(self.session, self.url, self.token, text, channel_id=FC_CHANNEL_ID)
+    async def translate_reviewed(self, text, *, channel_id):
+        return await translate(self.session, self.url, self.token, text, channel_id=channel_id)
 
     async def cog_unload(self):
         self.process.cancel()
@@ -103,10 +104,14 @@ class GTATranslation(commands.Cog):
         if body:
             origin = message.reference.message_id if message.reference else None
             options = {}
-            if message.channel.id == FC_CHANNEL_ID:
-                versions = mentioned_versions("\n".join([body, *(e.url or "" for e in message.embeds)]))
-                if len(versions) == 1:
-                    options["fc27_version"] = versions.pop()
+            if message.channel.id in (FC_CHANNEL_ID, APEX_CHANNEL_ID):
+                text = "\n".join([body, *(e.url or "" for e in message.embeds)])
+                if message.channel.id == FC_CHANNEL_ID:
+                    versions = mentioned_versions(text)
+                    if len(versions) == 1:
+                        options["review_keys"] = tuple(versions)
+                else:
+                    options["review_keys"] = tuple(apex_updates.relay_keys(text, VERSION))
             await asyncio.to_thread(self.store.add, message.id, origin or message.id, body,
                                     channel_id=message.channel.id, **options)
 

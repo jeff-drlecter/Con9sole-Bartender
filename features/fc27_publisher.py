@@ -7,17 +7,19 @@ import time
 import discord
 
 import config
-from core.fc27_publication import BOT_ID, DATE_START, ReviewError, mentioned_versions
-from core.gta_translation import FC_CHANNEL_ID
+from core import apex_updates
+from core.fc27_publication import BOT_ID, DATE_START, VERSION, ReviewError, mentioned_versions
 
 
 def cards(draft):
-    title = f"FC27 v{draft.version}｜"
+    label = draft.version if "-" in draft.version else f"v{draft.version}"
+    title = f"{draft.game_name} {label}｜"
+    attribution = "EA · Apex Legends" if draft.game == "apex" else "EA SPORTS FC Team"
     parent = discord.Embed(title=title + "Con9sole 繁中整理", description=draft.recap, color=0x3478C9)
     parent.set_footer(text="Con9sole 整理 · 英文來源見本帖討論串")
     links = [f"[EA 官方原文{'（引文出處）' if i == 0 else ''}]({url})" for i, url in enumerate(draft.urls)]
     source = discord.Embed(title=title + "官方英文來源", color=0x805AD5,
-                           description=f"**EA SPORTS FC Team**\n> {draft.quote}\n\n繁中對照：{draft.gloss}\n\n"
+                           description=f"**{attribution}**\n> {draft.quote}\n\n繁中對照：{draft.gloss}\n\n"
                                        + "\n".join(links))
     return parent, source
 
@@ -26,7 +28,7 @@ async def translated_draft(store, draft, provider):
     await asyncio.to_thread(store.check_sources, draft)
     async def one(text, limit):
         cached, ticket = await asyncio.to_thread(store.translation, draft.urls[0], text, time.time(),
-                                                 provider_available=provider is not None)
+                                                 provider_available=provider is not None, channel_id=draft.channel_id)
         if ticket is None:
             return cached
         value = (await provider(text)).strip()
@@ -60,7 +62,7 @@ async def existing(channel, draft, embed, *, in_thread):
     version_pattern = re.compile(r"(?<![\d.])" + number + r"(?!\d|\.\d)")
     # Stop instead of inferring absence from a capped history or an unreadable source thread.
     count = 0
-    async for message in channel.history(limit=1001, after=DATE_START):
+    async for message in channel.history(limit=1001, after=DATE_START if draft.game == "fc27" else None):
         count += 1
         if count > 1000:
             raise ReviewError("頻道記錄超過檢查上限，請先核對歷史。")
@@ -69,8 +71,11 @@ async def existing(channel, draft, embed, *, in_thread):
         text = message_text(message)
         for snapshot in getattr(message, "message_snapshots", []):
             text += "\n" + message_text(snapshot)
-        matches = (draft.version in mentioned_versions(text) or version_pattern.search(text)
-                   or any(url in text for url in draft.urls))
+        if draft.game == "apex":
+            matches = draft.owner_keys.intersection(apex_updates.relay_keys(text, VERSION))
+        else:
+            matches = (draft.version in mentioned_versions(text) or version_pattern.search(text)
+                       or any(url in text for url in draft.urls))
         if matches or (in_thread and message.author.id == BOT_ID):
             if found or not same_card(message, embed):
                 raise ReviewError(f"已有可能相關的訊息，請先核對 {message.jump_url}")
@@ -78,7 +83,7 @@ async def existing(channel, draft, embed, *, in_thread):
         elif in_thread:
             other = message
     if not in_thread and not count:
-        raise ReviewError("未能讀到 FC 官方更新頻道的歷史，請核對助手權限。")
+        raise ReviewError("未能讀到官方更新頻道的歷史，請核對助手權限。")
     if other is not None and found is None:
         raise ReviewError(f"來源串已有內容，請先核對 {other.jump_url}")
     return found
@@ -93,44 +98,44 @@ async def send_stage(channel, store, draft, embed, stage, phase, known_id, found
     pending = stage + "_pending"
     expected = phase
     if found is None:
-        if phase != stage or not await asyncio.to_thread(store.move, draft.version, stage, pending):
+        if phase != stage or not await asyncio.to_thread(store.move, draft.key, stage, pending):
             raise ReviewError("送出結果尚未確認。請先核對頻道，稍後只輸入版本號再檢查。")
         expected = pending
         try:
             found = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none(),
-                                       silent=True, nonce=f"fc27-{draft.version}-{stage}")
+                                       silent=True, nonce=f"{draft.game}-{draft.version}-{stage}")
         except discord.HTTPException as exc:
             if exc.status in (400, 403, 404, 429):
-                await asyncio.to_thread(store.move, draft.version, pending, stage)
+                await asyncio.to_thread(store.move, draft.key, pending, stage)
             raise
     next_phase = "source" if stage == "parent" else "done"
     # Existing reviewed bot cards (including the one-off pilot) may predate receipts.
     if expected not in (stage, pending):
         raise ReviewError("送出階段與收據不符，請重新載入。")
-    await asyncio.to_thread(store.move, draft.version, expected, next_phase, **{stage: found.id})
+    await asyncio.to_thread(store.move, draft.key, expected, next_phase, **{stage: found.id})
     return found
 
 
 async def publish(bot, guild, store, draft):
     if guild.id != config.GUILD_ID or bot.user.id != BOT_ID or guild.me is None or guild.me.id != BOT_ID:
         raise ReviewError("助手或伺服器身份不符。")
-    channel = guild.get_channel(FC_CHANNEL_ID)
-    if not isinstance(channel, discord.TextChannel) or channel.guild.id != guild.id or channel.id != FC_CHANNEL_ID:
-        raise ReviewError("找不到已核准的 FC 官方更新頻道。")
+    channel = guild.get_channel(draft.channel_id)
+    if not isinstance(channel, discord.TextChannel) or channel.guild.id != guild.id or channel.id != draft.channel_id:
+        raise ReviewError("找不到已核准的遊戲官方更新頻道。")
     perms = channel.permissions_for(guild.me)
     if not (perms.view_channel and perms.read_message_history and perms.send_messages and perms.embed_links
             and perms.create_public_threads and perms.send_messages_in_threads):
         raise ReviewError("助手缺少讀取、嵌入訊息或討論串權限。")
     draft.check_translation()
     parent_card, source_card = cards(draft)
-    receipt = await asyncio.to_thread(store.receipt, draft.version)
+    receipt = await asyncio.to_thread(store.receipt, draft.key)
     found = None
     if not receipt or not receipt[2]:
         found = await existing(channel, draft, parent_card, in_thread=False)
     await asyncio.to_thread(store.begin, draft)
-    _, phase, pid, _ = await asyncio.to_thread(store.receipt, draft.version)
+    _, phase, pid, _ = await asyncio.to_thread(store.receipt, draft.key)
     parent = await send_stage(channel, store, draft, parent_card, "parent", phase, pid, found)
-    _, phase, pid, sid = await asyncio.to_thread(store.receipt, draft.version)
+    _, phase, pid, sid = await asyncio.to_thread(store.receipt, draft.key)
     if pid != parent.id:
         raise ReviewError("主帖收據尚未確認。")
     try:
@@ -149,7 +154,7 @@ async def publish(bot, guild, store, draft):
         raise ReviewError("助手無法讀寫來源串，請核對權限後再以版本號載入。")
     found = None if sid else await existing(thread, draft, source_card, in_thread=True)
     source = await send_stage(thread, store, draft, source_card, "source", phase, sid, found)
-    receipt = await asyncio.to_thread(store.receipt, draft.version)
+    receipt = await asyncio.to_thread(store.receipt, draft.key)
     if receipt[1:] != ("done", pid, source.id):
         raise ReviewError("英文來源收據尚未確認。")
     return parent.jump_url, source.jump_url
