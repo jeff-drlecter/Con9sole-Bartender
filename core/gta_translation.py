@@ -12,6 +12,7 @@ from core.sqlite_storage import connect_sqlite
 
 GTA_CHANNEL_ID = 1460576839385743493
 FC_CHANNEL_ID = 1424226055446593556
+APEX_CHANNEL_ID = 1464858693014392924
 OFFICIAL_UPDATE_CHANNELS = {
     GTA_CHANNEL_ID: "GTA",
     FC_CHANNEL_ID: "EA SPORTS FC",
@@ -21,7 +22,7 @@ OFFICIAL_UPDATE_CHANNELS = {
     1426670580714836149: "Monster Hunter",
     1433362456456990811: "Battlefield 6",
     1440622034597052526: "Where Winds Meet",
-    1464858693014392924: "Apex Legends",
+    APEX_CHANNEL_ID: "Apex Legends",
 }
 MONTHLY_LIMIT = 450_000
 
@@ -159,16 +160,17 @@ class TranslationQueue:
                 db.execute(f"ALTER TABLE posts ADD COLUMN channel_id INTEGER NOT NULL DEFAULT {GTA_CHANNEL_ID}")
 
     def add(self, message_id: int, source_id: int, body: str, *, channel_id: int = GTA_CHANNEL_ID,
-            fc27_version: str | None = None) -> None:
+            review_keys: tuple[str, ...] = ()) -> None:
         if channel_id not in OFFICIAL_UPDATE_CHANNELS:
             raise ValueError("Unknown official update channel")
         with connect_sqlite(self.path) as db:
-            if channel_id == FC_CHANNEL_ID and fc27_version:
+            if channel_id in (FC_CHANNEL_ID, APEX_CHANNEL_ID) and review_keys:
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'relay')", (fc27_version,))
-                if db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?",
-                              (fc27_version,)).fetchone()[0] == "reviewed":
+                if any(db.execute("SELECT 1 FROM fc27_delivery_owner WHERE version=? AND owner='reviewed'",
+                                  (key,)).fetchone() for key in review_keys):
                     return
+                db.executemany("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'relay')",
+                               [(key,) for key in review_keys])
             db.execute("INSERT OR IGNORE INTO posts(message_id,source_id,stage,body,channel_id) "
                        "VALUES (?,?,'translate',?,?)", (message_id, source_id, body, channel_id))
 

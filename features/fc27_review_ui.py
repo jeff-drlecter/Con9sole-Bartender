@@ -1,6 +1,7 @@
-"""Private Update Publisher flow for one reviewed FC27 release."""
+"""Private Update Publisher flow for reviewed game releases."""
 import asyncio
 from dataclasses import replace
+from functools import partial
 import logging
 import sqlite3
 
@@ -8,7 +9,7 @@ import aiohttp
 import discord
 
 import config
-from core.fc27_publication import Receipts, Release, ReviewError, normalized
+from core.fc27_publication import Receipts, Release, ReviewError, normalized, receipt_key
 from core.gta_translation import TranslationLimit
 from core.permissions import is_server_admin
 from core.storage_paths import DATA_DIR
@@ -33,8 +34,8 @@ async def failure(interaction, exc):
     elif isinstance(exc, TranslationLimit):
         note = "翻譯服務已達額度上限，請稍後再試。"
     else:
-        log.warning("FC27 review operation failed: %s status=%s", type(exc).__name__, getattr(exc, "status", None))
-        note = "未能確認結果。請核對 FC 官方更新頻道，再用版本號開啟確認稿。"
+        log.warning("Game update review operation failed: %s status=%s", type(exc).__name__, getattr(exc, "status", None))
+        note = "未能確認結果。請核對遊戲官方更新頻道，再用更新識別碼開啟確認稿。"
     await interaction.followup.send(note, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -45,7 +46,7 @@ ERRORS = (ValueError, RuntimeError, TimeoutError, aiohttp.ClientError, discord.D
 async def preview(interaction, store, draft):
     view = Review(interaction.user.id, store, draft)
     await interaction.followup.send(
-        "私人預覽。請對照 EA 原文核對數字、單位、平台及例外，確認後由助手發布至 FC 官方更新頻道。",
+        f"私人預覽。請對照 EA 原文核對數字、單位、平台及例外，確認後由助手發布至 {draft.game_name} 官方更新頻道。",
         embeds=review_cards(draft), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none(),
     )
 
@@ -55,33 +56,40 @@ def review_cards(draft):
 
 
 class Intake(discord.ui.Modal, title="FC27 官方更新"):
-    version = discord.ui.TextInput(label="版本（只填版本可載入已確認稿）", max_length=14)
+    version = discord.ui.TextInput(label="更新識別碼（只填此欄可載入已確認稿）", max_length=14, placeholder="例如 1.3.0")
     links = discord.ui.TextInput(label="官方原文（引文出處在首行，最多兩條）", style=discord.TextStyle.paragraph,
                                 required=False, max_length=481)
     notes = discord.ui.TextInput(label="自撰英文摘要（保留數值、條件及平台差異）", style=discord.TextStyle.paragraph,
                                 required=False, max_length=1600)
     quote = discord.ui.TextInput(label="第一篇來源的英文短引（最多 25 詞）", required=False, max_length=200)
 
-    def __init__(self, owner):
+    def __init__(self, owner, *, game="fc27"):
         super().__init__()
         self.owner = owner
+        self.game = game
+        if game == "apex":
+            self.title = "Apex 官方更新"
+            self.version.placeholder = "例如 1.2.3 或 2026-11-25"
 
     async def on_submit(self, interaction):
         if not await allowed(interaction, self.owner):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            version = normalized(self.version.value)
+            version = normalized(self.version.value, self.game)
             store = await asyncio.to_thread(Receipts, DATA_DIR / "gta_translation.sqlite3")
-            receipt = await asyncio.to_thread(store.receipt, version)
+            receipt = await asyncio.to_thread(store.receipt, receipt_key(self.game, version))
             if receipt:
                 if any(field.value.strip() for field in (self.links, self.notes, self.quote)):
                     raise ReviewError("此版本已有確認稿。請只填版本號載入。")
                 draft = Release.unpack(receipt[0])
+                if draft.game != self.game or draft.version != version:
+                    raise ReviewError("收據與選取的遊戲或更新不符，請核對已確認稿。")
             else:
-                draft = Release.from_input(version, self.links.value, self.notes.value, self.quote.value)
+                draft = Release.from_input(version, self.links.value, self.notes.value, self.quote.value, game=self.game)
                 cog = interaction.client.get_cog("GTATranslation")
-                draft = await translated_draft(store, draft, cog.translate_fc27 if cog else None)
+                provider = partial(cog.translate_reviewed, channel_id=draft.channel_id) if cog else None
+                draft = await translated_draft(store, draft, provider)
             await preview(interaction, store, draft)
         except ERRORS as exc:
             await failure(interaction, exc)
@@ -119,7 +127,7 @@ class Review(discord.ui.View):
     @discord.ui.button(label="校訂繁中")
     async def edit(self, interaction, button):
         if await allowed(interaction, self.owner):
-            if await asyncio.to_thread(self.store.receipt, self.draft.version):
+            if await asyncio.to_thread(self.store.receipt, self.draft.key):
                 await interaction.response.send_message("已確認的版本不能修改，請載入原稿。", ephemeral=True)
                 return
             await interaction.response.send_modal(Edit(self))

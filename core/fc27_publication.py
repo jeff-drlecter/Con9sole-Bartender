@@ -1,14 +1,15 @@
-"""Reviewed FC27 release copy, translation budget and durable delivery receipts."""
+"""Reviewed official game update copy, translation budget and durable delivery receipts."""
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime
 import hashlib
 import json
 import re
 
-from core.gta_translation import FC_CHANNEL_ID, HONG_KONG, TranslationQueue, reserve_translation
+from core import apex_updates
+from core.gta_translation import APEX_CHANNEL_ID, FC_CHANNEL_ID, HONG_KONG, TranslationQueue, reserve_translation
 from core.sqlite_storage import connect_sqlite
 
 
@@ -25,11 +26,25 @@ class ReviewError(ValueError):
     """Safe, content-free operator feedback."""
 
 
-def normalized(value):
+def normalized(value, game="fc27"):
+    if game not in {"fc27", "apex"}:
+        raise ReviewError("未支援這款遊戲。")
+    if game == "apex" and re.fullmatch(apex_updates.ISO_DATE, value.strip()):
+        try:
+            return date.fromisoformat(value.strip()).isoformat()
+        except ValueError as exc:
+            raise ReviewError("請輸入有效的更新日期（YYYY-MM-DD）。") from exc
     value = value.strip().lower().removeprefix("v")
     if not re.fullmatch(VERSION, value):
+        if game == "apex":
+            raise ReviewError("請輸入 Apex 版本號，無版本時請填 YYYY-MM-DD。")
         raise ReviewError("請輸入 FC27 更新版本，例如 1.3.0。")
     return value if value.count(".") == 2 else value + ".0"
+
+
+def receipt_key(game, version):
+    # Numeric FC keys predate the multi-game publisher and must remain resumable.
+    return "apex:" + version if game == "apex" else version
 
 
 def source_version(url):
@@ -79,21 +94,51 @@ class Release:
     quote: str
     recap: str = ""
     gloss: str = ""
+    game: str = "fc27"
+
+    @property
+    def key(self):
+        return receipt_key(self.game, self.version)
+
+    @property
+    def game_name(self):
+        return "Apex Legends" if self.game == "apex" else "FC27"
+
+    @property
+    def channel_id(self):
+        return APEX_CHANNEL_ID if self.game == "apex" else FC_CHANNEL_ID
+
+    @property
+    def owner_keys(self):
+        if self.game == "apex":
+            return {self.key}.union(*(apex_updates.article_keys(url) for url in self.urls))
+        return {self.key}
 
     @classmethod
-    def from_input(cls, version, links, english, quote):
-        version = normalized(version)
+    def from_input(cls, version, links, english, quote, *, game="fc27"):
+        version = normalized(version, game)
         urls = tuple(dict.fromkeys(links.split()))
-        if not 1 <= len(urls) <= 2 or any(source_version(url) != version for url in urls):
+        if not 1 <= len(urls) <= 2:
+            raise ReviewError("請提供一至兩條同一更新的官方英文文章連結。")
+        if game == "apex":
+            if any(not apex_updates.article_key(url) for url in urls):
+                raise ReviewError("請提供 Apex 官方更新文章連結。")
+            dates = {day for url in urls if (day := apex_updates.dated_hotfix(url))}
+            named_patches = {key for url in urls for key in apex_updates.article_keys(url)
+                             if key.startswith(apex_updates.NEWS)}
+            if (len(dates) > 1 or len(named_patches) > 1
+                    or ("-" in version and dates and version not in dates)):
+                raise ReviewError("請核對 Apex 官方更新是否屬於同一次更新及同一發布日期。")
+        elif any(source_version(url) != version for url in urls):
             raise ReviewError("請填寫同版本的 EA FC27 英文官網或 Game Info Hub 原文，最多兩條。")
         english, quote = clean(english, 1600), clean(quote, 200)
         if ("\n" in quote or len(quote.split()) > 25 or not all(re.search("[A-Za-z]", v) for v in (english, quote))
                 or re.search(r"[\u3400-\u9fff]", english + quote)):
             raise ReviewError("請提供自撰英文摘要及最多 25 個英文詞的官方短引。")
-        return cls(version, urls, english, quote)
+        return cls(version, urls, english, quote, game=game)
 
     def check_translation(self):
-        checked = self.from_input(self.version, "\n".join(self.urls), self.english, self.quote)
+        checked = self.from_input(self.version, "\n".join(self.urls), self.english, self.quote, game=self.game)
         if (self.version, self.urls, self.english, self.quote) != (checked.version, checked.urls, checked.english, checked.quote):
             raise ReviewError("確認稿的版本或來源格式已改變，請核對原稿。")
         for original, translation, limit in ((self.english, self.recap, 2200), (self.quote, self.gloss, 450)):
@@ -105,7 +150,10 @@ class Release:
                 raise ReviewError("請校訂繁中譯文，保留英文底稿的數字及精度，然後再預覽。")
 
     def pack(self):
-        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True)
+        fields = asdict(self)
+        if self.game == "fc27":
+            del fields["game"]  # Preserve the exact packet format used by deployed FC receipts.
+        return json.dumps(fields, ensure_ascii=False, sort_keys=True)
 
     @classmethod
     def unpack(cls, data):
@@ -138,21 +186,32 @@ class Receipts:
 
     @staticmethod
     def article(url):
-        return "hub/" + url.rsplit("/", 1)[1] if url.startswith(HUB) else url
+        if url.startswith(HUB):
+            return "hub/" + url.rsplit("/", 1)[1]
+        keys = apex_updates.article_keys(url)
+        # Named patch mirrors use the same primary-source budget and cached translation.
+        return min(keys, key=lambda key: not key.startswith(apex_updates.NEWS), default=url)
 
     def check_sources(self, draft):
         with connect_sqlite(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
-            owner = db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?", (draft.version,)).fetchone()
-            if owner and owner[0] == "relay":
-                raise ReviewError("此版本已有官方轉發，請核對原帖。")
-            for url in draft.urls:
-                key = self.article(url)
-                db.execute("INSERT OR IGNORE INTO fc27_article_versions VALUES (?,?)", (key, draft.version))
-                if db.execute("SELECT version FROM fc27_article_versions WHERE article=?", (key,)).fetchone()[0] != draft.version:
-                    raise ReviewError("同一篇官方文章已對應另一版本，請核對來源。")
+            self._check_sources(db, draft, bind=draft.game == "fc27")
 
-    def translation(self, url, text, now, *, provider_available=True):
+    def _check_sources(self, db, draft, *, bind):
+        for key in draft.owner_keys:
+            owner = db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?", (key,)).fetchone()
+            if owner and owner[0] == "relay":
+                raise ReviewError("此更新已有官方轉發，請核對原帖。")
+        articles = (draft.owner_keys - {draft.key} if draft.game == "apex"
+                    else {self.article(url) for url in draft.urls})
+        for key in articles:
+            if bind:
+                db.execute("INSERT OR IGNORE INTO fc27_article_versions VALUES (?,?)", (key, draft.key))
+            row = db.execute("SELECT version FROM fc27_article_versions WHERE article=?", (key,)).fetchone()
+            if row and row[0] != draft.key:
+                raise ReviewError("同一篇官方文章已對應另一版本，請核對來源。")
+
+    def translation(self, url, text, now, *, provider_available=True, channel_id=FC_CHANNEL_ID):
         url = self.article(url)
         digest = hashlib.sha256(text.encode()).hexdigest()
         month = datetime.fromtimestamp(now, HONG_KONG).strftime("%Y-%m")
@@ -175,7 +234,7 @@ class Receipts:
             if not db.execute("UPDATE fc27_source_usage SET characters=characters+? WHERE url=? AND month=? "
                               "AND characters+?<=?", (len(text), url, month, len(text), SOURCE_MONTH_LIMIT)).rowcount:
                 raise ReviewError("這篇來源已達每月翻譯上限。")
-            if not reserve_translation(db, now, text, FC_CHANNEL_ID):
+            if not reserve_translation(db, now, text, channel_id):
                 raise ReviewError("本月共用翻譯額度不足。")
             db.execute("INSERT INTO fc27_text_cache VALUES (?,?,?,1,NULL) ON CONFLICT(url,digest) "
                        "DO UPDATE SET attempted=excluded.attempted, attempts=attempts+1", (url, digest, now))
@@ -196,12 +255,12 @@ class Receipts:
         draft.check_translation()
         with connect_sqlite(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'reviewed')", (draft.version,))
-            if db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?", (draft.version,)).fetchone()[0] != "reviewed":
-                raise ReviewError("此版本已有官方轉發進入翻譯流程，請核對原帖。")
+            self._check_sources(db, draft, bind=True)
+            db.executemany("INSERT OR IGNORE INTO fc27_delivery_owner VALUES (?,'reviewed')",
+                           [(key,) for key in draft.owner_keys])
             db.execute("INSERT OR IGNORE INTO fc27_publications(version,packet,phase) VALUES (?,?,'parent')",
-                       (draft.version, draft.pack()))
-            if db.execute("SELECT packet FROM fc27_publications WHERE version=?", (draft.version,)).fetchone()[0] != draft.pack():
+                       (draft.key, draft.pack()))
+            if db.execute("SELECT packet FROM fc27_publications WHERE version=?", (draft.key,)).fetchone()[0] != draft.pack():
                 raise ReviewError("此版本已有另一份確認稿，請只輸入版本號載入原稿。")
 
     def move(self, version, expected, phase, *, parent=None, source=None):

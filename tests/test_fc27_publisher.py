@@ -29,17 +29,17 @@ def missing():
 
 
 class Surface:
-    def __init__(self, store):
+    def __init__(self, store, channel_id=FC_CHANNEL_ID):
         self.store = store
         self.room = MagicMock(spec=discord.TextChannel)
-        self.room.id = FC_CHANNEL_ID
+        self.room.id = channel_id
         self.bot = MagicMock()
         self.bot.user.id = BOT_ID
         self.guild = SimpleNamespace(id=config.GUILD_ID, me=self.bot.user, get_channel=lambda _: self.room)
         self.room.guild = self.guild
         self.room.permissions_for.return_value = discord.Permissions.all()
-        self.rooms = {FC_CHANNEL_ID: self.room}
-        self.messages = {FC_CHANNEL_ID: [SimpleNamespace(id=1, type=discord.MessageType.default, content="Earlier release",
+        self.rooms = {channel_id: self.room}
+        self.messages = {channel_id: [SimpleNamespace(id=1, type=discord.MessageType.default, content="Earlier release",
             embeds=[], author=SimpleNamespace(id=2), webhook_id=None, jump_url="earlier")]}
         self.sequence = 100
         self.sends = []
@@ -50,8 +50,8 @@ class Surface:
         self.user = MagicMock(spec=discord.Member)
         self.user.id = 17
         self.user.guild_permissions = discord.Permissions(manage_guild=True)
-        self.provider = AsyncMock(side_effect=lambda text: READY.recap if text == DRAFT.english else READY.gloss)
-        self.bot.get_cog.return_value = SimpleNamespace(translate_fc27=self.provider)
+        self.provider = AsyncMock(side_effect=lambda text, **kw: READY.recap if text == DRAFT.english else READY.gloss)
+        self.bot.get_cog.return_value = SimpleNamespace(translate_reviewed=self.provider)
 
     def lookup(self, mid):
         if mid not in self.rooms:

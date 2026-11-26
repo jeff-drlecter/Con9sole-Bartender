@@ -15,7 +15,7 @@
 
 ## 本機與 CI
 
-FC27 人工更新從 Update Publisher 的版本輸入、私人預覽及校訂開始。以 `python -m unittest discover -s tests -p test_fc27_publisher.py -v` 核對助手發布、權限和中斷續傳。[操作及額度說明](GTA_TRANSLATION.md#fc27-人工輸入更新)
+FC27 與 Apex 人工更新從 Update Publisher 的版本或日期輸入、私人預覽及校訂開始。以 `python -m unittest discover -s tests -p 'test_*publisher.py' -v` 核對助手發布、權限和中斷續傳。[操作及額度說明](GTA_TRANSLATION.md#fc27-人工輸入更新)
 
 在 Git checkout 使用 Python 3.11 的虛擬環境。首次安裝鎖定依賴後，以下 Python 檢查可以用合成資料離線執行。
 
