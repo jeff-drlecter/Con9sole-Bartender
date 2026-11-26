@@ -1,5 +1,6 @@
 """Build the same two cards for private review and explicit bot-authored delivery."""
 import asyncio
+import hashlib
 from dataclasses import replace
 import re
 import time
@@ -7,7 +8,7 @@ import time
 import discord
 
 import config
-from core import apex_updates
+from core import apex_updates, reviewed_games
 from core.fc27_publication import BOT_ID, DATE_START, VERSION, ReviewError, mentioned_versions
 
 
@@ -15,17 +16,29 @@ def cards(draft):
     label = draft.version if "-" in draft.version else f"v{draft.version}"
     title = f"{draft.game_name} {label}｜"
     attribution = "EA · Apex Legends" if draft.game == "apex" else "EA SPORTS FC Team"
+    route = reviewed_games.ROUTES.get(draft.game)
+    if route:
+        attribution = route.publisher
+    native = draft.game == "wwmhmt"
+    language = "繁中" if native else "英文"
     parent = discord.Embed(title=title + "Con9sole 繁中整理", description=draft.recap, color=0x3478C9)
-    parent.set_footer(text="Con9sole 整理 · 英文來源見本帖討論串")
-    links = [f"[EA 官方原文{'（引文出處）' if i == 0 else ''}]({url})" for i, url in enumerate(draft.urls)]
-    source = discord.Embed(title=title + "官方英文來源", color=0x805AD5,
-                           description=f"**{attribution}**\n> {draft.quote}\n\n繁中對照：{draft.gloss}\n\n"
-                                       + "\n".join(links))
+    parent.set_footer(text=f"Con9sole 整理 · {language}來源見本帖討論串")
+    prefix = "" if route else "EA "
+    links = [f"[{prefix}官方原文{'（引文出處）' if i == 0 else ''}]({url})" for i, url in enumerate(draft.urls)]
+    heading = f" · {discord.utils.escape_markdown(draft.headline)}" if draft.headline else ""
+    excerpt = f"**{attribution}**{heading}\n> {draft.quote}"
+    if not native:
+        excerpt += f"\n\n繁中對照：{draft.gloss}"
+    source = discord.Embed(title=title + f"官方{language}來源", color=0x805AD5,
+                           description=excerpt + "\n\n" + "\n".join(links))
     return parent, source
 
 
 async def translated_draft(store, draft, provider):
     await asyncio.to_thread(store.check_sources, draft)
+    if draft.game == "wwmhmt":
+        return draft
+
     async def one(text, limit):
         cached, ticket = await asyncio.to_thread(store.translation, draft.urls[0], text, time.time(),
                                                  provider_available=provider is not None, channel_id=draft.channel_id)
@@ -71,7 +84,10 @@ async def existing(channel, draft, embed, *, in_thread):
         text = message_text(message)
         for snapshot in getattr(message, "message_snapshots", []):
             text += "\n" + message_text(snapshot)
-        if draft.game == "apex":
+        if draft.game in reviewed_games.ROUTES:
+            matches = (same_card(message, embed) or embed.title in text
+                       or draft.owner_keys.intersection(reviewed_games.relay_keys(draft.game, text, text.splitlines())))
+        elif draft.game == "apex":
             matches = draft.owner_keys.intersection(apex_updates.relay_keys(text, VERSION))
         else:
             matches = (draft.version in mentioned_versions(text) or version_pattern.search(text)
@@ -102,8 +118,11 @@ async def send_stage(channel, store, draft, embed, stage, phase, known_id, found
             raise ReviewError("送出結果尚未確認。請先核對頻道，稍後只輸入版本號再檢查。")
         expected = pending
         try:
+            nonce = f"{draft.game}-{draft.version}-{stage}"
+            if draft.game in reviewed_games.ROUTES:
+                nonce = hashlib.sha256(nonce.encode()).hexdigest()[:24]
             found = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none(),
-                                       silent=True, nonce=f"{draft.game}-{draft.version}-{stage}")
+                                       silent=True, nonce=nonce)
         except discord.HTTPException as exc:
             if exc.status in (400, 403, 404, 429):
                 await asyncio.to_thread(store.move, draft.key, pending, stage)

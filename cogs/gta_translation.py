@@ -18,7 +18,7 @@ from core.gta_translation import (
     APEX_CHANNEL_ID, FC_CHANNEL_ID, GTA_CHANNEL_ID, OFFICIAL_UPDATE_CHANNELS, Job, TranslationLimit, TranslationQueue,
     source_text, translation_input,
 )
-from core import apex_updates
+from core import apex_updates, reviewed_games
 from core.fc27_publication import VERSION, mentioned_versions
 from core.storage_paths import DATA_DIR
 
@@ -101,19 +101,29 @@ class GTATranslation(commands.Cog):
                 or not message.flags.is_crossposted or message.type != discord.MessageType.default):
             return
         body = source_text(message)
-        if body:
+        channel_id = message.channel.id
+        text = "\n".join([body, message.content or "", *(e.url or "" for e in message.embeds)])
+        keys = set()
+        if channel_id == FC_CHANNEL_ID:
+            versions = mentioned_versions(text)
+            if len(versions) == 1:
+                keys = versions
+        elif channel_id == APEX_CHANNEL_ID:
+            keys = apex_updates.relay_keys(text, VERSION)
+        else:
+            name = OFFICIAL_UPDATE_CHANNELS[channel_id]
+            titles = [e.title for e in message.embeds if e.title]
+            titles.extend((message.content or "").splitlines()[:1])
+            groups = [found for game, route in reviewed_games.ROUTES.items() if route.channel == name
+                      and (found := reviewed_games.relay_keys(game, text, titles))]
+            if len(groups) == 1:
+                keys = groups[0]
+            else:
+                keys = set()
+        if body or keys:
             origin = message.reference.message_id if message.reference else None
-            options = {}
-            if message.channel.id in (FC_CHANNEL_ID, APEX_CHANNEL_ID):
-                text = "\n".join([body, *(e.url or "" for e in message.embeds)])
-                if message.channel.id == FC_CHANNEL_ID:
-                    versions = mentioned_versions(text)
-                    if len(versions) == 1:
-                        options["review_keys"] = tuple(versions)
-                else:
-                    options["review_keys"] = tuple(apex_updates.relay_keys(text, VERSION))
             await asyncio.to_thread(self.store.add, message.id, origin or message.id, body,
-                                    channel_id=message.channel.id, **options)
+                                    channel_id=channel_id, review_keys=tuple(keys))
 
     async def process_job(self, job):
         if job.channel_id not in OFFICIAL_UPDATE_CHANNELS:

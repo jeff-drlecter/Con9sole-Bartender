@@ -9,6 +9,7 @@ import aiohttp
 import discord
 
 import config
+from core.reviewed_games import ROUTES
 from core.fc27_publication import Receipts, Release, ReviewError, normalized, receipt_key
 from core.gta_translation import TranslationLimit
 from core.permissions import is_server_admin
@@ -46,12 +47,14 @@ ERRORS = (ValueError, RuntimeError, TimeoutError, aiohttp.ClientError, discord.D
 async def preview(interaction, store, draft):
     view = Review(interaction.user.id, store, draft)
     await interaction.followup.send(
-        f"私人預覽。請對照 EA 原文核對數字、單位、平台及例外，確認後由助手發布至 {draft.game_name} 官方更新頻道。",
+        f"私人預覽。請對照官方原文核對數字、單位、平台及例外，確認後由助手發布至 {draft.game_name} 官方更新頻道。",
         embeds=review_cards(draft), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none(),
     )
 
 
 def review_cards(draft):
+    if draft.game == "wwmhmt":
+        return list(cards(draft))
     return [*cards(draft), discord.Embed(title="校對用英文摘要（僅自己可見）", description=draft.english)]
 
 
@@ -67,7 +70,14 @@ class Intake(discord.ui.Modal, title="FC27 官方更新"):
         super().__init__()
         self.owner = owner
         self.game = game
-        if game == "apex":
+        if game in ROUTES:
+            route = ROUTES[game]
+            self.title = route.name + " 官方更新"
+            self.version.max_length = 46
+            self.version.placeholder = "例如 " + route.example
+            self.headline = discord.ui.TextInput(label="第一篇官方原文的完整標題", required=False, max_length=150)
+            self.add_item(self.headline)
+        elif game == "apex":
             self.title = "Apex 官方更新"
             self.version.placeholder = "例如 1.2.3 或 2026-11-25"
 
@@ -80,19 +90,26 @@ class Intake(discord.ui.Modal, title="FC27 官方更新"):
             store = await asyncio.to_thread(Receipts, DATA_DIR / "gta_translation.sqlite3")
             receipt = await asyncio.to_thread(store.receipt, receipt_key(self.game, version))
             if receipt:
-                if any(field.value.strip() for field in (self.links, self.notes, self.quote)):
+                if any(field.value.strip() for field in self.children if field is not self.version):
                     raise ReviewError("此版本已有確認稿。請只填版本號載入。")
                 draft = Release.unpack(receipt[0])
                 if draft.game != self.game or draft.version != version:
                     raise ReviewError("收據與選取的遊戲或更新不符，請核對已確認稿。")
             else:
-                draft = Release.from_input(version, self.links.value, self.notes.value, self.quote.value, game=self.game)
+                draft = Release.from_input(version, self.links.value, self.notes.value, self.quote.value,
+                                           game=self.game, headline=self.headline.value if self.game in ROUTES else "")
                 cog = interaction.client.get_cog("GTATranslation")
                 provider = partial(cog.translate_reviewed, channel_id=draft.channel_id) if cog else None
                 draft = await translated_draft(store, draft, provider)
             await preview(interaction, store, draft)
         except ERRORS as exc:
             await failure(interaction, exc)
+
+
+class NativeIntake(Intake):
+    notes = discord.ui.TextInput(label="人工撰寫的繁中摘要，保留地區、日期及條件", style=discord.TextStyle.paragraph,
+                                required=False, max_length=1600)
+    quote = discord.ui.TextInput(label="第一篇來源的繁中短引（最多 60 字）", required=False, max_length=60)
 
 
 class Edit(discord.ui.Modal, title="校訂繁中整理"):
@@ -103,12 +120,15 @@ class Edit(discord.ui.Modal, title="校訂繁中整理"):
         super().__init__()
         self.review = review
         self.recap.default = review.draft.recap
-        self.gloss.default = review.draft.gloss
+        if review.draft.game == "wwmhmt":
+            self.remove_item(self.gloss)
+        else:
+            self.gloss.default = review.draft.gloss
 
     async def on_submit(self, interaction):
         if not await allowed(interaction, self.review.owner):
             return
-        draft = replace(self.review.draft, recap=self.recap.value.strip(), gloss=self.gloss.value.strip())
+        draft = replace(self.review.draft, recap=self.recap.value.strip(), gloss=self.review.draft.quote if self.review.draft.game == "wwmhmt" else self.gloss.value.strip())
         try:
             draft.check_translation()
         except ReviewError as exc:
@@ -139,6 +159,7 @@ class Review(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             parent, source = await publish(interaction.client, interaction.guild, self.store, self.draft)
-            await interaction.followup.send(f"[繁中主帖]({parent}) · [英文來源串]({source})", ephemeral=True)
+            language = "繁中" if self.draft.game == "wwmhmt" else "英文"
+            await interaction.followup.send(f"[繁中主帖]({parent}) · [{language}來源串]({source})", ephemeral=True)
         except ERRORS as exc:
             await failure(interaction, exc)

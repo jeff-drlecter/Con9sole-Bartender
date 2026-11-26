@@ -8,8 +8,8 @@ import hashlib
 import json
 import re
 
-from core import apex_updates
-from core.gta_translation import APEX_CHANNEL_ID, FC_CHANNEL_ID, HONG_KONG, TranslationQueue, reserve_translation
+from core import apex_updates, reviewed_games
+from core.gta_translation import APEX_CHANNEL_ID, FC_CHANNEL_ID, HONG_KONG, OFFICIAL_UPDATE_CHANNELS, TranslationQueue, reserve_translation
 from core.sqlite_storage import connect_sqlite
 
 
@@ -27,6 +27,11 @@ class ReviewError(ValueError):
 
 
 def normalized(value, game="fc27"):
+    if game in reviewed_games.ROUTES:
+        try:
+            return reviewed_games.identifier(game, value)
+        except ValueError as exc:
+            raise ReviewError(str(exc)) from exc
     if game not in {"fc27", "apex"}:
         raise ReviewError("未支援這款遊戲。")
     if game == "apex" and re.fullmatch(apex_updates.ISO_DATE, value.strip()):
@@ -44,7 +49,7 @@ def normalized(value, game="fc27"):
 
 def receipt_key(game, version):
     # Numeric FC keys predate the multi-game publisher and must remain resumable.
-    return "apex:" + version if game == "apex" else version
+    return version if game == "fc27" else game + ":" + version
 
 
 def source_version(url):
@@ -95,6 +100,7 @@ class Release:
     recap: str = ""
     gloss: str = ""
     game: str = "fc27"
+    headline: str = ""
 
     @property
     def key(self):
@@ -102,25 +108,56 @@ class Release:
 
     @property
     def game_name(self):
+        if self.game in reviewed_games.ROUTES:
+            return reviewed_games.ROUTES[self.game].name
         return "Apex Legends" if self.game == "apex" else "FC27"
 
     @property
     def channel_id(self):
+        if self.game in reviewed_games.ROUTES:
+            label = reviewed_games.ROUTES[self.game].channel
+            ids = [cid for cid, name in OFFICIAL_UPDATE_CHANNELS.items() if label == name]
+            if len(ids) != 1:
+                raise ReviewError("未能唯一核對官方更新頻道。")
+            return ids[0]
+        if self.game not in {"apex", "fc27"}:
+            raise ReviewError("未支援這款遊戲。")
         return APEX_CHANNEL_ID if self.game == "apex" else FC_CHANNEL_ID
 
     @property
     def owner_keys(self):
         if self.game == "apex":
             return {self.key}.union(*(apex_updates.article_keys(url) for url in self.urls))
+        if self.game in reviewed_games.ROUTES:
+            items = [reviewed_games.source(self.game, url) for url in self.urls]
+            if not all(items):
+                raise ReviewError("請核對已批准的官方原文。")
+            keys = {self.key} | reviewed_games.article_keys(self.game, items) | reviewed_games.platform_keys(self.game, self.version)
+            if self.game == "gtaweek" and (key := reviewed_games.title_key(self.game, self.headline)):
+                keys.add(key)
+            return keys
         return {self.key}
 
     @classmethod
-    def from_input(cls, version, links, english, quote, *, game="fc27"):
+    def from_input(cls, version, links, english, quote, *, game="fc27", headline=""):
         version = normalized(version, game)
         urls = tuple(dict.fromkeys(links.split()))
         if not 1 <= len(urls) <= 2:
             raise ReviewError("請提供一至兩條同一更新的官方英文文章連結。")
-        if game == "apex":
+        if game in reviewed_games.ROUTES:
+            headline = clean(headline, 150)
+            if "\n" in headline:
+                raise ReviewError("請填寫單行官方標題。")
+            edition = version.split(" / ")[0]
+            if not reviewed_games.check_heading(game, edition, headline):
+                raise ReviewError("官方文章標題與版本不符。")
+            for url in urls:
+                item = reviewed_games.source(game, url)
+                if (not item or (item.edition and item.edition != edition)
+                        or (game == "gtaweek" and item.key.rsplit(":", 1)[-1] != version.split(" / ")[1])
+                        or (item.month_day and edition[5:].replace("-", "") != item.month_day)):
+                    raise ReviewError("請核對官方更新原文、版本、地區及日期。")
+        elif game == "apex":
             if any(not apex_updates.article_key(url) for url in urls):
                 raise ReviewError("請提供 Apex 官方更新文章連結。")
             dates = {day for url in urls if (day := apex_updates.dated_hotfix(url))}
@@ -132,15 +169,22 @@ class Release:
         elif any(source_version(url) != version for url in urls):
             raise ReviewError("請填寫同版本的 EA FC27 英文官網或 Game Info Hub 原文，最多兩條。")
         english, quote = clean(english, 1600), clean(quote, 200)
+        if game == "wwmhmt":
+            if (not all(re.search(r"[\u3400-\u9fff]", s) for s in (english, quote)) or len(quote) > 60
+                    or "\n" in quote):
+                raise ReviewError("請提供人工繁中摘要及 60 字以內的官方繁中短引。")
+            return cls(version, urls, english, quote, recap=english, gloss=quote, game=game, headline=headline)
         if ("\n" in quote or len(quote.split()) > 25 or not all(re.search("[A-Za-z]", v) for v in (english, quote))
                 or re.search(r"[\u3400-\u9fff]", english + quote)):
             raise ReviewError("請提供自撰英文摘要及最多 25 個英文詞的官方短引。")
-        return cls(version, urls, english, quote, game=game)
+        return cls(version, urls, english, quote, game=game, headline=headline)
 
     def check_translation(self):
-        checked = self.from_input(self.version, "\n".join(self.urls), self.english, self.quote, game=self.game)
+        checked = self.from_input(self.version, "\n".join(self.urls), self.english, self.quote, game=self.game, headline=self.headline)
         if (self.version, self.urls, self.english, self.quote) != (checked.version, checked.urls, checked.english, checked.quote):
             raise ReviewError("確認稿的版本或來源格式已改變，請核對原稿。")
+        if self.game == "wwmhmt" and self.gloss != self.quote:
+            raise ReviewError("請保留官方繁中短引的原文。")
         for original, translation, limit in ((self.english, self.recap, 2200), (self.quote, self.gloss, 450)):
             clean(translation, limit)
             numbers = r"[+-]?[0-9]+(?:[.][0-9]+)*%?"
@@ -151,6 +195,8 @@ class Release:
 
     def pack(self):
         fields = asdict(self)
+        if not self.headline:
+            del fields["headline"]
         if self.game == "fc27":
             del fields["game"]  # Preserve the exact packet format used by deployed FC receipts.
         return json.dumps(fields, ensure_ascii=False, sort_keys=True)
@@ -188,6 +234,10 @@ class Receipts:
     def article(url):
         if url.startswith(HUB):
             return "hub/" + url.rsplit("/", 1)[1]
+        for game in reviewed_games.ROUTES:
+            item = reviewed_games.source(game, url)
+            if item:
+                return item.key
         keys = apex_updates.article_keys(url)
         # Named patch mirrors use the same primary-source budget and cached translation.
         return min(keys, key=lambda key: not key.startswith(apex_updates.NEWS), default=url)
@@ -198,11 +248,12 @@ class Receipts:
             self._check_sources(db, draft, bind=draft.game == "fc27")
 
     def _check_sources(self, db, draft, *, bind):
-        for key in draft.owner_keys:
+        owner_keys = draft.owner_keys
+        for key in owner_keys:
             owner = db.execute("SELECT owner FROM fc27_delivery_owner WHERE version=?", (key,)).fetchone()
             if owner and owner[0] == "relay":
                 raise ReviewError("此更新已有官方轉發，請核對原帖。")
-        articles = (draft.owner_keys - {draft.key} if draft.game == "apex"
+        articles = (owner_keys - {draft.key} if draft.game != "fc27"
                     else {self.article(url) for url in draft.urls})
         for key in articles:
             if bind:

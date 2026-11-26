@@ -9,9 +9,10 @@ import discord
 from discord.ext import commands
 
 import config
+from core.reviewed_games import ROUTES
 from core.permissions import is_server_admin
 from core.safe_send import send_or_followup
-from features.fc27_review_ui import Intake as UpdateIntake, allowed as review_allowed
+from features.fc27_review_ui import Intake as UpdateIntake, NativeIntake, allowed as review_allowed
 from features.update_publisher import (
     AnnouncementDraft,
     MAX_PENDING_GAMES,
@@ -80,6 +81,18 @@ class PublisherStartView(discord.ui.View):
     async def apex(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         if await review_allowed(interaction, self.owner_id):
             await interaction.response.send_modal(UpdateIntake(self.owner_id, game="apex"))
+
+    @discord.ui.select(placeholder="其他遊戲官方更新", row=3,
+                       options=[discord.SelectOption(label=route.name, value=game) for game, route in ROUTES.items()])
+    async def reviewed_games(self, interaction: discord.Interaction, select: discord.ui.Select) -> None:
+        if not await review_allowed(interaction, self.owner_id):
+            return
+        game = select.values[0]
+        if game not in ROUTES:
+            await interaction.response.send_message("未支援這款遊戲。", ephemeral=True)
+            return
+        form = NativeIntake if game == "wwmhmt" else UpdateIntake
+        await interaction.response.send_modal(form(self.owner_id, game=game))
 
     @discord.ui.button(label="功能更新", emoji="✨", style=discord.ButtonStyle.primary)
     async def feature_draft(self, interaction: discord.Interaction, _: discord.ui.Button["PublisherStartView"]) -> None:
